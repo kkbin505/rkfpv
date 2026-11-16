@@ -35,6 +35,37 @@
 static volatile sig_atomic_t g_quit;
 static volatile sig_atomic_t g_reload;
 
+/* Where the stream loop is, for the SIGSEGV report below. */
+static volatile int g_stage;          /* 1 GetStream, 2 send, 3 Release */
+static volatile unsigned long g_nframes, g_last_len, g_last_off, g_last_cnt;
+
+static void put_ulong(char *b, int *n, const char *k, unsigned long v)
+{
+	char d[24];
+	int i = 0;
+	while (*k) b[(*n)++] = *k++;
+	do { d[i++] = '0' + v % 10; v /= 10; } while (v);
+	while (i) b[(*n)++] = d[--i];
+}
+
+/* async-signal-safe crash report: which loop stage, how many frames */
+static void on_segv(int sig, siginfo_t *si, void *uc)
+{
+	char b[256];
+	int n = 0;
+	(void)uc;
+	put_ulong(b, &n, "rkfpv: CRASH sig=", (unsigned long)sig);
+	put_ulong(b, &n, " addr=", (unsigned long)si->si_addr);
+	put_ulong(b, &n, " stage=", (unsigned long)g_stage);
+	put_ulong(b, &n, " frames=", g_nframes);
+	put_ulong(b, &n, " len=", g_last_len);
+	put_ulong(b, &n, " off=", g_last_off);
+	put_ulong(b, &n, " packs=", g_last_cnt);
+	b[n++] = '\n';
+	write(2, b, n);
+	_exit(128 + sig);
+}
+
 static void on_signal(int sig)
 {
 	if (sig == SIGHUP)
@@ -277,6 +308,12 @@ int main(int argc, char **argv)
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGHUP, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
+	struct sigaction sv;
+	memset(&sv, 0, sizeof(sv));
+	sv.sa_sigaction = on_segv;
+	sv.sa_flags = SA_SIGINFO | SA_RESETHAND;
+	sigaction(SIGSEGV, &sv, NULL);
+	sigaction(SIGBUS, &sv, NULL);
 
 	rtp_h265_t rtp;
 	if (rtp_h265_open(&rtp, cfg.dst_ip, cfg.dst_port, cfg.pkt_size)) {
@@ -314,7 +351,9 @@ int main(int argc, char **argv)
 
 	VENC_STREAM_S st;
 	memset(&st, 0, sizeof(st));
-	st.pstPack = calloc(1, sizeof(VENC_PACK_S));
+	/* room for several packs even though rockit hands out one per frame */
+#define MAX_PACKS 8
+	st.pstPack = calloc(MAX_PACKS, sizeof(VENC_PACK_S));
 	if (!st.pstPack)
 		goto out;
 
@@ -341,15 +380,34 @@ int main(int argc, char **argv)
 			}
 		}
 
+		g_stage = 1;
 		RK_S32 r = RK_MPI_VENC_GetStream(VENC_CHN, &st, 200);
 		if (r != RK_SUCCESS)
 			continue;   /* timeout or transient error; signals land here too */
 
-		for (RK_U32 i = 0; i < st.u32PackCount; i++) {
+		RK_U32 npack = st.u32PackCount;
+		if (npack > MAX_PACKS) {
+			fprintf(stderr, "rkfpv: %u packs in one frame, using %d\n", npack, MAX_PACKS);
+			npack = MAX_PACKS;
+		}
+		g_last_cnt = st.u32PackCount;
+		g_stage = 2;
+		for (RK_U32 i = 0; i < npack; i++) {
 			VENC_PACK_S *p = &st.pstPack[i];
-			uint8_t *data = (uint8_t *)RK_MPI_MB_Handle2VirAddr(p->pMbBlk) + p->u32Offset;
-			size_t len = p->u32Len - p->u32Offset;
+			/* As the Rockchip samples and rkipc read it: the MB's virtual
+			 * address is the start of the stream, u32Len its length.
+			 * u32Offset is not used there and is not reliable. */
+			uint8_t *data = (uint8_t *)RK_MPI_MB_Handle2VirAddr(p->pMbBlk);
+			size_t len = p->u32Len;
 			uint32_t ts = (uint32_t)(p->u64PTS * 9 / 100);   /* us -> 90 kHz */
+
+			g_last_len = len;
+			g_last_off = p->u32Offset;
+			if (!data || len == 0 || len > (size_t)cfg.width * cfg.height * 2) {
+				fprintf(stderr, "rkfpv: bad pack %u: data=%p len=%zu off=%u, skipped\n",
+					i, (void *)data, len, p->u32Offset);
+				continue;
+			}
 
 			rtp_h265_send(&rtp, data, len, ts, p->bFrameEnd);
 
@@ -357,11 +415,13 @@ int main(int argc, char **argv)
 			cur_frame += len;
 			if (p->bFrameEnd) {
 				frames++;
+				g_nframes++;
 				if (cur_frame > max_frame)
 					max_frame = cur_frame;
 				cur_frame = 0;
 			}
 		}
+		g_stage = 3;
 		RK_MPI_VENC_ReleaseStream(VENC_CHN, &st);
 
 		if (!got_first) {
