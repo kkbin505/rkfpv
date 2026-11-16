@@ -61,8 +61,11 @@ for p in "$HERE"/patches/rtl8812au/*.patch; do
 	patch -d "$WORK/rtl8812au" -p1 -s < "$p"
 done
 KVER=$(make -s -C "$KSRC" O="$KOBJ" ARCH=arm kernelrelease 2>/dev/null | tail -1)
-make -C "$WORK/rtl8812au" ARCH=arm CROSS_COMPILE="$CROSS" \
-	KSRC="$KOBJ" KVER="$KVER" CONFIG_RTL8812AU=m -j"$(nproc)"
+# the driver Makefile relies on kbuild's $(src), so build it as an external
+# module through the kernel tree (as buildroot's kernel-module infra does)
+make -C "$KSRC" O="$KOBJ" ARCH=arm CROSS_COMPILE="$CROSS" \
+	M="$WORK/rtl8812au" CONFIG_RTL8812AU=m KVER="$KVER" KSRC="$KOBJ" \
+	-j"$(nproc)" modules
 ko=$(ls "$WORK"/rtl8812au/*.ko | head -1)
 "${CROSS}strip" --strip-debug -o "$OUT/88XXau.ko" "$ko"
 
