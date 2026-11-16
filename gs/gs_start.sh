@@ -16,16 +16,22 @@ if lsmod | grep -q '^88XXau '; then
 fi
 lsmod | grep -q '^88XXau_wfb' || insmod "$KO" || exit 1
 
-# wait for the adapter's interface (any RTL8812AU USB id handled by the driver)
-IF=""
-for i in 1 2 3 4 5 6 7 8 9 10; do
+# the adapter's interface (any RTL8812AU USB id handled by the driver)
+find_if() {
+	IF=""
 	for n in /sys/class/net/*; do
 		[ -e "$n/phy80211" ] || continue
 		[ "$(basename "$(readlink -f "$n/device/driver")")" = rtl88xxau_wfb ] && IF=$(basename "$n")
 	done
+}
+for i in 1 2 3 4 5 6 7 8 9 10; do
+	find_if
 	[ -n "$IF" ] && break
 	sleep 1
 done
+# udev renames the driver's "wlan0" to wlx<mac> a moment later
+udevadm settle -t 5 2>/dev/null || sleep 2
+find_if
 [ -n "$IF" ] || { echo "no 8812AU interface found"; ls /sys/class/net; exit 1; }
 echo "interface: $IF"
 
