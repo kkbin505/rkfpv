@@ -6,3 +6,4 @@
 __pycache__/
 # wfb-ng keys never go into this (public) repo
 *.key
+/gs/build/

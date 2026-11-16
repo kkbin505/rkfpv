@@ -28,6 +28,7 @@ typedef struct {
 	char dst_ip[64];
 	int dst_port;
 	int pkt_size;           /* max RTP packet size (mlink - 100 in OpenIPC) */
+	int pt;                 /* RTP payload type: 97 = H.265 as majestic sends it */
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;
