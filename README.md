@@ -100,10 +100,10 @@ drone.key        -> /etc/drone.key      （不进仓库，mkoverlay.sh 用 DRONE
 ### USB 角色与恢复
 
 S99fpv 开机时判断一次：USB 插着电脑（gadget 被枚举）就保持 device 模式（ADB/RNDIS），
-否则写 `host` 到 `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` 启动 FPV。
+否则写 `host` 到 `/sys/class/usb_role/*/role`（dwc3 软件角色切换）启动 FPV。
 **切成 host 后是强制的，之后再插电脑不会自动回到 ADB。** 恢复办法：
 
-- 串口终端（UART2 调试口）：`echo otg > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode`
+- 串口终端（UART2 调试口）：`echo device > /sys/class/usb_role/*/role`
 - 或者 `touch /userdata/fpv.off` 后重启，插电脑开机
 - 或者拔 TF 卡在电脑上删掉 `/etc/init.d/S99fpv`
 

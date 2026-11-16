@@ -10,7 +10,9 @@
 # Rockchip env: LD_LIBRARY_PATH for /oem/usr/lib, PATH for /oem/usr/bin
 [ -f /etc/profile.d/RkEnv.sh ] && . /etc/profile.d/RkEnv.sh
 
-OTG_MODE=/sys/devices/platform/ff3e0000.usb2-phy/otg_mode
+# dwc3 role switch (DTS: usb-role-switch). Writing the PHY's otg_mode alone
+# does not move dwc3 out of device mode ("illegal mode").
+USB_ROLE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 PIDFILE=/var/run/rkfpv.pid
 
 log() { echo "$1" | logger -s -t fpv; }
@@ -36,18 +38,23 @@ start() {
 		return 0
 	fi
 
-	if [ -w "$OTG_MODE" ]; then
-		echo host > "$OTG_MODE"
+	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
+		echo host > "$USB_ROLE"
 		log "USB switched to host"
+	else
+		log "no USB role switch found, USB stays as is"
 	fi
 
 	/usr/bin/wfb.sh start
 
-	start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/rkfpv -- -c /etc/rkfpv.conf
+	# -b would send rkfpv's output to /dev/null; keep it in a log instead
+	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> /var/log/rkfpv.log 2>&1"
 }
 
 stop() {
 	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
+	killall -q rkfpv
 	/usr/bin/wfb.sh stop
 }
 

@@ -319,7 +319,9 @@ int main(int argc, char **argv)
 		goto out;
 
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
-	uint64_t pkts0 = 0;
+	uint64_t pkts0 = 0, t_start = t0;
+	int got_first = 0;
+	fprintf(stderr, "rkfpv: pipeline up, waiting for frames\n");
 
 	while (!g_quit) {
 		if (g_reload) {
@@ -362,6 +364,13 @@ int main(int argc, char **argv)
 		}
 		RK_MPI_VENC_ReleaseStream(VENC_CHN, &st);
 
+		if (!got_first) {
+			got_first = 1;
+			fprintf(stderr, "rkfpv: first frame after %llu ms (%llu B)\n",
+				(unsigned long long)((now_us() - t_start) / 1000),
+				(unsigned long long)bytes);
+		}
+
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
@@ -377,21 +386,34 @@ int main(int argc, char **argv)
 	}
 	free(st.pstPack);
 	ret = 0;
+	fprintf(stderr, "rkfpv: stopping (%s)\n", g_quit ? "signal" : "error");
 
 out:
-	if (bound)
+	/* each step is logged so a crash during teardown shows where it was */
+	if (bound) {
+		fprintf(stderr, "rkfpv: unbind\n");
 		RK_MPI_SYS_UnBind(&src, &dst);
+	}
+	if (vi_up) {
+		fprintf(stderr, "rkfpv: vi chn off\n");
+		RK_MPI_VI_DisableChn(VI_PIPE, cfg.vi_chn);
+	}
 	if (venc_up) {
+		fprintf(stderr, "rkfpv: venc off\n");
 		RK_MPI_VENC_StopRecvFrame(VENC_CHN);
 		RK_MPI_VENC_DestroyChn(VENC_CHN);
 	}
 	if (vi_up) {
-		RK_MPI_VI_DisableChn(VI_PIPE, cfg.vi_chn);
+		fprintf(stderr, "rkfpv: vi dev off\n");
 		RK_MPI_VI_DisableDev(VI_DEV);
 	}
-	if (isp_up)
+	if (isp_up) {
+		fprintf(stderr, "rkfpv: isp stop\n");
 		isp_stop();
+	}
+	fprintf(stderr, "rkfpv: sys exit\n");
 	RK_MPI_SYS_Exit();
 	rtp_h265_close(&rtp);
+	fprintf(stderr, "rkfpv: done\n");
 	return ret;
 }
