@@ -1,0 +1,8 @@
+/build/
+/build-host/
+/luckfox/out/
+/luckfox/work/
+/luckfox/dl/
+__pycache__/
+# wfb-ng keys never go into this (public) repo
+*.key

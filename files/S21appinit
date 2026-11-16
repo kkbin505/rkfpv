@@ -1,0 +1,24 @@
+#!/bin/sh
+# Replaces the SDK-generated S21appinit (which runs /oem/usr/bin/RkLunch.sh
+# and starts rkipc). Keeps the parts the camera needs: the oem init scripts
+# and the kernel modules (sensor, rockit, mpp_vcodec, ...). rkipc is not
+# started; S99fpv starts rkfpv instead.
+[ -f /etc/profile.d/RkEnv.sh ] && . /etc/profile.d/RkEnv.sh
+
+case "$1" in
+	start)
+		for i in /oem/usr/etc/init.d/S??*; do
+			[ -f "$i" ] && "$i" start
+		done
+		ko_dir=/ko
+		[ -f /oem/usr/ko/insmod_ko.sh ] && ko_dir=/oem/usr/ko
+		[ -f "$ko_dir/insmod_ko.sh" ] && (cd "$ko_dir" && sh insmod_ko.sh)
+		echo 1 > /proc/sys/vm/overcommit_memory
+		;;
+	stop)
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac

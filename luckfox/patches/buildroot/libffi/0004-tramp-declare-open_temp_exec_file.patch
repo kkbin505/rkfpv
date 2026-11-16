@@ -1,0 +1,17 @@
+From: rkfpv <rkfpv@localhost>
+Subject: tramp: declare open_temp_exec_file()
+
+GCC 14 makes implicit function declarations an error. The function is
+defined in closures.c; upstream libffi 3.4.5 adds the same declaration.
+
+--- a/src/tramp.c
++++ b/src/tramp.c
+@@ -253,6 +253,8 @@
+ 
+ #if defined (__linux__) || defined (__CYGWIN__)
+ 
++extern int open_temp_exec_file (void);
++
+ static int
+ ffi_tramp_get_temp_file (void)
+ {
