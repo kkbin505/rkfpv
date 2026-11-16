@@ -18,10 +18,18 @@ PIDFILE=/var/run/rkfpv.pid
 log() { echo "$1" | logger -s -t fpv; }
 
 pc_connected() {
-	# give the host PC a few seconds to enumerate the gadget
-	for i in 1 2 3 4; do
+	# "default"/"addressed"/"configured" all need a USB host that reset
+	# and talked to us; Windows can sit before "configured" for a while
+	# (or for good, without a driver). "powered"/"suspended" do not count:
+	# VBUS is the board's own 5 V rail, present with an OTG adapter too.
+	# Give the host up to 10 s.
+	for i in 1 2 3 4 5 6 7 8 9 10; do
 		for s in /sys/class/udc/*/state; do
-			[ "$(cat "$s" 2>/dev/null)" = "configured" ] && return 0
+			st=$(cat "$s" 2>/dev/null)
+			case "$st" in
+				default|addressed|configured)
+					log "USB gadget state: $st"; return 0 ;;
+			esac
 		done
 		sleep 1
 	done
