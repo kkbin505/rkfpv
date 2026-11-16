@@ -82,7 +82,7 @@ bitrate、max_bitrate、gop、rc、stat_time 不用重启就能生效（同时�
 
 需要：
 1. 内核打开 cfg80211；`rv1103g-luckfox-pico-mini.dts` 里把 `dr_mode` 改成 `"otg"`（开机后由 S99fpv 切 host），`&uart3` 改成 `status = "okay"`
-2. 交叉编译 `88XXau.ko`，放到 `/oem/usr/ko/`
+2. 网卡驱动（`luckfox/build-deps.sh` 编译，装到 `/oem/usr/ko/`，wfb.sh 按 USB ID 自动选）：`88XXau.ko`（8812AU）、`88x2cu.ko`（8812CU/8822CU）、`8812eu.ko`（8812EU）
 3. 交叉编译 wfb-ng（`wfb_tx`、`wfb_tx_cmd`）
 
 然后安装：

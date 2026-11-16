@@ -55,21 +55,34 @@ make -C "$WORK/wfb-ng" \
 	wfb_tx wfb_rx wfb_tx_cmd
 install -m 755 "$WORK"/wfb-ng/{wfb_tx,wfb_rx,wfb_tx_cmd} "$OUT/wfb/"
 
-# ---- RTL8812AU (OpenIPC FPV branch + OpenIPC build fixes) ----
-fetch "$RTL_REPO" "$RTL_REV" "$WORK/rtl8812au"
-for p in "$HERE"/patches/rtl8812au/*.patch; do
-	patch -d "$WORK/rtl8812au" -p1 -s < "$p"
-done
+# ---- Realtek USB WiFi drivers with monitor/injection support ----
+# Same sources and revisions as OpenIPC's rtl*-openipc packages.
 KVER=$(make -s -C "$KSRC" O="$KOBJ" ARCH=arm kernelrelease 2>/dev/null | tail -1)
-# the driver Makefile relies on kbuild's $(src), so build it as an external
-# module through the kernel tree (as buildroot's kernel-module infra does)
-make -C "$KSRC" O="$KOBJ" ARCH=arm CROSS_COMPILE="$CROSS" \
-	M="$WORK/rtl8812au" CONFIG_RTL8812AU=m KVER="$KVER" KSRC="$KOBJ" \
-	-j"$(nproc)" modules
-ko=$(ls "$WORK"/rtl8812au/*.ko | head -1)
-"${CROSS}strip" --strip-debug -o "$OUT/88XXau.ko" "$ko"
+rm -f "$OUT"/*.ko
+
+# driver <name> <repo> <rev> <ko-name> <make-opts...>
+driver() {
+	local name=$1 repo=$2 rev=$3 ko=$4; shift 4
+	fetch "$repo" "$rev" "$WORK/$name"
+	for p in "$HERE"/patches/"$name"/*.patch; do
+		[ -e "$p" ] && patch -d "$WORK/$name" -p1 -s < "$p"
+	done
+	# the driver Makefiles rely on kbuild's $(src), so build them as external
+	# modules through the kernel tree (as buildroot's kernel-module infra does)
+	make -C "$KSRC" O="$KOBJ" ARCH=arm CROSS_COMPILE="$CROSS" \
+		M="$WORK/$name" KVER="$KVER" KSRC="$KOBJ" "$@" \
+		-j"$(nproc)" modules
+	"${CROSS}strip" --strip-debug -o "$OUT/$ko.ko" "$WORK/$name/$ko.ko"
+}
+
+# RTL8812AU / 8811AU
+driver rtl8812au  "$RTL_REPO"                  "$RTL_REV" 88XXau CONFIG_RTL8812AU=m
+# RTL8812CU / 8822CU
+driver rtl88x2cu  libc0607/rtl88x2cu-20230728 6ca5aa097533ae953bb8141317bae6773eecd7ea 88x2cu CONFIG_RTL8822CU=m
+# RTL8812EU / 8822EU
+driver rtl88x2eu  libc0607/rtl88x2eu-20230815 12977e4013ecafbae993b3b08d46bff87d6d7c67 8812eu CONFIG_RTL8822EU=m
 
 echo "== outputs =="
-file "$OUT"/wfb/* "$OUT/88XXau.ko"
-modinfo "$OUT/88XXau.ko" 2>/dev/null | grep -E "^vermagic|^depends" || true
+file "$OUT"/wfb/* "$OUT"/*.ko
+ls -l "$OUT"/*.ko
 echo "kernel release: $KVER"

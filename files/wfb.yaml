@@ -1,5 +1,6 @@
 wireless:
-  txpower: 20
+  # txpower: OpenIPC per-driver scale; unset = adapter default (see wfb.sh)
+  # txpower: 20
   channel: 161
   width: 20
 broadcast:

@@ -13,7 +13,7 @@ SDK=${1:-${SDK:-$(cd "$HERE/.." && pwd)/luckfox-pico}}
 BOARD=$SDK/project/cfg/BoardConfig_IPC/BoardConfig-SD_CARD-Buildroot-RV1103_Luckfox_Pico_Mini-IPC.mk
 OV=$SDK/project/cfg/BoardConfig_IPC/overlay/overlay-rkfpv
 WFB=$HERE/luckfox/out/wfb
-KO=$HERE/luckfox/out/88XXau.ko
+KO=$HERE/luckfox/out/88XXau.ko	# all three drivers come from build-deps.sh
 KEY=${DRONE_KEY:-$(cd "$HERE/.." && pwd)/openipc/keys/drone.key}
 
 need() { [ -e "$1" ] || { echo "missing: $1" >&2; exit 1; }; }
@@ -34,7 +34,7 @@ install -m 755 "$WFB/wfb_tx" "$WFB/wfb_rx" "$OV/usr/bin/"
 install -m 755 "$HERE/files/S21appinit" "$HERE/files/S99fpv" "$OV/etc/init.d/"
 install -m 644 "$HERE/files/rkfpv.conf" "$HERE/files/wfb.yaml" "$OV/etc/"
 install -m 600 "$KEY" "$OV/etc/drone.key"
-install -m 644 "$KO" "$OV/oem/usr/ko/"
+install -m 644 "$HERE"/luckfox/out/*.ko "$OV/oem/usr/ko/"
 
 # hook the overlay into the board config once
 if ! grep -q 'overlay-rkfpv' "$BOARD"; then
