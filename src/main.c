@@ -320,6 +320,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "cannot open UDP socket to %s:%d\n", cfg.dst_ip, cfg.dst_port);
 		return 1;
 	}
+	rtp.pt = (uint8_t)cfg.pt;
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
 	MPP_CHN_S src = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = cfg.vi_chn };
