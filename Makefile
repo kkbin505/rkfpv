@@ -25,7 +25,10 @@ CFLAGS   += -std=gnu99 -Wall -Wextra -Wno-unused-parameter \
 	    -DRV1106_RV1103 -DUAPI2 -DISP_HW_V30 -DRKPLATFORM=ON \
 	    -march=armv7-a -mfpu=neon -mfloat-abi=hard $(INCS)
 LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
-	    -Wl,-rpath-link,$(AIQ)/lib:$(MPP)/lib:$(RGA)/lib:$(ROCKIT)/lib/lib32
+	    -Wl,-rpath-link,$(AIQ)/lib:$(MPP)/lib:$(RGA)/lib:$(ROCKIT)/lib/lib32 \
+	    -Wl,-rpath,/oem/usr/lib
+# rpath: on the board the Rockchip libs live in /oem/usr/lib, which the
+# uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lpthread -lm -lstdc++
 
 SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c

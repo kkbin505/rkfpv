@@ -7,6 +7,9 @@
 #   - anything else (RTL8812AU on an OTG adapter)   -> switch to host, start FPV
 # Override: touch /userdata/fpv.force (always FPV) or /userdata/fpv.off (never).
 
+# Rockchip env: LD_LIBRARY_PATH for /oem/usr/lib, PATH for /oem/usr/bin
+[ -f /etc/profile.d/RkEnv.sh ] && . /etc/profile.d/RkEnv.sh
+
 OTG_MODE=/sys/devices/platform/ff3e0000.usb2-phy/otg_mode
 PIDFILE=/var/run/rkfpv.pid
 
