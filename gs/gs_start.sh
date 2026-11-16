@@ -35,12 +35,21 @@ find_if
 [ -n "$IF" ] || { echo "no 8812AU interface found"; ls /sys/class/net; exit 1; }
 echo "interface: $IF"
 
+# keep NetworkManager / wpa_supplicant off it, or they put it back to managed
 nmcli dev set "$IF" managed no 2>/dev/null || true
+sleep 1
 # per-interface iw commands only; "iw dev" dumps every wiphy
-ip link set "$IF" down
-timeout 10 iw dev "$IF" set monitor otherbss || exit 1
-ip link set "$IF" up
-timeout 10 iw dev "$IF" set channel "$CH" HT20 || exit 1
+for try in 1 2 3; do
+	ip link set "$IF" down
+	timeout 10 iw dev "$IF" set type monitor || exit 1
+	ip link set "$IF" up
+	timeout 10 iw dev "$IF" set channel "$CH" HT20 || exit 1
+	sleep 1
+	# 803 = ARPHRD_IEEE80211_RADIOTAP, i.e. monitor mode stuck
+	[ "$(cat /sys/class/net/$IF/type)" = 803 ] && break
+	echo "interface went back to managed, retrying ($try)"
+done
+[ "$(cat /sys/class/net/$IF/type)" = 803 ] || { echo "could not keep $IF in monitor mode"; exit 1; }
 echo "monitor, channel $CH HT20"
 
 pkill -f "$RX" 2>/dev/null
