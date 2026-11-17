@@ -59,7 +59,9 @@ mirror|rkfpv||bool|0|1|0|video|Camera|Mirror left-right
 flip|rkfpv||bool|0|1|0|video|Camera|Flip upside down (mirror + flip = rotate 180)
 channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
 width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
-txpower|wfb|wireless|int|1|63|auto|txpower|Radio|TX power, OpenIPC scale (auto = adapter default)
+txpower_8812au|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
+txpower_8812cu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812CU / 8822CU TX power: level / 2 = dBm (auto = 20 = 10 dBm)
+txpower_8812eu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812EU TX power: level / 2 = dBm (auto = 40 = 20 dBm); high levels draw a lot of current
 mcs_index|wfb|broadcast|int|0|7|2|radio|Radio|Modulation: 0 slowest / longest range ... 7 fastest
 stbc|wfb|broadcast|bool|0|1|0|radio|Radio|STBC (needs 2 TX antennas)
 ldpc|wfb|broadcast|bool|0|1|0|radio|Radio|LDPC coding
@@ -207,15 +209,14 @@ wlan_driver() {
 	done
 }
 
-apply_txpower() {
-	p=$(get_value txpower)
-	drv=$(wlan_driver)
-	[ -n "$drv" ] || return 1
-	if [ "$p" = auto ]; then
-		[ "$drv" = 8812eu ] && p=40 || p=20
-	fi
-	[ "$drv" = 88XXau ] && mbm=$((p * -100)) || mbm=$((p * 50))
-	iw dev "$WLAN" set txpower fixed "$mbm"
+# the conversion per driver lives in wfb.sh only
+apply_txpower() { "$R/usr/bin/wfb.sh" txpower > /dev/null 2>&1; }
+
+# txpower key for the adapter that is plugged in
+txpower_key() {
+	case "$(wlan_driver)" in
+		88XXau) echo txpower_8812au ;; 88x2cu) echo txpower_8812cu ;; 8812eu) echo txpower_8812eu ;;
+	esac
 }
 
 apply_radio() {
@@ -393,6 +394,11 @@ cmd_status() {
 		fec=$(wfb_tx_cmd "$WFB_CMD_PORT" get_fec 2>/dev/null | tr '\n' ' ')
 	fi
 	drv=$(wlan_driver)
+	txk=$(txpower_key); txl=; txiw=
+	if [ -n "$txk" ]; then
+		txl=$(get_value "$txk")
+		txiw=$(iw dev "$WLAN" info 2>/dev/null | sed -n 's/.*txpower \([0-9.]*\) dBm.*/\1/p')
+	fi
 	mem=$(awk '/^MemAvailable:/ {print $2}' "$R/proc/meminfo" 2>/dev/null)
 	temp=$(cat "$R/sys/class/thermal/thermal_zone0/temp" 2>/dev/null)
 	[ -n "$temp" ] && temp=$((temp / 1000))
@@ -403,12 +409,13 @@ cmd_status() {
 		printf '"rkfpv_pid":"%s","wfb_tx_pid":"%s","fps":"%s","kbps":"%s","last_stats":"%s",' \
 			"$pid_rk" "$pid_tx" "$fps" "$kbps" "$(jesc "$stats")"
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
+		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s"}\n' "$mem" "$temp" "$up"
 	else
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
 		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
 		echo "wfb_tx:    ${pid_tx:-not running}  ${radio:+| $radio}${fec:+| $fec}"
-		echo "adapter:   ${drv:-none loaded}"
+		echo "adapter:   ${drv:-none loaded}${txk:+  | $txk = $txl (driver reports ${txiw:-?} dBm)}"
 		echo "memory:    ${mem:-?} kB available"
 		echo "temp:      ${temp:-?} C"
 		echo "uptime:    ${up:-?} s"
