@@ -135,10 +135,13 @@ loaded_driver() {
 
 case "$1" in
 	start|stop) "$1" ;;
+	adapter)
+		# hotspot mode: only detect the card and load its driver
+		load_modules ;;
 	txpower)
 		# re-apply TX power from wfb.yaml while the link runs (fpv set)
 		wfb_yaml "$wfb_cfg"
 		loaded_driver || { log "txpower: no adapter driver loaded"; exit 1; }
 		set_txpower ;;
-	*) echo "Usage: $0 {start|stop|txpower}"; exit 1 ;;
+	*) echo "Usage: $0 {start|stop|adapter|txpower}"; exit 1 ;;
 esac

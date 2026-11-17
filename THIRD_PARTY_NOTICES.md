@@ -68,6 +68,12 @@ Each patch file is a derivative of the project it patches and stays under that p
 | [libc0607/rtl88x2eu-20230815](https://github.com/libc0607/rtl88x2eu-20230815) | `12977e40` | GPL-2.0 | RTL8812EU driver |
 | [svpcom/rtl8812au](https://github.com/svpcom/rtl8812au) | `35779999` (v5.2.20) | GPL-2.0 | RTL8812AU driver (bench ground station) |
 
+## Added to the image by the build (Buildroot packages, not in this repository)
+| Project | License | Used for |
+|---|---|---|
+| hostapd | BSD-3-Clause | WiFi access point in hotspot mode |
+| dnsmasq | GPL-2.0 / GPL-3.0 | DHCP server in hotspot mode |
+
 ## Linked at build time, from the Luckfox Pico SDK (not in this repository)
 rkfpv links these libraries from the user's own copy of the [Luckfox Pico SDK](https://github.com/LuckfoxTECH/luckfox-pico). They are not distributed here.
 
