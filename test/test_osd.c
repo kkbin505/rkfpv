@@ -12,6 +12,7 @@
 #include "rk_comm_rgn.h"
 #include "rk_mpi_rgn.h"
 #include "../src/osd.h"
+#include "../src/osd_layout.h"
 
 static uint8_t *g_buf;
 static int g_w, g_h, g_updates;
@@ -51,16 +52,24 @@ int main(int argc, char **argv)
 	int w = argc > 3 ? atoi(argv[2]) : 1280, h = argc > 3 ? atoi(argv[3]) : 720;
 	osd_t *o = osd_create(0, 0, w, h);
 	if (!o) { printf("FAIL create\n"); return 1; }
-	int m = osd_width(o) / 40, lh = osd_line_height(o);
+	int lh = osd_line_height(o);
+	/* sample flight: ArduCopter LOITER, armed 3:12, 4S pack */
+	telem_t t;
+	telem_init(&t);
+	uint64_t now = 1000000;
+	t.last_ms = now;
+	t.have_hb = 1; t.custom_mode = 5; t.type = 2; t.autopilot = 3; t.armed = 1;
+	t.armed_since_ms = now - 192000;
+	t.have_sys = 1; t.volts = 15.4f; t.amps = 12.3f; t.remaining = 78; t.mah = 1234;
+	t.rc_rssi = 251; t.rc_ms = now;
+	osd_view_t v = { &t, "REC", 1, -48, 98, now };
+	osd_draw_view(o, &v);
+	/* clipping at the edges must not crash */
 	osd_begin(o);
-	osd_text(o, m, m, "rkfpv OSD test");
-	osd_text_right(o, osd_width(o) - m, m, "12:34");
-	osd_text(o, m, osd_height(o) - m - lh, "29.9 fps  3.48 Mbit/s");
-	osd_text_right(o, osd_width(o) - m, osd_height(o) - m - lh, "REC");
-	osd_cross(o, osd_width(o) / 2, osd_height(o) / 2, osd_height(o) / 30);
-	osd_text(o, -5, osd_height(o) / 3, "clip left edge");      /* must not crash */
+	osd_text(o, -5, osd_height(o) / 3, "clip left edge");
 	osd_text(o, osd_width(o) - 40, osd_height(o) / 3 + lh, "clip right");
-	osd_commit(o);
+	g_updates = 0;
+	osd_draw_view(o, &v);               /* final picture for the image */
 
 	int fails = 0, counts[4] = { 0 };
 	for (int i = 0; i < g_w * g_h; i++)
