@@ -127,6 +127,14 @@ check "json log text" 'stats: 30.0 fps, 3512 kbps, "x" q\z' \
 check "status parses stats" "30.0 3512" \
 	"$(fpv status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["fps"], d["kbps"])')"
 
+# every preset in configurator/presets must be accepted by fpv as a whole
+for f in "$HERE"/configurator/presets/*.json; do
+	setup
+	pairs=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["values"]; print(" ".join(f"{k} {x}" for k,x in v.items()))' "$f")
+	fpv set $pairs > /dev/null 2>&1 && ok "preset $(basename "$f")" || bad "preset $(basename "$f"): $(fpv set $pairs 2>&1)"
+done
+setup
+
 # mode + reset
 fpv mode debug > /dev/null; [ -e "$T/root/userdata/fpv.off" ] && ok "mode debug" || bad "mode debug"
 fpv mode auto > /dev/null; [ ! -e "$T/root/userdata/fpv.off" ] && ok "mode auto" || bad "mode auto"

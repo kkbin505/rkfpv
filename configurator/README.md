@@ -23,6 +23,7 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 |---|---|
 | Status | 模式（FPV / 调试）、码流 fps/码率、无线 MCS/FEC、温度、内存；开机模式切换；安装脚本 |
 | Video / Camera / Radio / Telemetry | 根据 `fpv schema` 自动生成的表单 |
+| Presets & Backup | 把所有设置备份成 PC 上的 JSON 文件，或从文件恢复；套用预设（Factory defaults / Bench / Long range / Low latency） |
 | Logs | rkfpv 日志（本次 / 上次开机）、开机日志、内核日志 |
 | CLI | 直接在板子上执行命令，例如 `fpv help`，也可以是任意 shell 命令 |
 
@@ -31,6 +32,14 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 - **live**：FPV 正在运行时立即生效（编码器 SIGHUP，或 `wfb_tx_cmd`）
 - **restart**：要重启视频才生效，保存后会出现 *Restart* 按钮
 - **link**：信道、带宽、link_id、遥测。**地面站也要改成一样**，否则会断链
+
+## 备份、恢复和预设
+
+- **Save backup to PC**：把当前所有设置（`fpv get`）存成 `rkfpv-backup-日期-时间.json`。ADB 和 fpvd 两种连接都能用。
+- **Restore from file…** 和预设都会先打开对比表：列出板子上的当前值 → 新值，每行一个勾选框。只有勾选的项会写入，而且是一条 `fpv set`，`fpv` 会先校验全部参数再写。
+  - **link 类设置**（信道、带宽、link_id、遥测）默认不勾选。如果只改板子、不改地面站，会断链。
+  - 板子上没有的参数（比如新版本备份里多出来的）、超出范围的值，都会列出来并跳过。
+- **预设**就是 `configurator/presets/` 下的 JSON 文件：`{"name", "description", "values": {...}}`。可以直接加新文件；`make test` 会检查每个预设都能被 `fpv` 接受。预设里永远不放 link 类设置。
 
 ## 连接方式
 

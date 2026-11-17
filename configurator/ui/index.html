@@ -33,6 +33,7 @@
     <a data-tab="Camera">Camera</a>
     <a data-tab="Radio">Radio</a>
     <a data-tab="Telemetry">Telemetry</a>
+    <a data-tab="presets">Presets &amp; Backup</a>
     <a data-tab="logs">Logs</a>
     <a data-tab="cli">CLI</a>
   </nav>
@@ -76,6 +77,42 @@
 
     <section id="tab-form" class="tab" hidden>
       <div id="formBody"></div>
+    </section>
+
+    <section id="tab-presets" class="tab" hidden>
+      <div class="box">
+        <h3>Backup &amp; restore</h3>
+        <p class="muted">Save every setting to a file on this PC, or load one back. Restoring shows what
+          would change first; nothing is written until you apply.</p>
+        <div class="row">
+          <button id="backup" class="primary">Save backup to PC</button>
+          <button id="restore">Restore from file…</button>
+          <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <div class="box" id="diffBox" hidden>
+        <h3 id="diffTitle"></h3>
+        <p id="diffDesc" class="muted"></p>
+        <p id="diffEmpty" class="muted">Nothing to change: the board already has these values.</p>
+        <table id="diffTable" class="diff">
+          <thead><tr><th></th><th>setting</th><th>board now</th><th></th><th>new</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="diffExtra" class="sub"></p>
+        <div class="row">
+          <button id="diffAll" class="ghost">Tick all</button>
+          <button id="diffNone" class="ghost">Untick all</button>
+          <span class="spacer"></span>
+          <button id="diffCancel" class="ghost">Cancel</button>
+          <button id="diffApply" class="primary">Apply</button>
+        </div>
+      </div>
+      <div class="box">
+        <h3>Presets</h3>
+        <p class="muted">Starting points for common setups. Link settings (channel, link ID) are never
+          in a preset; TX power only where the preset says so.</p>
+        <div id="presetList" class="presets"></div>
+      </div>
     </section>
 
     <section id="tab-logs" class="tab" hidden>
