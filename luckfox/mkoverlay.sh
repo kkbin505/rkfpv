@@ -19,6 +19,7 @@ KEY=${DRONE_KEY:-$(cd "$HERE/.." && pwd)/openipc/keys/drone.key}
 need() { [ -e "$1" ] || { echo "missing: $1" >&2; exit 1; }; }
 need "$HERE/build/rkfpv"
 need "$HERE/build/mavbridge"
+need "$HERE/build/fpvd"
 need "$KEY"
 need "$WFB/wfb_tx"
 need "$WFB/wfb_rx"
@@ -27,7 +28,7 @@ need "$KO"
 rm -rf "$OV"
 install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko"
 
-install -m 755 "$HERE/build/rkfpv" "$HERE/build/mavbridge" "$OV/usr/bin/"
+install -m 755 "$HERE/build/rkfpv" "$HERE/build/mavbridge" "$HERE/build/fpvd" "$OV/usr/bin/"
 install -m 755 "$HERE/files/wfb.sh" "$HERE/files/fpv" "$OV/usr/bin/"
 install -m 755 "$WFB/wfb_tx" "$WFB/wfb_rx" "$OV/usr/bin/"
 [ -e "$WFB/wfb_tx_cmd" ] && install -m 755 "$WFB/wfb_tx_cmd" "$OV/usr/bin/"

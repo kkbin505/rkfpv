@@ -15,10 +15,12 @@ import os
 import secrets
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -119,6 +121,61 @@ class Ssh(Transport):
             raise TransportError((err or out).strip())
 
 
+class Fpvd(Transport):
+    """UDP to the board's fpvd (src/fpvd.c): `fpv` commands only, no shell.
+    Works over any IP path: USB RNDIS (172.32.0.93) now, the wfb tunnel
+    (10.5.0.10) later. Lost datagrams are handled by resending the request
+    with the same id; fpvd answers a repeated id from its cache."""
+
+    PORT = 7000
+    TRIES = 4
+    TRY_TIMEOUT = 4.0     # one try covers a slow `fpv schema` on the board
+
+    def __init__(self, host):
+        h, _, p = host.partition(":")
+        self.addr = (h or "172.32.0.93", int(p) if p else self.PORT)
+
+    def fpv(self, args):
+        for a in args:
+            a = str(a)
+            if not a or any(not (c.isalnum() or c in "_.,:-") for c in a):
+                return {"ok": False, "error": f"argument not allowed over fpvd: {a!r}"}
+        rid = secrets.token_hex(6)
+        req = ("FPV1 %s %s" % (rid, " ".join(map(str, args)))).encode()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        parts, total = {}, None
+        try:
+            for _ in range(self.TRIES):
+                s.sendto(req, self.addr)
+                deadline = time.time() + self.TRY_TIMEOUT
+                while time.time() < deadline:
+                    s.settimeout(max(0.05, deadline - time.time()))
+                    try:
+                        data, _ = s.recvfrom(65535)
+                    except socket.timeout:
+                        break
+                    except OSError as e:     # e.g. ICMP port unreachable
+                        raise TransportError(f"fpvd at {self.addr[0]}:{self.addr[1]}: {e}")
+                    head, _, body = data.partition(b"\n")
+                    f = head.decode("ascii", "replace").split(" ")
+                    if len(f) != 3 or f[0] != "FPV1" or f[1] != rid:
+                        continue
+                    seq, total = map(int, f[2].split("/"))
+                    parts[seq] = body
+                    if len(parts) == total:
+                        raw = b"".join(parts[i] for i in range(1, total + 1))
+                        return json.loads(raw.decode("utf-8", "replace"))
+        finally:
+            s.close()
+        raise TransportError(f"no answer from fpvd at {self.addr[0]}:{self.addr[1]}")
+
+    def shell(self, cmdline, timeout=TIMEOUT):
+        raise TransportError("fpvd runs fpv commands only (no shell)")
+
+    def push(self, local, remote):
+        raise TransportError("installing files needs ADB")
+
+
 def transport_for(req):
     kind = req.get("transport", "adb")
     if kind == "adb":
@@ -126,10 +183,14 @@ def transport_for(req):
     if kind == "ssh":
         host = req.get("host") or "10.5.0.10"
         return Ssh(host)
+    if kind == "fpvd":
+        return Fpvd(req.get("host") or "172.32.0.93")
     raise TransportError(f"unknown transport {kind}")
 
 
 def run_fpv(t, args):
+    if isinstance(t, Fpvd):
+        return t.fpv(args)
     cmdline = "fpv " + " ".join(shlex.quote(str(a)) for a in args) + " --json"
     rc, out, err = t.shell(cmdline)
     text = out.strip()
@@ -151,6 +212,14 @@ def run_cli(t, line):
     line = line.strip()
     if not line:
         return {"ok": True, "output": ""}
+    if isinstance(t, Fpvd):
+        words = line.split()
+        if words[0] != "fpv" or len(words) < 2:
+            return {"ok": True, "output": "over fpvd only `fpv <command>` works, e.g. fpv get"}
+        r = t.fpv([w for w in words[1:] if w != "--json"])
+        if "text" in r and r.get("ok"):          # fpv log
+            return {"ok": True, "output": r["text"].rstrip("\n")}
+        return {"ok": True, "output": json.dumps(r, indent=2)}
     rc, out, err = t.shell(line)
     return {"ok": True, "rc": rc, "output": (out + err).rstrip("\n")}
 
@@ -170,6 +239,15 @@ def push_lf(t, rel, remote):
 
 
 def install(t):
+    if isinstance(t, Fpvd):
+        raise TransportError("installing files needs ADB")
+    installed = []
+    # fpvd is a compiled binary: only there if this checkout ran `make`
+    fpvd_bin = os.path.join(REPO, "build", "fpvd")
+    if os.path.isfile(fpvd_bin):
+        t.push(fpvd_bin, "/usr/bin/fpvd")
+        t.shell("chmod 755 /usr/bin/fpvd")
+        installed.append("/usr/bin/fpvd")
     for rel, remote, mode in BOARD_FILES:
         push_lf(t, rel, remote)
         t.shell(f"chmod {mode} {shlex.quote(remote)}")
@@ -180,7 +258,8 @@ def install(t):
         if "yes" not in out:
             push_lf(t, rel, f"/etc/fpv/defaults/{name}")
     t.shell("sync")
-    return {"ok": True, "installed": [r for _, r, _ in BOARD_FILES]}
+    installed += [r for _, r, _ in BOARD_FILES]
+    return {"ok": True, "installed": installed}
 
 
 class Handler(BaseHTTPRequestHandler):

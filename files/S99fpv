@@ -67,8 +67,16 @@ pc_connected() {
 	return 1
 }
 
+# command service for the configurator: runs in debug and FPV mode
+# (reachable over USB RNDIS now, over the wfb tunnel later: issue #1)
+start_fpvd() {
+	[ -x /usr/bin/fpvd ] || return 0
+	start-stop-daemon -S -q -b -m -p /var/run/fpvd.pid -x /usr/bin/fpvd -- -p 7000
+}
+
 start() {
 	rotate_logs
+	start_fpvd
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
 		return 0
@@ -92,6 +100,7 @@ start() {
 stop() {
 	stop_video
 	/usr/bin/wfb.sh stop
+	start-stop-daemon -K -q -p /var/run/fpvd.pid
 }
 
 # `fpv restart`: re-run one half of the FPV chain with the new settings,
