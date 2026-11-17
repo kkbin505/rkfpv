@@ -13,6 +13,7 @@
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
+#   fpv hotspot status               hotspot switch, mode, SSID, password, clients
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -42,6 +43,7 @@ WLAN=wlan0
 # file:   rkfpv -> /etc/rkfpv.conf (key = value)
 #         wfb   -> /etc/wfb.yaml under <section>: (key: value)
 # type:   int (min..max) | bool (0/1) | enum (choices in min, comma separated)
+#         str (length min..max, letters digits _ . -)
 #         a type like int+iq+off also accepts those words besides a number:
 #           auto (wfb keys: written commented out = adapter default)
 #           iq   (keep the IQ file's value)   off
@@ -97,6 +99,10 @@ isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise red
 isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
 isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)
 iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
+hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generated as rkfpv-XXXX on first boot); used next time the switch turns the hotspot on
+hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 characters (random on first boot)
+hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz (fast), 1/6/11 = 2.4 GHz (if 5 GHz does not start)
+hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
 dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
@@ -235,6 +241,11 @@ EOF
 			fi ;;
 		enum)
 			case ",$min," in *",$2,"*) ;; *) echo "$1: '$2' not one of $min"; return 1 ;; esac ;;
+		str)
+			case "$2" in *[!A-Za-z0-9_.-]*) echo "$1: only letters, digits and _ . - are allowed"; return 1 ;; esac
+			if [ ${#2} -lt "$min" ] || [ ${#2} -gt "$max" ]; then
+				echo "$1: length must be $min..$max"; return 1
+			fi ;;
 	esac
 	return 0
 }
@@ -307,6 +318,8 @@ cmd_schema() {
 		fi
 		if [ "$type" = enum ]; then
 			printf '"choices":["%s"],' "$(echo "$min" | sed 's/,/","/g')"
+		elif [ "$type" = str ]; then
+			printf '"min":%s,"max":%s,"pattern":"^[A-Za-z0-9_.-]*$",' "$min" "$max"
 		else
 			printf '"min":%s,"max":%s,' "$min" "$max"
 		fi
@@ -382,6 +395,7 @@ EOF
 		case "$1" in
 			venc) echo $res_venc ;; radio) echo $res_radio ;; fec) echo $res_fec ;;
 			txpower) echo $res_tx ;; video) echo $res_video ;; link) echo $res_link ;;
+			hotspot) echo next-hotspot ;;
 			*) echo $res_boot ;;
 		esac
 	}
@@ -749,6 +763,31 @@ iq_keep() {
 	done
 }
 
+# ---------------------------------------------------------------- hotspot
+
+hotspot_cmd() {
+	case "${1:-status}" in
+	status)
+		sw=$(sed -n 's/.*switch=\([a-z]*\).*/\1/p' "$R/tmp/switch.status" 2>/dev/null)
+		mode=$(cat "$R/tmp/mode.status" 2>/dev/null)
+		clients=0
+		[ "$mode" = hotspot ] && clients=$(iw dev "$WLAN" station dump 2>/dev/null | grep -c '^Station')
+		ssid=$(get_value hotspot_ssid); pass=$(get_value hotspot_pass)
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"switch":"%s","mode":"%s","ssid":"%s","pass":"%s","channel":"%s","clients":%s,"address":"192.168.73.1"}\n' \
+				"${sw:-none}" "${mode:-fpv}" "$(jesc "$ssid")" "$(jesc "$pass")" "$(get_value hotspot_channel)" "${clients:-0}"
+		else
+			echo "switch:   ${sw:-none} (closed = hotspot)"
+			echo "mode:     ${mode:-fpv}"
+			echo "ssid:     $ssid"
+			echo "password: $pass"
+			echo "channel:  $(get_value hotspot_channel)"
+			[ "$mode" = hotspot ] && echo "clients:  $clients   (http://192.168.73.1/ for recordings)"
+		fi ;;
+	*) die "hotspot: status" ;;
+	esac
+}
+
 usage() {
 	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -778,6 +817,7 @@ case "$cmd" in
 	reset) cmd_reset ;;
 	dvr) dvr_cmd "$@" ;;
 	iq) iq_cmd "$@" ;;
+	hotspot) hotspot_cmd "$@" ;;
 	help|-h|--help) usage ;;
 	*) die "unknown command '$cmd' (fpv help)" ;;
 esac

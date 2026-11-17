@@ -169,3 +169,20 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 
 - `isp_*` settings call rkaiq at runtime (exposure cap, gain cap, AE delay/damping, NR, BLC/HLC, colour, sharpness, WB, dehaze, anti-flicker). `iq` = the IQ file's value; spatial and temporal NR default to **off**.
 - IQ files: stock `/oem/usr/share/iqfiles` is read-only; edits live in `/userdata/iq` (`fpv iq copy-stock|install|history|rollback`, `iq_dir`). Uploads are validated, md5-checked and swapped atomically; the last 5 versions are kept. A custom IQ that fails, or two starts in a row without a frame, falls back to stock.
+
+## 15. Hotspot mode (wireless-settings branch)
+
+- Switch: GPIO1_C6 to GND. SDK edits:
+  - Mini DTS (`rv1103g-luckfox-pico-mini.dts`): `hotspot-switch` gpio-keys node (KEY_WLAN, active low, debounce 50 ms) plus a pinctrl pull-up on 1 RK_PC6.
+  - buildroot defconfig: `BR2_PACKAGE_HOSTAPD=y`, `BR2_PACKAGE_DNSMASQ=y`.
+  - Confirm the pin against the Mini pinout before wiring.
+- fpvd watches the switch (1 s hold) and runs `S99fpv hotspot-on|off`; `fpvd -q` gives the boot decision.
+- hotspot-on:
+  - stop rkfpv and wfb
+  - `wfb.sh adapter`
+  - wlan0 managed, 192.168.73.1/24
+  - hostapd (WPA2, settings from `wfb.yaml` `hotspot:`)
+  - dnsmasq DHCP .10–.50
+  - `dvrhttpd` on port 80
+- hotspot-off restarts wfb and rkfpv.
+- Tests: `test_switch.py` (fake evdev), `test_dvrhttpd.py`, fpv str-type cases.
