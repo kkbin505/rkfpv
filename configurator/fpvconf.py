@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -153,16 +154,30 @@ def run_cli(t, line):
     return {"ok": True, "rc": rc, "output": (out + err).rstrip("\n")}
 
 
+def push_lf(t, rel, remote):
+    """Push a repo file with LF line endings: a Windows checkout may have
+    CRLF, and the board's shell cannot run a script with CR in it."""
+    with open(os.path.join(REPO, rel), "rb") as f:
+        data = f.read().replace(b"\r\n", b"\n")
+    fd, tmp = tempfile.mkstemp(prefix="fpvconf-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        t.push(tmp, remote)
+    finally:
+        os.unlink(tmp)
+
+
 def install(t):
     for rel, remote, mode in BOARD_FILES:
-        t.push(os.path.join(REPO, rel), remote)
+        push_lf(t, rel, remote)
         t.shell(f"chmod {mode} {shlex.quote(remote)}")
     # shipped defaults for `fpv reset`, only if the image did not bring them
     t.shell("mkdir -p /etc/fpv/defaults")
     for rel, name in DEFAULT_FILES:
         rc, out, _ = t.shell(f"[ -f /etc/fpv/defaults/{name} ] && echo yes")
         if "yes" not in out:
-            t.push(os.path.join(REPO, rel), f"/etc/fpv/defaults/{name}")
+            push_lf(t, rel, f"/etc/fpv/defaults/{name}")
     t.shell("sync")
     return {"ok": True, "installed": [r for _, r, _ in BOARD_FILES]}
 
