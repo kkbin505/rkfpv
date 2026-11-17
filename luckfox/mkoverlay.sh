@@ -47,6 +47,12 @@ if grep -q '256M(userdata),-(rootfs)"' "$BOARD"; then
 	sed -i 's/256M(userdata),-(rootfs)"/256M(userdata),512M(rootfs),-(dvr)"/' "$BOARD"
 fi
 grep '^export RK_PARTITION_CMD_IN_ENV' "$BOARD"
+# The SDK packer (lf_blkenvpackage) wants an image for every partition. The
+# dvr one is 64 KB of zeros: it keeps sd_update.img small (the partition
+# grows to the end of the card) and clears any old filesystem header there,
+# so S99fpv formats it on first boot.
+install -d "$SDK/output/image"
+head -c 65536 /dev/zero > "$SDK/output/image/dvr.img"
 
 # hook the overlay into the board config once
 if ! grep -q 'overlay-rkfpv' "$BOARD"; then
