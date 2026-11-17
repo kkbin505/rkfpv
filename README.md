@@ -67,7 +67,32 @@ UART3 ← mavbridge ← udp:14550 ← wfb_rx -p 144 ◀──无线── 地面
 
 `mavbridge` 按 MAVLink 帧边界切分，把最多 15 帧、不超过 1000 字节打成一个 UDP 包，最多攒 30 ms 就发。这样丢一个无线包只会丢掉几条完整消息，不会出现半帧数据。遥测的 FEC 用 1/2（每包发两份），不用等攒满一组。
 
-## 运行时调参
+## 改设置：`fpv` 命令和电脑上的配置工具
+
+板子上的 `fpv` 命令统一管理 `/etc/rkfpv.conf` 和 `/etc/wfb.yaml`。通过 `adb shell` 和 `ssh` 用法完全一样：
+
+```sh
+fpv get                         # 所有设置
+fpv set bitrate 4000 mcs_index 3   # 先全部校验再写入；FPV 在跑时能热生效的会立即生效
+fpv schema                      # 每个参数的范围、默认值、生效方式
+fpv status                      # 模式、帧率/码率、无线参数、内存、温度
+fpv log [rkfpv|rkfpv-prev|fpv|kernel]   # 日志存在 /userdata/log，断电重启后还在
+fpv restart [video|link|all]    # 让需要重启的设置生效
+fpv mode [auto|debug|fpv]       # 开机模式（fpv = 总是 FPV，ADB 不再出现，慎用）
+fpv reset                       # 恢复出厂设置
+```
+
+加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
+
+**电脑上的配置工具**（类似 Betaflight Configurator）：板子接电脑开机进入调试模式后，运行
+
+```sh
+python3 configurator/fpvconf.py
+```
+
+浏览器里会打开界面，详见 `configurator/README.md`。
+
+直接改文件也可以：
 
 ```sh
 vi /etc/rkfpv.conf

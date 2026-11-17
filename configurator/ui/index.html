@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rkfpv Configurator</title>
+<link rel="stylesheet" href="style.css">
+<script>window.FPV_TOKEN = "__TOKEN__";</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">rk<b>fpv</b> <span>configurator</span></div>
+  <div class="conn">
+    <select id="transport" title="How to reach the board">
+      <option value="adb">ADB (USB)</option>
+      <option value="ssh">SSH (wfb tunnel)</option>
+    </select>
+    <select id="device" title="ADB device"></select>
+    <input id="host" value="10.5.0.10" title="SSH host" hidden>
+    <button id="refresh" class="ghost" title="Rescan ADB devices">⟳</button>
+    <button id="connect" class="primary">Connect</button>
+  </div>
+  <div class="badges">
+    <span id="modeBadge" class="badge off">disconnected</span>
+  </div>
+</header>
+
+<div class="layout">
+  <nav id="tabs">
+    <a data-tab="status" class="active">Status</a>
+    <a data-tab="Video">Video</a>
+    <a data-tab="Camera">Camera</a>
+    <a data-tab="Radio">Radio</a>
+    <a data-tab="Telemetry">Telemetry</a>
+    <a data-tab="logs">Logs</a>
+    <a data-tab="cli">CLI</a>
+  </nav>
+
+  <main>
+    <div id="notConnected" class="empty">
+      <h2>Connect to the board</h2>
+      <ol>
+        <li>Plug the board's USB into this PC <em>without</em> the WiFi adapter and power it up.
+          It boots into debug mode and ADB appears after ~15&nbsp;s.</li>
+        <li>Pick the device above and press <b>Connect</b>.</li>
+      </ol>
+      <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
+        FPV boot. Live changes need the SSH link over wfb (not built yet).</p>
+    </div>
+
+    <section id="tab-status" class="tab" hidden>
+      <div class="grid">
+        <div class="box"><h3>Mode</h3><div class="big" id="stMode">–</div><div class="sub" id="stModeSub"></div></div>
+        <div class="box"><h3>Video stream</h3><div class="big" id="stStream">–</div><div class="sub" id="stStreamSub"></div></div>
+        <div class="box"><h3>Radio</h3><div class="big" id="stRadio">–</div><div class="sub" id="stRadioSub"></div></div>
+        <div class="box"><h3>Board</h3><div class="big" id="stBoard">–</div><div class="sub" id="stBoardSub"></div></div>
+      </div>
+      <div class="box">
+        <h3>Boot mode</h3>
+        <p class="muted">What the board does at power-up. <b>Auto</b>: debug mode (ADB) when a PC is on USB,
+          otherwise FPV.</p>
+        <div class="seg" id="bootMode">
+          <button data-mode="auto">Auto</button>
+          <button data-mode="debug">Always debug</button>
+          <button data-mode="fpv">Always FPV</button>
+        </div>
+      </div>
+      <div class="box">
+        <h3>Board scripts</h3>
+        <p class="muted">Copy <code>fpv</code> and <code>S99fpv</code> from this repo to the board
+          (until the next image is flashed).</p>
+        <button id="install">Install / update on board</button>
+      </div>
+    </section>
+
+    <section id="tab-form" class="tab" hidden>
+      <div id="formBody"></div>
+    </section>
+
+    <section id="tab-logs" class="tab" hidden>
+      <div class="box">
+        <div class="row">
+          <div class="seg" id="logSel">
+            <button data-log="rkfpv" class="on">rkfpv</button>
+            <button data-log="rkfpv-prev">rkfpv (previous boot)</button>
+            <button data-log="fpv">boot / fpv</button>
+            <button data-log="kernel">kernel</button>
+          </div>
+          <span class="spacer"></span>
+          <button id="logReload" class="ghost">Reload</button>
+        </div>
+        <pre id="logText" class="log"></pre>
+      </div>
+    </section>
+
+    <section id="tab-cli" class="tab" hidden>
+      <div class="box cli">
+        <pre id="cliOut" class="log"></pre>
+        <form id="cliForm" class="row">
+          <span class="prompt">#</span>
+          <input id="cliIn" autocomplete="off" spellcheck="false"
+                 placeholder="fpv help · fpv get · fpv set bitrate 4000 · any shell command">
+          <button class="primary">Send</button>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer id="saveBar" hidden>
+  <span id="saveInfo"></span>
+  <span class="spacer"></span>
+  <button id="revert" class="ghost">Revert</button>
+  <button id="save" class="primary">Save</button>
+</footer>
+
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
