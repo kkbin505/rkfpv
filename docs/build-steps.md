@@ -75,6 +75,8 @@ DRONE_KEY=~/github/openipc/keys/drone.key luckfox/mkoverlay.sh
 cd ../luckfox-pico && ./build.sh      # -> output/image/sd_update.img
 ```
 
+`mkoverlay.sh` also writes `output/image/dvr.img` (64 KB of zeros) for the DVR partition: without it the SDK packer stops with `dvr.img not found`. Run it again after an SDK clean.
+
 Overlay contents:
 - `/usr/bin/rkfpv`, `mavbridge`, `wfb_tx`, `wfb_rx`, `wfb_tx_cmd`, `wfb.sh`
 - `/etc/init.d/S99fpv`, `/etc/rkfpv.conf`, `/etc/wfb.yaml`, `/etc/drone.key`
