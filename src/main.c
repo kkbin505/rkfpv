@@ -36,6 +36,8 @@
 #include "dvr.h"
 #include "isp.h"
 #include "osd.h"
+#include "osd_layout.h"
+#include "telem.h"
 #include "rtp_h265.h"
 
 #define VENC_CHN 0              /* link stream -> RTP */
@@ -417,32 +419,41 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 #define OSD_LINK_HANDLE 0
 #define OSD_DVR_HANDLE 1
 
-struct osd_info {
-	double fps, mbps;
-	unsigned long long up_s;
-	const char *dvr;        /* "REC", "rec off", ... */
-};
+#define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
+#define UPLINK_STATUS "/tmp/wfb_uplink.status"
+#define OSD_PERIOD_US 250000            /* 4 redraws per second */
 
-/* test content: corners + centre, sized from the stream */
-static uint64_t draw_osd(osd_t *o, const struct osd_info *in, uint64_t (*clock_us)(void))
+/* air-side wfb_rx (uplink from the ground station), see wfb.sh */
+static int read_uplink(int *rssi, int *lq)
+{
+	struct stat st;
+	if (stat(UPLINK_STATUS, &st) || time(NULL) - st.st_mtime > 3)
+		return 0;
+	FILE *f = fopen(UPLINK_STATUS, "r");
+	if (!f)
+		return 0;
+	char r[16] = "";
+	int uniq = 0, lost = 0;
+	int n = fscanf(f, "rssi=%15s uniq=%d lost=%d", r, &uniq, &lost);
+	fclose(f);
+	if (n != 3 || uniq + lost == 0 || !strcmp(r, "none"))
+		return 0;
+	*rssi = atoi(r);
+	*lq = uniq * 100 / (uniq + lost);
+	return 1;
+}
+
+/* one OSD redraw, timed */
+static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
+			 uint64_t (*clock_us)(void))
 {
 	if (!o)
 		return 0;
-	uint64_t t = clock_us();
-	if (osd_begin(o))
-		return 0;
-	int w = osd_width(o), h = osd_height(o), lh = osd_line_height(o);
-	int m = w / 40;                 /* margin */
-	char s[64];
-	osd_text(o, m, m, "rkfpv OSD test");
-	snprintf(s, sizeof s, "%02llu:%02llu", in->up_s / 60, in->up_s % 60);
-	osd_text_right(o, w - m, m, s);
-	snprintf(s, sizeof s, "%.1f fps  %.2f Mbit/s", in->fps, in->mbps);
-	osd_text(o, m, h - m - lh, s);
-	osd_text_right(o, w - m, h - m - lh, in->dvr);
-	osd_cross(o, w / 2, h / 2, h / 30);
-	osd_commit(o);
-	return clock_us() - t;
+	uint64_t t0 = clock_us();
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms };
+	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
+	osd_draw_view(o, &v);
+	return clock_us() - t0;
 }
 
 /* ---- DVR stream capture (dual mode) ------------------------------------ */
@@ -567,6 +578,7 @@ int main(int argc, char **argv)
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
 	osd_t *osd_link = NULL, *osd_dvr = NULL;
+	int telem_fd = -1;
 	int dvr_vi_up = 0, dvr_venc_up = 0, dvr_bound = 0, dual = 0, cap_started = 0;
 	pthread_t cap_thr;
 	struct dvr_cap cap;
@@ -693,7 +705,12 @@ int main(int argc, char **argv)
 		if (dual)
 			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
 	}
-	uint64_t t_osd = now_us(), osd_frames = 0, osd_bytes = 0, osd_worst = 0;
+	uint64_t t_osd = now_us(), osd_worst = 0;
+	telem_t telem;
+	telem_init(&telem);
+	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
+	if ((osd_link || osd_dvr) && telem_fd < 0)
+		fprintf(stderr, "osd: cannot listen on udp %d for telemetry\n", TELEM_PORT);
 
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
 	uint64_t pkts0 = 0, t_start = t0, dvr_f0 = 0, dvr_b0 = 0;
@@ -778,11 +795,9 @@ int main(int argc, char **argv)
 				dvr_push(dvr, data, len, p->u64PTS, p->bFrameEnd);
 
 			bytes += len;
-			osd_bytes += len;
 			cur_frame += len;
 			if (p->bFrameEnd) {
 				frames++;
-				osd_frames++;
 				g_nframes++;
 				if (cur_frame > max_frame)
 					max_frame = cur_frame;
@@ -809,21 +824,20 @@ int main(int argc, char **argv)
 				(unsigned long long)bytes);
 		}
 
-		if ((osd_link || osd_dvr) && now_us() - t_osd >= 1000000u) {
-			double s = (now_us() - t_osd) / 1e6;
-			char ds[300] = "", st[32] = "rec off";
+		if (telem_fd >= 0)
+			telem_poll(&telem, telem_fd, now_us() / 1000);
+		if ((osd_link || osd_dvr) && now_us() - t_osd >= OSD_PERIOD_US) {
+			char ds[300] = "", rec[16] = "";
 			if (dvr) {
 				dvr_status(dvr, ds, sizeof ds);
 				if (strstr(ds, "state=recording"))
-					snprintf(st, sizeof st, "REC");
+					snprintf(rec, sizeof rec, "REC");
 				else if (strstr(ds, "state=full"))
-					snprintf(st, sizeof st, "CARD FULL");
-			} else
-				snprintf(st, sizeof st, "no dvr");
-			struct osd_info in = { osd_frames / s, osd_bytes * 8 / s / 1e6,
-					       (now_us() - t_start) / 1000000u, st };
-			uint64_t d1 = draw_osd(osd_link, &in, now_us);
-			uint64_t d2 = draw_osd(osd_dvr, &in, now_us);
+					snprintf(rec, sizeof rec, "CARD FULL");
+			}
+			uint64_t now_ms = now_us() / 1000;
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, now_us);
 			if (d1 + d2 > osd_worst) {
 				osd_worst = d1 + d2;
 				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",
@@ -831,7 +845,6 @@ int main(int argc, char **argv)
 					(unsigned long long)d2);
 			}
 			t_osd = now_us();
-			osd_frames = osd_bytes = 0;
 		}
 
 		uint64_t t = now_us();
@@ -866,6 +879,8 @@ int main(int argc, char **argv)
 
 out:
 	/* each step is logged so a crash during teardown shows where it was */
+	if (telem_fd >= 0)
+		close(telem_fd);
 	osd_destroy(osd_link);
 	osd_destroy(osd_dvr);
 	if (cap_started) {

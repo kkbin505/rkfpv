@@ -108,11 +108,23 @@ start_telemetry() {
 	log "telemetry: /dev/$serial @ $baud"
 	# -R: libpcap's default 2 MB capture ring is resident memory; the uplink
 	# carries a few hundred bytes/s, 128 KB is plenty (VmRSS 4.4 -> 2.8 MB)
-	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -R 131072 -u 14550 "$wfb_dev" > /dev/null 2>&1 &
+	# uplink stats once a second -> /tmp/wfb_uplink.status (rkfpv OSD):
+	#   RX_ANT  <freq:mcs:bw> <ant> <count:rssi_min:rssi_avg:rssi_max:snr_min:snr_avg:snr_max>
+	#   PKT     all:bytes:dec_err:session:data:uniq:fec_rec:lost:bad:out:out_bytes
+	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -R 131072 -u 14550 -l 1000 "$wfb_dev" 2>/dev/null | awk '
+		$2 == "RX_ANT" { split($5, a, ":"); if (!n || a[3] > best) best = a[3]; n++ }
+		$2 == "PKT" {
+			split($3, p, ":")
+			f = "/tmp/wfb_uplink.status"
+			printf "rssi=%s uniq=%d lost=%d\n", (n ? best : "none"), p[6], p[8] > f
+			close(f)
+			n = 0
+		}' &
 	wfb_tx -K "$wfb_key" -M "$tun_index" -B "$width" -k 1 -n 2 \
 		-S "$stbc" -L "$ldpc" -i "$link_id" -p 16 -u 14551 "$wfb_dev" > /dev/null 2>&1 &
+	# -c: a copy of the FC stream for rkfpv's OSD (UDP 14560)
 	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 > /dev/null 2>&1 &
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 > /dev/null 2>&1 &
 }
 
 start() {
@@ -130,6 +142,7 @@ start() {
 
 stop() {
 	killall -q mavbridge wfb_tx wfb_rx
+	rm -f /tmp/wfb_uplink.status
 }
 
 # detect [seconds]: is a supported adapter on the bus? (S99fpv's boot test)
