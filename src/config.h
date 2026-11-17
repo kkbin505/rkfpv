@@ -5,6 +5,25 @@
 
 typedef enum { RC_CBR = 0, RC_VBR = 1 } rc_mode_t;
 
+/* ISP (rkaiq) runtime controls. ISP_IQ = keep the IQ file's value. */
+#define ISP_IQ (-1)
+enum { WB_AUTO = 0, WB_DAYLIGHT, WB_CLOUDY, WB_SHADE, WB_TWILIGHT, WB_FLUORESCENT, WB_INCANDESCENT };
+
+typedef struct {
+	int brightness, contrast, saturation, hue;  /* iq | 0..255 (128 = neutral) */
+	int sharpness;          /* iq | 0..100 */
+	int exp_max_ms;         /* iq | 1..33 ms: longest exposure (motion blur) */
+	int gain_max;           /* iq | 1..512 x */
+	int antiflicker;        /* iq | 0 off | 50 | 60 */
+	int ae_delay;           /* iq | 0..4 frames before AE reacts */
+	int ae_damp;            /* iq | 0..100 = AE damping 0.00..1.00 */
+	int blc, hlc;           /* 0 off | 1..100: backlight / highlight compensation */
+	int nr_spatial;         /* iq | 0 off | 1..100 */
+	int nr_temporal;        /* iq | 0 off | 1..100 */
+	int dehaze;             /* iq | 0 off | 1..100 */
+	int wb;                 /* WB_* */
+} isp_settings_t;
+
 typedef struct {
 	/* capture */
 	int width;
@@ -44,6 +63,8 @@ typedef struct {
 	rc_mode_t dvr_rc;
 	int dvr_bitrate_kbps;
 	int dvr_gop;
+
+	isp_settings_t isp;
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;

@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 35 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 52 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -154,6 +154,52 @@ fpv set dvr_format mkv > /dev/null 2>&1 && bad "bad dvr_format accepted" || ok "
 fpv set dvr_segment 5 > /dev/null 2>&1 && bad "dvr_segment 5 accepted" || ok "dvr_segment below 10 rejected"
 rm -rf "$T/root/mnt" "$T/root/tmp"
 check "no partition -> no-card" "no-card" "$(fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+
+# ISP settings: words and ranges
+setup
+fpv set isp_exp_max 4 isp_nr_temporal iq isp_blc off isp_antiflicker 60 isp_wb shade > /dev/null
+check "isp values stored" "isp_exp_max = 4|isp_nr_temporal = iq|isp_blc = off|isp_antiflicker = 60|isp_wb = shade" \
+	"$(fpv get isp_exp_max isp_nr_temporal isp_blc isp_antiflicker isp_wb | tr '\n' '|' | sed 's/|$//')"
+check "rkfpv.conf keeps the word iq" "isp_nr_temporal = iq" "$(grep '^isp_nr_temporal' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//')"
+fpv set isp_exp_max 34 > /dev/null 2>&1 && bad "isp_exp_max 34 accepted" || ok "isp_exp_max 34 rejected"
+fpv set isp_exp_max off > /dev/null 2>&1 && bad "off accepted where not allowed" || ok "off only where allowed"
+fpv set isp_sharpness auto > /dev/null 2>&1 && bad "auto accepted on an iq key" || ok "auto only on auto keys"
+fpv set txpower_8812cu iq > /dev/null 2>&1 && bad "iq accepted on txpower" || ok "iq only on iq keys"
+fpv set isp_antiflicker 55 > /dev/null 2>&1 && bad "antiflicker 55 accepted" || ok "antiflicker 55 rejected"
+check "schema specials" "iq off" "$(fpv schema --json | python3 -c 'import json,sys; print(" ".join(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_nr_spatial")["specials"]))')"
+check "schema base type" "int" "$(fpv schema --json | python3 -c 'import json,sys; print(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_nr_spatial")["type"])')"
+
+# IQ files: stock never written, verified install, history, rollback
+setup
+S="$T/root/oem/usr/share/iqfiles"; C="$T/root/userdata/iq"
+mkdir -p "$S"
+printf 'stock\r\nno-newline' > "$S/sc3336_T.json"
+cp "$S/sc3336_T.json" "$T/stock.orig"
+fpv iq copy-stock > /dev/null
+cmp -s "$S/sc3336_T.json" "$C/sc3336_T.json" && ok "copy-stock byte-identical (CRLF kept)" || bad "copy-stock changed bytes"
+printf 'mine' > "$C/sc3336_T.json"
+fpv iq copy-stock > /dev/null
+check "copy-stock never overwrites an edit" "mine" "$(cat "$C/sc3336_T.json")"
+for i in 1 2 3 4 5 6 7; do
+	printf "v$i" > "$C/sc3336_T.json.new"
+	fpv iq install sc3336_T.json "$(md5sum "$C/sc3336_T.json.new" | cut -d' ' -f1)" > /dev/null
+done
+check "install puts the new file in place" "v7" "$(cat "$C/sc3336_T.json")"
+check "history keeps the last 5" "3 4 5 6 7" "$(ls "$C/history" | sed 's/.*\.//' | sort -n | tr '\n' ' ' | sed 's/ $//')"
+printf 'corrupt' > "$C/sc3336_T.json.new"
+fpv iq install sc3336_T.json 00000000000000000000000000000000 > /dev/null 2>&1 && bad "bad md5 accepted" || ok "bad md5 rejected"
+check "bad upload leaves the active file" "v7" "$(cat "$C/sc3336_T.json")"
+[ ! -e "$C/sc3336_T.json.new" ] && ok "bad upload removed" || bad "bad upload left behind"
+cp "$C/history/sc3336_T.json.5" "$T/v5"
+fpv iq rollback sc3336_T.json 5 > /dev/null
+cmp -s "$T/v5" "$C/sc3336_T.json" && ok "rollback restores byte-identical" || bad "rollback content"
+fpv iq rollback sc3336_T.json > /dev/null
+check "rollback without a version = previous" "v7" "$(cat "$C/sc3336_T.json")"
+fpv iq install ../x.json 0123456789abcdef0123456789abcdef > /dev/null 2>&1 && bad "path name accepted" || ok "path name rejected"
+fpv iq install other.json 0123456789abcdef0123456789abcdef > /dev/null 2>&1 && bad "non-stock name accepted" || ok "non-stock name rejected"
+cmp -s "$T/stock.orig" "$S/sc3336_T.json" && ok "stock file never changed" || bad "stock file changed"
+check "iq status lists both" "sc3336_T.json sc3336_T.json" \
+	"$(fpv iq status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stock"][0]["name"], d["custom"][0]["name"])')"
 
 # every preset in configurator/presets must be accepted by fpv as a whole
 for f in "$HERE"/configurator/presets/*.json; do

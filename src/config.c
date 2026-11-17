@@ -42,6 +42,21 @@ void config_defaults(rkfpv_config_t *c)
 	c->dvr_bitrate_kbps = 8000;
 	c->dvr_gop = 30;        /* 1 s: fMP4 fragment and seek granularity */
 
+	/* iq = whatever the active IQ file sets (a custom IQ may set its own) */
+	c->isp.brightness = c->isp.contrast = c->isp.saturation = c->isp.hue = ISP_IQ;
+	c->isp.sharpness = ISP_IQ;
+	c->isp.exp_max_ms = ISP_IQ;
+	c->isp.gain_max = ISP_IQ;
+	c->isp.antiflicker = ISP_IQ;
+	c->isp.ae_delay = ISP_IQ;
+	c->isp.ae_damp = ISP_IQ;
+	c->isp.blc = 0;
+	c->isp.hlc = 0;
+	c->isp.nr_spatial = 0;  /* off: no smearing on fast motion (user's choice) */
+	c->isp.nr_temporal = 0;
+	c->isp.dehaze = ISP_IQ;
+	c->isp.wb = WB_AUTO;
+
 	c->stats_interval = 5;
 }
 
@@ -68,6 +83,21 @@ static int parse_size(const char *v, int *w, int *h)
 	return 0;
 }
 
+/* "iq" -> ISP_IQ, "off" -> 0 where allowed, else a number in lo..hi */
+static int parse_isp(const char *v, int lo, int hi, int allow_off, int *out)
+{
+	if (!strcmp(v, "iq")) { *out = ISP_IQ; return 0; }
+	if (allow_off && !strcmp(v, "off")) { *out = 0; return 0; }
+	return parse_int(v, lo, hi, out);
+}
+
+static const char *const WB_NAMES[] = {
+	"auto", "daylight", "cloudy", "shade", "twilight", "fluorescent", "incandescent", NULL
+};
+
+#define ISP_KEY(name, field, lo, hi, off) \
+	if (!strcmp(key, name)) return parse_isp(val, lo, hi, off, &c->isp.field)
+
 #define INT_KEY(name, field, lo, hi) \
 	if (!strcmp(key, name)) return parse_int(val, lo, hi, &c->field)
 
@@ -84,6 +114,30 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 		snprintf(c->dst_ip, sizeof(c->dst_ip), "%s", val);
 		return 0;
 	}
+	if (!strcmp(key, "isp_wb")) {
+		for (int i = 0; WB_NAMES[i]; i++)
+			if (!strcmp(val, WB_NAMES[i])) { c->isp.wb = i; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "isp_antiflicker")) {
+		if (!strcmp(val, "50")) { c->isp.antiflicker = 50; return 0; }
+		if (!strcmp(val, "60")) { c->isp.antiflicker = 60; return 0; }
+		return parse_isp(val, 0, 0, 1, &c->isp.antiflicker);
+	}
+	ISP_KEY("isp_brightness", brightness, 0, 255, 0);
+	ISP_KEY("isp_contrast", contrast, 0, 255, 0);
+	ISP_KEY("isp_saturation", saturation, 0, 255, 0);
+	ISP_KEY("isp_hue", hue, 0, 255, 0);
+	ISP_KEY("isp_sharpness", sharpness, 0, 100, 0);
+	ISP_KEY("isp_exp_max", exp_max_ms, 1, 33, 0);
+	ISP_KEY("isp_gain_max", gain_max, 1, 512, 0);
+	ISP_KEY("isp_ae_delay", ae_delay, 0, 4, 0);
+	ISP_KEY("isp_ae_damp", ae_damp, 0, 100, 0);
+	ISP_KEY("isp_blc", blc, 0, 100, 1);
+	ISP_KEY("isp_hlc", hlc, 0, 100, 1);
+	ISP_KEY("isp_nr_spatial", nr_spatial, 1, 100, 1);
+	ISP_KEY("isp_nr_temporal", nr_temporal, 1, 100, 1);
+	ISP_KEY("isp_dehaze", dehaze, 1, 100, 1);
 	if (!strcmp(key, "dvr_size")) {
 		if (!strcmp(val, "link")) { c->dvr_width = c->dvr_height = 0; return 0; }
 		return parse_size(val, &c->dvr_width, &c->dvr_height);

@@ -126,7 +126,10 @@ table.diff tr.bad td { opacity: .6; }
 .param.changed .name::after { content: " ●"; }
 .param input[type=number], .param select { width: 100%; }
 .param .auto { display: flex; gap: 6px; align-items: center; }
-.param .auto input[type=number] { flex: 1; }
+.param .auto input[type=number] { flex: 1; min-width: 0; }
+.param .auto select { width: auto; flex: 0 0 auto; }
+#iqState { gap: 10px; }
+h4 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); }
 .tag { white-space: nowrap; font-size: 10.5px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: 1px; text-transform: uppercase; }
 .tag.live { background: #e5f1dc; color: #3a7419; }
 .tag.restart { background: #f8ecd2; color: #8a5d00; }
