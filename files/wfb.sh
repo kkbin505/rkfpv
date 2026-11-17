@@ -64,24 +64,32 @@ load_modules() {
 	return 1
 }
 
+# TX power. Each adapter has its own key (txpower_8812au / _8812cu /
+# _8812eu), OpenIPC scale 1-63 (~0.5 dB per step); the old shared `txpower`
+# key is still read as a fallback. Unset -> OpenIPC's default for the card.
+#   88XXau (OpenIPC fork): negative mBm = raw power index -> level x -100
+#   88x2cu / 8812eu:       target power in mBm           -> level x 50 (level/2 dBm)
+set_txpower() {
+	case "$driver" in
+		88XXau) key=txpower_8812au; def=20 ;;
+		88x2cu) key=txpower_8812cu; def=20 ;;
+		8812eu) key=txpower_8812eu; def=40 ;;
+		*) log "txpower: unknown driver '$driver'"; return 1 ;;
+	esac
+	eval "level=\${$key:-\$txpower}"
+	[ -n "$level" ] || level=$def
+	[ "$driver" = 88XXau ] && mbm=$((level * -100)) || mbm=$((level * 50))
+	log "txpower: $key=$level -> iw $mbm"
+	iw dev "$wfb_dev" set txpower fixed "$mbm"
+}
+
 load_interface() {
 	ifconfig "$wfb_dev" up || return 1
 	iw "$wfb_dev" set monitor none
 	[ "$width" = "40" ] && ht=HT40+ || ht=HT20
 	iw "$wfb_dev" set channel "$channel" "$ht"
 	iw reg set 00
-	# txpower uses OpenIPC's per-driver scale: 88XXau takes it as negative
-	# mBm (x -100), the others as mBm (x 50). Unset -> OpenIPC's first-boot
-	# default for that adapter (88XXau 20, 8812eu 40; 88x2cu has none there).
-	if [ -z "$txpower" ]; then
-		case "$driver" in
-			8812eu) txpower=40 ;;
-			*) txpower=20 ;;
-		esac
-	fi
-	[ "$driver" = 88XXau ] && wfb_power=$((txpower * -100)) || wfb_power=$((txpower * 50))
-	log "txpower $txpower -> iw $wfb_power"
-	iw "$wfb_dev" set txpower fixed "$wfb_power"
+	set_txpower
 }
 
 # MAVLink over wfb-ng, same radio ports as OpenIPC so ground stations need
@@ -116,7 +124,20 @@ stop() {
 	killall -q mavbridge wfb_tx wfb_rx
 }
 
+# driver of the adapter that is already up (for `txpower`)
+loaded_driver() {
+	for m in 88XXau 88x2cu 8812eu; do
+		grep -q "^$m " /proc/modules && { driver=$m; return 0; }
+	done
+	return 1
+}
+
 case "$1" in
 	start|stop) "$1" ;;
-	*) echo "Usage: $0 {start|stop}"; exit 1 ;;
+	txpower)
+		# re-apply TX power from wfb.yaml while the link runs (fpv set)
+		wfb_yaml "$wfb_cfg"
+		loaded_driver || { log "txpower: no adapter driver loaded"; exit 1; }
+		set_txpower ;;
+	*) echo "Usage: $0 {start|stop|txpower}"; exit 1 ;;
 esac
