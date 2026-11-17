@@ -1,5 +1,7 @@
 /* Minimal AIQ bring-up, following media/samples/example/common/isp3.x/
- * sample_comm_isp.c (SAMPLE_COMM_ISP_Init/Run/Stop/SetFrameRate). */
+ * sample_comm_isp.c (SAMPLE_COMM_ISP_Init/Run/Stop/SetFrameRate).
+ * That sample is Copyright 2020 Fuzhou Rockchip Electronics Co., Ltd.,
+ * BSD-style license; see THIRD_PARTY_NOTICES.md. */
 #include "isp.h"
 
 #include <stdio.h>
