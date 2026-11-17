@@ -38,6 +38,12 @@ typedef struct {
 	int dvr_overwrite;      /* delete oldest files when full */
 	int dvr_ts;             /* 1: .ts, 0: fragmented .mp4 */
 	int dvr_buffer_kb;      /* ring between stream loop and card writer */
+	/* separate DVR stream (VI main path -> its own encoder); width 0 =
+	 * record the link stream instead */
+	int dvr_width, dvr_height;
+	rc_mode_t dvr_rc;
+	int dvr_bitrate_kbps;
+	int dvr_gop;
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;

@@ -78,6 +78,10 @@ dvr|rkfpv||bool|0|1|1|boot|DVR|Record automatically when FPV starts (Start/Stop 
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
 dvr_overwrite|rkfpv||bool|0|1|1|venc|DVR|When full: 1 = delete the oldest recordings, 0 = stop recording
+dvr_size|rkfpv||enum|1920x1080,1280x720,2304x1296,link||1920x1080|video|DVR|Recording resolution (own encoder on the ISP main path); link = record the radio stream
+dvr_bitrate|rkfpv||int|1000|20000|8000|venc|DVR|Recording bitrate, kbit/s (the radio stream is set on the Video tab)
+dvr_rc|rkfpv||enum|vbr,cbr||vbr|venc|DVR|Recording rate control: vbr spends bits where the scene needs them
+dvr_gop|rkfpv||int|1|120|30|venc|DVR|Recording keyframe interval, frames. MP4 holds one GOP in RAM (bitrate x GOP): keep about 1 s
 dvr_format|rkfpv||enum|mp4,ts||mp4|venc|DVR|mp4 = fragmented MP4 (plays after a power cut), ts = MPEG-TS; from the next file
 EOF
 }
@@ -558,14 +562,16 @@ dvr_cmd() {
 		running rkfpv || { file=-; bytes=0; drops=0; }
 		set -- $(dvr_space)
 		total=${1:-0}; free=${2:-0}
+		mem=$(awk '/^MemAvailable:/ {print $2}' "$R/proc/meminfo" 2>/dev/null)
 		if [ "$JSON" = 1 ]; then
-			printf '{"ok":true,"state":"%s","file":"%s","bytes":"%s","drops":"%s","total_mb":"%s","free_mb":"%s","fpv_running":%s,"error":"%s"}\n' \
+			printf '{"ok":true,"state":"%s","file":"%s","bytes":"%s","drops":"%s","total_mb":"%s","free_mb":"%s","fpv_running":%s,"error":"%s","mem_avail_kb":"%s"}\n' \
 				"$state" "$(jesc "$file")" "${bytes:-0}" "${drops:-0}" "$total" "$free" \
-				"$(running rkfpv && echo true || echo false)" "$(jesc "$err")"
+				"$(running rkfpv && echo true || echo false)" "$(jesc "$err")" "$mem"
 		else
 			echo "dvr:   $state${err:+ ($err)}"
 			[ "$file" != - ] && [ -n "$file" ] && echo "file:  $file ($bytes bytes, $drops dropped frames)"
 			echo "card:  $free MB free of $total MB"
+			echo "ram:   ${mem:-?} kB available"
 		fi ;;
 	start|stop)
 		if ! running rkfpv; then
