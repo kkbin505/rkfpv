@@ -112,8 +112,17 @@ start_fpvd() {
 	start-stop-daemon -S -q -b -m -p /var/run/fpvd.pid -x /usr/bin/fpvd -- -p 7000
 }
 
+# High-bitrate recording on a 64 MB board: by default the kernel lets ~20%
+# of RAM fill with data waiting for the card before writing it out. Start
+# writing at 1 MB and throttle writers at 4 MB instead.
+limit_dirty_memory() {
+	echo 1048576 > /proc/sys/vm/dirty_background_bytes
+	echo 4194304 > /proc/sys/vm/dirty_bytes
+}
+
 start() {
 	rotate_logs
+	limit_dirty_memory
 	dvr_mount
 	start_fpvd
 	if [ -e /userdata/fpv.off ]; then

@@ -395,7 +395,8 @@ async function refreshDvr() {
   $("#dvrFile").textContent = rec && r.file !== "-" ? r.file : "";
   $("#dvrSub").textContent = !r.fpv_running
     ? "FPV is off (debug mode): recording happens in FPV mode. Start/Stop needs fpvd over the air (issue #1) or the serial console."
-    : rec ? `${fmtMB(+r.bytes)} written${+r.drops ? ` · ${r.drops} frames dropped (card too slow?)` : ""}`
+    : rec ? `${fmtMB(+r.bytes)} written${+r.drops ? ` · ${r.drops} frames dropped (card too slow?)` : ""}` +
+      (r.mem_avail_kb ? ` · RAM free ${(r.mem_avail_kb / 1024).toFixed(1)} MB` : "")
     : r.error ? `error: ${r.error.replace(/_/g, " ")}` : "";
   const total = +r.total_mb, free = +r.free_mb;
   $("#dvrBar").style.width = total ? `${Math.round(100 * (total - free) / total)}%` : "0";
