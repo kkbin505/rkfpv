@@ -55,12 +55,12 @@ code { background: var(--panel2); padding: 1px 4px; border-radius: 3px; }
 .layout { flex: 1; display: flex; min-height: 0; }
 nav { width: 170px; background: var(--nav); border-right: 1px solid var(--line); padding-top: 8px; flex-shrink: 0; }
 nav a {
-  display: block; padding: 10px 18px; color: var(--muted); cursor: pointer;
+  display: block; padding: 10px 18px; color: #3d3934; cursor: pointer;
   border-left: 3px solid transparent; user-select: none;
 }
 nav a:hover { color: var(--text); background: var(--panel2); }
 nav a.active { color: var(--accent); background: var(--accent-soft); border-left-color: var(--accent); font-weight: 600; }
-nav.disabled a:not([data-tab="status"]) { pointer-events: none; opacity: .4; }
+nav.disabled a:not([data-tab="status"]) { pointer-events: none; color: #8a847b; }
 main { flex: 1; overflow: auto; padding: 16px; padding-bottom: 80px; }
 
 .empty { max-width: 640px; margin: 40px auto; }
