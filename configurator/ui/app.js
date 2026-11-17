@@ -16,7 +16,7 @@ const state = {
   txpowerKey: "",    // txpower_<card> of the adapter in use (from status)
 };
 
-const NON_FORM_TABS = ["status", "presets", "logs", "cli"];
+const NON_FORM_TABS = ["status", "dvr", "presets", "logs", "cli"];
 
 const APPLY_TAG = {
   venc: ["live", "live"], radio: ["live", "live"], fec: ["live", "live"], txpower: ["live", "live"],
@@ -82,6 +82,7 @@ function showTab(tab) {
   else if (tab === "logs") { $("#tab-logs").hidden = false; loadLog(); }
   else if (tab === "cli") { $("#tab-cli").hidden = false; $("#cliIn").focus(); }
   else if (tab === "presets") { $("#tab-presets").hidden = false; loadPresets(); }
+  else if (tab === "dvr") { $("#tab-dvr").hidden = false; renderForm("DVR", $("#dvrSettings")); refreshDvr(); loadDvrFiles(); }
   else { $("#tab-form").hidden = false; renderForm(tab); }
 }
 
@@ -129,7 +130,10 @@ async function connect() {
     $("#tabs").classList.remove("disabled");
     showTab(state.tab);
     if (state.tab !== "status") refreshStatus();   // mode badge
-    state.pollTimer = setInterval(() => state.tab === "status" && refreshStatus(), 2000);
+    state.pollTimer = setInterval(() => {
+      if (state.tab === "status") refreshStatus();
+      if (state.tab === "dvr") refreshDvr();
+    }, 2000);
   } catch (e) {
     toast("Configurator server not reachable: " + e, "err");
   } finally {
@@ -268,8 +272,7 @@ function control(p, value) {
   return wrap;
 }
 
-function renderForm(group) {
-  const body = $("#formBody");
+function renderForm(group, body = $("#formBody")) {
   body.innerHTML = "";
   const params = state.schema.filter((p) => p.group === group);
   const box = document.createElement("div");
@@ -356,13 +359,109 @@ async function save() {
   if (!r || !r.ok) return;
   state.edits = {};
   updateSaveBar();
+  rerenderForms();
+}
+
+// redraw the settings form(s) of the current tab after values changed
+function rerenderForms() {
   if (!NON_FORM_TABS.includes(state.tab)) renderForm(state.tab);
+  else if (state.tab === "dvr") renderForm("DVR", $("#dvrSettings"));
 }
 
 function revert() {
   state.edits = {};
   updateSaveBar();
-  if (!NON_FORM_TABS.includes(state.tab)) renderForm(state.tab);
+  rerenderForms();
+}
+
+// ---------------------------------------------------------------- DVR
+
+const fmtMB = (b) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB";
+let dvrState = "";
+
+async function refreshDvr() {
+  const r = await fpv("dvr", "status");
+  if (!r.ok) return;
+  dvrState = r.state;
+  const badge = $("#dvrBadge"), btn = $("#dvrToggle");
+  const label = { recording: "● REC", waiting: "● waiting for keyframe", stopped: "stopped",
+                  full: "card full", error: "error", "no-card": "no DVR partition", off: "off" }[r.state] || r.state;
+  badge.textContent = label;
+  badge.className = "recbadge" + (r.state === "recording" || r.state === "waiting" ? " rec"
+    : ["full", "error", "no-card"].includes(r.state) ? " warn" : "");
+  const rec = r.state === "recording" || r.state === "waiting";
+  btn.textContent = rec ? "Stop recording" : "Start recording";
+  btn.disabled = !r.fpv_running || r.state === "no-card";
+  $("#dvrFile").textContent = rec && r.file !== "-" ? r.file : "";
+  $("#dvrSub").textContent = !r.fpv_running
+    ? "FPV is off (debug mode): recording happens in FPV mode. Start/Stop needs fpvd over the air (issue #1) or the serial console."
+    : rec ? `${fmtMB(+r.bytes)} written${+r.drops ? ` · ${r.drops} frames dropped (card too slow?)` : ""}`
+    : r.error ? `error: ${r.error.replace(/_/g, " ")}` : "";
+  const total = +r.total_mb, free = +r.free_mb;
+  $("#dvrBar").style.width = total ? `${Math.round(100 * (total - free) / total)}%` : "0";
+  $("#dvrSpace").textContent = total ? `${(free / 1024).toFixed(1)} GB free of ${(total / 1024).toFixed(1)} GB` : "";
+}
+
+async function toggleDvr() {
+  const start = !(dvrState === "recording" || dvrState === "waiting");
+  const r = await fpv("dvr", start ? "start" : "stop");
+  if (!r.ok) return toast(r.error, "err");
+  toast(start ? "Recording starts at the next keyframe" : "Recording stopped", "ok");
+  setTimeout(() => { refreshDvr(); loadDvrFiles(); }, 1200);
+}
+
+let dvrFiles = [];
+async function loadDvrFiles() {
+  const tb = $("#dvrFiles");
+  const r = await fpv("dvr", "list");
+  tb.innerHTML = "";
+  if (!r.ok) { $("#dvrHint").textContent = r.error; dvrFiles = []; return; }
+  dvrFiles = r.files;
+  const adb = $("#transport").value === "adb";
+  $("#dvrHint").textContent = !r.files.length ? "No recordings on the card."
+    : adb ? `Files are saved on this PC in the folder 'Open folder' shows.`
+    : "Downloading needs the ADB (USB) connection.";
+  for (const f of r.files) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="mono"></td><td></td><td></td>`;
+    tr.children[0].textContent = f.name + (f.recording ? "  ● recording" : "");
+    tr.children[1].textContent = fmtMB(f.size);
+    const dl = document.createElement("button");
+    dl.textContent = "Download";
+    dl.disabled = !adb || f.recording;
+    dl.onclick = () => pull(f.name, dl);
+    const del = document.createElement("button");
+    del.textContent = "Delete";
+    del.className = "ghost danger";
+    del.disabled = f.recording;
+    del.onclick = async () => {
+      if (!confirm(`Delete ${f.name} from the card?`)) return;
+      const d = await fpv("dvr", "delete", f.name);
+      d.ok ? loadDvrFiles() : toast(d.error, "err");
+    };
+    tr.children[2].append(dl, del);
+    tb.appendChild(tr);
+  }
+}
+
+async function pull(name, btn) {
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "downloading…"; }
+  const r = await post("/api/dvr/pull", { name });
+  if (btn) { btn.disabled = false; btn.textContent = old; }
+  if (!r.ok) { toast(r.error, "err"); return false; }
+  toast(`${name}: ${fmtMB(r.size)} in ${r.seconds} s (${r.mbps} MB/s)\n${r.path}`, "ok",
+        [["Open folder", () => post("/api/dvr/open", {})]]);
+  return true;
+}
+
+async function pullAll() {
+  const todo = dvrFiles.filter((f) => !f.recording);
+  for (let i = 0; i < todo.length; i++) {
+    toast(`Downloading ${i + 1}/${todo.length}: ${todo[i].name}…`);
+    if (!(await pull(todo[i].name, null))) return;
+  }
+  if (todo.length) toast(`Downloaded ${todo.length} recording(s)`, "ok", [["Open folder", () => post("/api/dvr/open", {})]]);
 }
 
 // ---------------------------------------------------------------- presets + backup
@@ -565,6 +664,15 @@ $("#cliIn").onkeydown = (e) => {
   if (e.key === "ArrowDown") { histPos = Math.min(cliHistory.length, histPos + 1); $("#cliIn").value = cliHistory[histPos] || ""; }
 };
 $("#save").onclick = save;
+$("#dvrToggle").onclick = toggleDvr;
+$("#dvrRefresh").onclick = () => { refreshDvr(); loadDvrFiles(); };
+$("#dvrAll").onclick = pullAll;
+$("#dvrOpen").onclick = async () => { const r = await post("/api/dvr/open", {}); if (!r.ok) toast(r.error, "err"); };
+$("#dvrDelAll").onclick = async () => {
+  if (!confirm("Delete ALL recordings from the card (except one being recorded)?")) return;
+  const r = await fpv("dvr", "delete-all");
+  r.ok ? (toast(`Deleted ${r.deleted} file(s)`, "ok"), loadDvrFiles()) : toast(r.error, "err");
+};
 $("#backup").onclick = backup;
 $("#restore").onclick = () => $("#restoreFile").click();
 $("#restoreFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) restoreFile(f); };

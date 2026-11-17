@@ -155,3 +155,10 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 - PC: `python3 configurator/fpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
 - Before reflashing: `adb push files/fpv /usr/bin/` (or the UI's *Install / update on board*).
 - Tests: `test/test_fpv.sh` (dash + busybox sh), part of `make test`.
+
+## 13. DVR (recording to the TF card)
+
+- rkfpv records the same H.265 stream it transmits, through the SDK's `librkmuxer`. The file is fragmented MP4 (default) or TS, on the `dvr` partition mounted at `/mnt/dvr`.
+- New partition table (set by `luckfox/mkoverlay.sh`): `…,256M(userdata),512M(rootfs),-(dvr)`. **Reflash needed.** First boot formats the DVR partition as ext4.
+- Settings: `dvr`, `dvr_segment` (600 s), `dvr_min_free` (300 MB), `dvr_overwrite`, `dvr_format`. Control: `fpv dvr status|start|stop|list|delete|delete-all`.
+- Download without removing the card: boot with the PC on USB (debug mode), then use the configurator's DVR tab or `adb pull /mnt/dvr/<file>`.
