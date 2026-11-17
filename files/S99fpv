@@ -14,8 +14,39 @@
 # does not move dwc3 out of device mode ("illegal mode").
 USB_ROLE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 PIDFILE=/var/run/rkfpv.pid
+# on the TF card, so `fpv log` over ADB still has the last flight's logs
+LOGDIR=/userdata/log
+mkdir -p "$LOGDIR"
 
-log() { echo "$1" | logger -s -t fpv; }
+log() {
+	echo "$1" | logger -s -t fpv
+	echo "$(date '+%F %T') $1" >> "$LOGDIR/fpv.log"
+}
+
+# keep the previous boot's logs, cap fpv.log
+rotate_logs() {
+	[ -f "$LOGDIR/rkfpv.log" ] && mv -f "$LOGDIR/rkfpv.log" "$LOGDIR/rkfpv.prev.log"
+	if [ -f "$LOGDIR/fpv.log" ] && [ "$(wc -c < "$LOGDIR/fpv.log")" -gt 65536 ]; then
+		tail -n 200 "$LOGDIR/fpv.log" > "$LOGDIR/fpv.log.tmp" && mv -f "$LOGDIR/fpv.log.tmp" "$LOGDIR/fpv.log"
+	fi
+}
+
+start_video() {
+	# -b would send rkfpv's output to /dev/null; keep it in a log instead
+	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $LOGDIR/rkfpv.log 2>&1"
+}
+
+stop_video() {
+	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
+	killall -q rkfpv
+	# let the encoder / ISP tear down before a new instance grabs them
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		pidof rkfpv > /dev/null || return 0
+		sleep 1
+	done
+	killall -q -9 rkfpv
+}
 
 pc_connected() {
 	# "default"/"addressed"/"configured" all need a USB host that reset
@@ -37,6 +68,7 @@ pc_connected() {
 }
 
 start() {
+	rotate_logs
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
 		return 0
@@ -54,20 +86,21 @@ start() {
 	fi
 
 	/usr/bin/wfb.sh start
-
-	# -b would send rkfpv's output to /dev/null; keep it in a log instead
-	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> /var/log/rkfpv.log 2>&1"
+	start_video
 }
 
 stop() {
-	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
-	killall -q rkfpv
+	stop_video
 	/usr/bin/wfb.sh stop
 }
 
+# `fpv restart`: re-run one half of the FPV chain with the new settings,
+# without the PC detection / USB role switch of a full start
 case "$1" in
 	start|stop) "$1" ;;
 	restart) stop; sleep 1; start ;;
-	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+	restart-video) log "restart: video"; stop_video; start_video ;;
+	restart-link) log "restart: link"; /usr/bin/wfb.sh start ;;
+	restart-all) log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all}"; exit 1 ;;
 esac

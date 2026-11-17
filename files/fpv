@@ -1,0 +1,509 @@
+#!/bin/sh
+# fpv: read / change rkfpv + wfb-ng settings, show status and logs.
+# Same commands over `adb shell` and `ssh`; --json output is what the PC
+# configurator (configurator/) reads.
+#
+#   fpv get [key...]                 current values
+#   fpv set key value [key value...] validate all, write, apply live where possible
+#   fpv schema                       every key: type, range, default, apply mode, help
+#   fpv status                       mode, stream stats, radio, memory, temperature
+#   fpv log [rkfpv|rkfpv-prev|fpv|kernel] [lines]
+#   fpv restart [video|link|all]     apply settings that need a restart
+#   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
+#   fpv reset                        restore shipped defaults
+#   add --json to any command for machine-readable output
+#
+# FPV_ROOT prefixes every path (tests run this on a PC).
+
+R=${FPV_ROOT:-}
+RKFPV_CONF=$R/etc/rkfpv.conf
+WFB_CONF=$R/etc/wfb.yaml
+DEFAULTS=$R/etc/fpv/defaults
+LOGDIR=$R/userdata/log
+USERDATA=$R/userdata
+INIT=$R/etc/init.d/S99fpv
+WFB_CMD_PORT=8000
+WLAN=wlan0
+
+# ---------------------------------------------------------------------------
+# Parameter table: the only place settings are defined. Add a line here and
+# the setting appears in `fpv get/set/schema` and in the PC configurator.
+#
+#   key|file|section|type|min|max|default|apply|group|help
+#
+# file:   rkfpv -> /etc/rkfpv.conf (key = value)
+#         wfb   -> /etc/wfb.yaml under <section>: (key: value)
+# type:   int (min..max) | bool (0/1) | enum (choices in min, comma separated)
+#         default "auto" means the key may be unset (written commented out)
+# apply:  venc    SIGHUP rkfpv (live)
+#         radio   wfb_tx_cmd set_radio (live)
+#         fec     wfb_tx_cmd set_fec (live)
+#         txpower iw set txpower (live)
+#         video   restart rkfpv
+#         link    restart wfb (ground station must follow)
+#         boot    next boot
+params() {
+	cat <<'EOF'
+size|rkfpv||enum|1280x720,1920x1080,2304x1296||1280x720|video|Video|Capture resolution
+fps|rkfpv||int|1|60|30|video|Video|Frame rate
+rc|rkfpv||enum|cbr,vbr||cbr|venc|Video|Rate control: cbr = constant, vbr = variable
+bitrate|rkfpv||int|100|50000|3500|venc|Video|Target bitrate, kbit/s
+max_bitrate|rkfpv||int|0|50000|0|venc|Video|VBR peak, kbit/s (0 = encoder default)
+gop|rkfpv||int|1|600|30|venc|Video|Keyframe interval, frames (fps = 1 s)
+stat_time|rkfpv||int|1|60|1|venc|Video|Rate-control window, s (short = smaller peaks)
+slice_bytes|rkfpv||int|0|65536|0|video|Video|Slice size, bytes (0 = one slice per frame; 1300 = one per packet)
+intra_refresh|rkfpv||int|0|64|0|video|Video|Rolling intra refresh rows (0 = off, IDR every gop)
+pkt_size|rkfpv||int|200|4000|1400|video|Video|RTP packet size, bytes
+pt|rkfpv||int|96|127|97|video|Video|RTP payload type (97 = H.265 for OpenIPC ground stations)
+mirror|rkfpv||bool|0|1|0|video|Camera|Mirror left-right
+flip|rkfpv||bool|0|1|0|video|Camera|Flip upside down (mirror + flip = rotate 180)
+channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
+width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
+txpower|wfb|wireless|int|1|63|auto|txpower|Radio|TX power, OpenIPC scale (auto = adapter default)
+mcs_index|wfb|broadcast|int|0|7|2|radio|Radio|Modulation: 0 slowest / longest range ... 7 fastest
+stbc|wfb|broadcast|bool|0|1|0|radio|Radio|STBC (needs 2 TX antennas)
+ldpc|wfb|broadcast|bool|0|1|0|radio|Radio|LDPC coding
+fec_k|wfb|broadcast|int|1|32|8|fec|Radio|FEC data packets per block
+fec_n|wfb|broadcast|int|2|32|12|fec|Radio|FEC packets per block incl. recovery (> fec_k)
+link_id|wfb|broadcast|int|0|16777215|7669206|link|Radio|Link ID (ground station must match)
+telemetry_enabled|wfb|telemetry|enum|true,false||true|link|Telemetry|MAVLink telemetry over wfb-ng
+baud|wfb|telemetry|enum|57600,115200,230400,460800,921600||115200|link|Telemetry|Flight-controller UART baud rate
+EOF
+}
+
+JSON=0
+die() {
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":false,"error":"%s"}\n' "$(jesc "$1")"
+	else
+		echo "fpv: $1" >&2
+	fi
+	exit 1
+}
+
+jesc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/ /g' | tr -d '\n\r'; }
+
+param_line() { params | grep "^$1|" ; }
+
+conf_file() {
+	case "$1" in
+		rkfpv) echo "$RKFPV_CONF" ;;
+		wfb) echo "$WFB_CONF" ;;
+	esac
+}
+
+# read_value <file> <kind> <key>  -> value of the active (uncommented) line
+read_value() {
+	[ -f "$1" ] || return 0
+	awk -v kind="$2" -v key="$3" '
+	function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+	{
+		line = $0
+		if (line ~ /^[ \t]*#/) next
+		sep = (kind == "rkfpv") ? "=" : ":"
+		i = index(line, sep)
+		if (!i) next
+		if (trim(substr(line, 1, i - 1)) != key) next
+		v = substr(line, i + 1)
+		sub(/[ \t]+#.*$/, "", v)
+		v = trim(v)
+		gsub(/^["\047]|["\047]$/, "", v)
+		print v
+		exit
+	}' "$1"
+}
+
+# value with the table default for keys not in the file
+get_value() {
+	IFS='|' read -r k file section type min max def apply group help <<EOF
+$(param_line "$1")
+EOF
+	v=$(read_value "$(conf_file "$file")" "$file" "$1")
+	[ -n "$v" ] && echo "$v" || echo "$def"
+}
+
+# write_value <file> <kind> <section> <key> <value|"">  ("" = comment the key out)
+write_value() {
+	awk -v kind="$2" -v section="$3" -v key="$4" -v val="$5" '
+	function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+	function keyof(line, uncomment,   s, i, v) {
+		s = line
+		if (uncomment) { if (s !~ /^[ \t]*#/) return ""; sub(/^[ \t]*#[ \t]*/, "", s) }
+		else if (s ~ /^[ \t]*#/) return ""
+		i = index(s, sep)
+		if (!i) return ""
+		if (uncomment) {
+			# only a commented-out setting ("# key: 20  # note"), not prose
+			v = substr(s, i + 1); sub(/[ \t]+#.*$/, "", v); v = trim(v)
+			if (v == "" || v ~ /[ \t]/) return ""
+		}
+		return trim(substr(s, 1, i - 1))
+	}
+	function render(line, uncomment,   s, indent, i, rest, cm) {
+		s = line
+		if (uncomment) {
+			match(s, /^[ \t]*/); indent = substr(s, 1, RLENGTH)
+			sub(/^[ \t]*#[ \t]*/, "", s); s = indent s
+		}
+		match(s, /^[ \t]*/); indent = substr(s, 1, RLENGTH)
+		if (kind == "wfb" && indent == "") indent = "  "
+		i = index(s, sep); rest = substr(s, i + 1)
+		cm = ""
+		if (match(rest, /[ \t]+#.*$/)) cm = substr(rest, RSTART)
+		if (val == "") {
+			# unset: keep the line, commented out
+			return indent "# " key (kind == "rkfpv" ? " = " : ": ") trim(substr(rest, 1, length(rest) - length(cm))) cm
+		}
+		return indent key (kind == "rkfpv" ? " = " : ": ") val cm
+	}
+	BEGIN { sep = (kind == "rkfpv") ? "=" : ":" }
+	{ lines[++n] = $0 }
+	END {
+		active = 0; commented = 0; sec = 0
+		for (i = 1; i <= n; i++) {
+			if (!active && keyof(lines[i], 0) == key) active = i
+			if (!commented && keyof(lines[i], 1) == key) commented = i
+			if (kind == "wfb" && lines[i] ~ ("^" section ":")) sec = i
+		}
+		if (active) lines[active] = render(lines[active], 0)
+		else if (val == "") { }              # already unset
+		else if (commented) lines[commented] = render(lines[commented], 1)
+		else if (kind == "rkfpv") lines[++n] = key " = " val
+		else {
+			if (!sec) { lines[++n] = section ":"; sec = n }
+			for (i = n; i > sec; i--) lines[i + 1] = lines[i]
+			lines[sec + 1] = "  " key ": " val
+			n++
+		}
+		for (i = 1; i <= n; i++) print lines[i]
+	}' "$1"
+}
+
+# validate <key> <value>: prints an error, returns 1 if invalid
+validate() {
+	line=$(param_line "$1")
+	[ -n "$line" ] || { echo "unknown key '$1' (see: fpv schema)"; return 1; }
+	IFS='|' read -r k file section type min max def apply group help <<EOF
+$line
+EOF
+	[ "$2" = auto ] && [ "$def" = auto ] && return 0
+	case "$type" in
+		int|bool)
+			case "$2" in ''|*[!0-9]*) echo "$1: '$2' is not a number"; return 1 ;; esac
+			if [ "$2" -lt "$min" ] || [ "$2" -gt "$max" ]; then
+				echo "$1: $2 out of range $min..$max"; return 1
+			fi ;;
+		enum)
+			case ",$min," in *",$2,"*) ;; *) echo "$1: '$2' not one of $min"; return 1 ;; esac ;;
+	esac
+	return 0
+}
+
+running() { pidof "$1" > /dev/null 2>&1; }
+
+wlan_driver() {
+	for m in 88XXau 88x2cu 8812eu; do
+		grep -q "^$m " "$R/proc/modules" 2>/dev/null && { echo "$m"; return; }
+	done
+}
+
+apply_txpower() {
+	p=$(get_value txpower)
+	drv=$(wlan_driver)
+	[ -n "$drv" ] || return 1
+	if [ "$p" = auto ]; then
+		[ "$drv" = 8812eu ] && p=40 || p=20
+	fi
+	[ "$drv" = 88XXau ] && mbm=$((p * -100)) || mbm=$((p * 50))
+	iw dev "$WLAN" set txpower fixed "$mbm"
+}
+
+apply_radio() {
+	wfb_tx_cmd "$WFB_CMD_PORT" set_radio -B "$(get_value width)" -M "$(get_value mcs_index)" \
+		-S "$(get_value stbc)" -L "$(get_value ldpc)" > /dev/null 2>&1
+}
+
+apply_fec() {
+	wfb_tx_cmd "$WFB_CMD_PORT" set_fec -k "$(get_value fec_k)" -n "$(get_value fec_n)" > /dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+
+cmd_get() {
+	[ $# -gt 0 ] || set -- $(params | cut -d'|' -f1)
+	for k in "$@"; do
+		[ -n "$(param_line "$k")" ] || die "unknown key '$k' (see: fpv schema)"
+	done
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"values":{'
+		sep=
+		for k in "$@"; do
+			printf '%s"%s":"%s"' "$sep" "$k" "$(jesc "$(get_value "$k")")"
+			sep=,
+		done
+		printf '}}\n'
+	else
+		for k in "$@"; do echo "$k = $(get_value "$k")"; done
+	fi
+}
+
+cmd_schema() {
+	if [ "$JSON" != 1 ]; then
+		printf '%-18s %-9s %-8s %-22s %-10s %s\n' KEY GROUP APPLY RANGE VALUE HELP
+		params | while IFS='|' read -r k file section type min max def apply group help; do
+			case "$type" in
+				enum) range=$min ;; *) range="$min..$max" ;;
+			esac
+			[ "$def" = auto ] && range="$range,auto"
+			printf '%-18s %-9s %-8s %-22s %-10s %s\n' "$k" "$group" "$apply" "$range" "$(get_value "$k")" "$help"
+		done
+		return
+	fi
+	printf '{"ok":true,"params":['
+	sep=
+	params | while IFS='|' read -r k file section type min max def apply group help; do
+		printf '%s{"key":"%s","file":"%s","type":"%s",' "$sep" "$k" "$file" "$type"
+		if [ "$type" = enum ]; then
+			printf '"choices":["%s"],' "$(echo "$min" | sed 's/,/","/g')"
+		else
+			printf '"min":%s,"max":%s,' "$min" "$max"
+		fi
+		printf '"default":"%s","apply":"%s","group":"%s","help":"%s","value":"%s"}' \
+			"$def" "$apply" "$group" "$(jesc "$help")" "$(jesc "$(get_value "$k")")"
+		sep=,
+	done
+	printf ']}\n'
+}
+
+cmd_set() {
+	[ $# -ge 2 ] && [ $(($# % 2)) -eq 0 ] || die "usage: fpv set key value [key value ...]"
+
+	# 1. validate everything before touching a file
+	errs=
+	n=$#
+	while [ $# -gt 0 ]; do
+		e=$(validate "$1" "$2") || errs="$errs${errs:+; }$e"
+		shift 2
+	done
+	[ -z "$errs" ] || die "$errs"
+
+	# reload the pairs (positional params were consumed)
+	eval "set -- $PAIRS"
+
+	# cross-key check with the values as they will be
+	fk=$(get_value fec_k); fn=$(get_value fec_n)
+	i=1; while [ $i -le $# ]; do
+		eval "k=\${$i}"; eval "v=\${$((i + 1))}"
+		[ "$k" = fec_k ] && fk=$v
+		[ "$k" = fec_n ] && fn=$v
+		i=$((i + 2))
+	done
+	[ "$fn" -gt "$fk" ] || die "fec_n ($fn) must be larger than fec_k ($fk)"
+
+	# 2. edit copies, then move both into place
+	trk=$(mktemp "$RKFPV_CONF.XXXXXX") || die "cannot write $RKFPV_CONF"
+	twf=$(mktemp "$WFB_CONF.XXXXXX") || { rm -f "$trk"; die "cannot write $WFB_CONF"; }
+	cp "$RKFPV_CONF" "$trk" 2>/dev/null
+	cp "$WFB_CONF" "$twf" 2>/dev/null
+	applies=
+	i=1; while [ $i -le $# ]; do
+		eval "k=\${$i}"; eval "v=\${$((i + 1))}"
+		IFS='|' read -r _k file section type min max def apply group help <<EOF
+$(param_line "$k")
+EOF
+		[ "$v" = auto ] && v=""
+		[ "$file" = rkfpv ] && t=$trk || t=$twf
+		write_value "$t" "$file" "$section" "$k" "$v" > "$t.new" && mv "$t.new" "$t"
+		applies="$applies $apply"
+		i=$((i + 2))
+	done
+	mv "$trk" "$RKFPV_CONF" && mv "$twf" "$WFB_CONF" || die "write failed"
+	sync
+
+	# 3. apply
+	vid=0; lnk=0; warn=
+	running rkfpv && vid=1
+	running wfb_tx && lnk=1
+	res_venc=saved; res_radio=saved; res_fec=saved; res_tx=saved
+	res_video=saved; res_link=saved; res_boot=next-boot
+	case "$applies" in *venc*) [ $vid = 1 ] && killall -HUP rkfpv && res_venc=live ;; esac
+	case "$applies" in *radio*) [ $lnk = 1 ] && apply_radio && res_radio=live ;; esac
+	case "$applies" in *fec*) [ $lnk = 1 ] && apply_fec && res_fec=live ;; esac
+	case "$applies" in *txpower*) [ $lnk = 1 ] && apply_txpower && res_tx=live ;; esac
+	[ $vid = 1 ] && res_video=restart-needed
+	[ $lnk = 1 ] && res_link=restart-needed
+	case "$applies" in *link*)
+		warn="channel / width / link_id / telemetry: the ground station must use the same values" ;;
+	esac
+
+	result_of() {
+		case "$1" in
+			venc) echo $res_venc ;; radio) echo $res_radio ;; fec) echo $res_fec ;;
+			txpower) echo $res_tx ;; video) echo $res_video ;; link) echo $res_link ;;
+			*) echo $res_boot ;;
+		esac
+	}
+
+	[ "$JSON" = 1 ] && printf '{"ok":true,"fpv_running":%s,"results":[' \
+		"$([ $vid = 1 ] || [ $lnk = 1 ] && echo true || echo false)"
+	sep=
+	i=1; while [ $i -le $# ]; do
+		eval "k=\${$i}"
+		a=$(param_line "$k" | cut -d'|' -f8)
+		r=$(result_of "$a")
+		if [ "$JSON" = 1 ]; then
+			printf '%s{"key":"%s","value":"%s","apply":"%s","result":"%s"}' \
+				"$sep" "$k" "$(jesc "$(get_value "$k")")" "$a" "$r"
+		else
+			printf '%-18s = %-10s %s\n' "$k" "$(get_value "$k")" "($r)"
+		fi
+		sep=,
+		i=$((i + 2))
+	done
+	if [ "$JSON" = 1 ]; then
+		printf '],"warning":"%s"}\n' "$(jesc "$warn")"
+	else
+		[ -n "$warn" ] && echo "note: $warn"
+		case " $res_video $res_link " in *restart-needed*)
+			echo "run 'fpv restart' to apply the restart-needed settings" ;;
+		esac
+		[ $vid = 0 ] && [ $lnk = 0 ] && echo "FPV is not running (debug mode): saved, used at the next FPV boot"
+	fi
+	return 0
+}
+
+cmd_status() {
+	role=$(cat "$R"/sys/class/usb_role/*/role 2>/dev/null | head -1)
+	pid_rk=$(pidof rkfpv 2>/dev/null)
+	pid_tx=$(pidof wfb_tx 2>/dev/null | tr ' ' ',')
+	if [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
+	elif [ "$role" = device ]; then mode=debug
+	else mode=idle; fi
+	override=auto
+	[ -e "$USERDATA/fpv.off" ] && override=debug
+	[ -e "$USERDATA/fpv.force" ] && override=fpv
+
+	stats=$(grep 'stats:' "$LOGDIR/rkfpv.log" 2>/dev/null | tail -1)
+	fps=$(echo "$stats" | sed -n 's/.*stats: \([0-9.]*\) fps.*/\1/p')
+	kbps=$(echo "$stats" | sed -n 's/.* \([0-9]*\) kbps.*/\1/p')
+
+	radio=; fec=
+	if [ -n "$pid_tx" ]; then
+		radio=$(wfb_tx_cmd "$WFB_CMD_PORT" get_radio 2>/dev/null | tr '\n' ' ')
+		fec=$(wfb_tx_cmd "$WFB_CMD_PORT" get_fec 2>/dev/null | tr '\n' ' ')
+	fi
+	drv=$(wlan_driver)
+	mem=$(awk '/^MemAvailable:/ {print $2}' "$R/proc/meminfo" 2>/dev/null)
+	temp=$(cat "$R/sys/class/thermal/thermal_zone0/temp" 2>/dev/null)
+	[ -n "$temp" ] && temp=$((temp / 1000))
+	up=$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null)
+
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
+		printf '"rkfpv_pid":"%s","wfb_tx_pid":"%s","fps":"%s","kbps":"%s","last_stats":"%s",' \
+			"$pid_rk" "$pid_tx" "$fps" "$kbps" "$(jesc "$stats")"
+		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
+		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s"}\n' "$mem" "$temp" "$up"
+	else
+		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
+		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
+		echo "wfb_tx:    ${pid_tx:-not running}  ${radio:+| $radio}${fec:+| $fec}"
+		echo "adapter:   ${drv:-none loaded}"
+		echo "memory:    ${mem:-?} kB available"
+		echo "temp:      ${temp:-?} C"
+		echo "uptime:    ${up:-?} s"
+	fi
+}
+
+cmd_log() {
+	which=${1:-rkfpv}; n=${2:-100}
+	case "$n" in *[!0-9]*) die "lines must be a number" ;; esac
+	case "$which" in
+		rkfpv) out=$(tail -n "$n" "$LOGDIR/rkfpv.log" 2>/dev/null) ;;
+		rkfpv-prev) out=$(tail -n "$n" "$LOGDIR/rkfpv.prev.log" 2>/dev/null) ;;
+		fpv) out=$(tail -n "$n" "$LOGDIR/fpv.log" 2>/dev/null) ;;
+		kernel) out=$(dmesg 2>/dev/null | tail -n "$n") ;;
+		*) die "log: rkfpv | rkfpv-prev | fpv | kernel" ;;
+	esac
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"log":"%s","text":"' "$which"
+		printf '%s' "$out" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/ /g' -e 's/\r//g' \
+			| awk '{ printf "%s\\n", $0 }'
+		printf '"}\n'
+	else
+		[ -n "$out" ] && echo "$out" || echo "(empty)"
+	fi
+}
+
+cmd_restart() {
+	what=${1:-all}
+	case "$what" in video|link|all) ;; *) die "restart: video | link | all" ;; esac
+	if ! running rkfpv && ! running wfb_tx; then
+		msg="FPV is not running (debug mode); settings are used at the next FPV boot"
+		[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":false,"message":"%s"}\n' "$msg" || echo "$msg"
+		return 0
+	fi
+	"$INIT" "restart-$what" > /dev/null 2>&1
+	[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":true,"what":"%s"}\n' "$what" || echo "restarted: $what"
+}
+
+cmd_mode() {
+	case "$1" in
+		"") ;;
+		fpv) rm -f "$USERDATA/fpv.off"; touch "$USERDATA/fpv.force" ;;
+		debug) rm -f "$USERDATA/fpv.force"; touch "$USERDATA/fpv.off" ;;
+		auto) rm -f "$USERDATA/fpv.force" "$USERDATA/fpv.off" ;;
+		*) die "mode: fpv | debug | auto" ;;
+	esac
+	sync
+	m=auto
+	[ -e "$USERDATA/fpv.off" ] && m=debug
+	[ -e "$USERDATA/fpv.force" ] && m=fpv
+	note=
+	[ "$m" = fpv ] && note="FPV starts at every boot even with a PC attached: ADB will NOT come up. Undo over ssh/serial with 'fpv mode auto'."
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"mode":"%s","note":"%s"}\n' "$m" "$note"
+	else
+		echo "boot mode: $m (takes effect at the next boot)"
+		[ -n "$note" ] && echo "warning: $note"
+	fi
+}
+
+cmd_reset() {
+	[ -f "$DEFAULTS/rkfpv.conf" ] && [ -f "$DEFAULTS/wfb.yaml" ] || die "no defaults in $DEFAULTS"
+	cp "$DEFAULTS/rkfpv.conf" "$RKFPV_CONF.tmp" && mv "$RKFPV_CONF.tmp" "$RKFPV_CONF"
+	cp "$DEFAULTS/wfb.yaml" "$WFB_CONF.tmp" && mv "$WFB_CONF.tmp" "$WFB_CONF"
+	sync
+	[ "$JSON" = 1 ] && echo '{"ok":true}' || echo "defaults restored; 'fpv restart' or reboot to use them"
+}
+
+usage() {
+	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# --json may appear anywhere
+PAIRS=
+args=
+for a in "$@"; do
+	[ "$a" = --json ] && { JSON=1; continue; }
+	args="$args '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"
+done
+eval "set -- $args"
+
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+	get) cmd_get "$@" ;;
+	set)
+		PAIRS=
+		for a in "$@"; do PAIRS="$PAIRS '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
+		cmd_set "$@" ;;
+	schema) cmd_schema ;;
+	status) cmd_status ;;
+	log) cmd_log "$@" ;;
+	restart) cmd_restart "$@" ;;
+	mode) cmd_mode "$@" ;;
+	reset) cmd_reset ;;
+	help|-h|--help) usage ;;
+	*) die "unknown command '$cmd' (fpv help)" ;;
+esac
