@@ -13,10 +13,11 @@
   <div class="conn">
     <select id="transport" title="How to reach the board">
       <option value="adb">ADB (USB)</option>
+      <option value="fpvd">fpvd (UDP)</option>
       <option value="ssh">SSH (wfb tunnel)</option>
     </select>
     <select id="device" title="ADB device"></select>
-    <input id="host" value="10.5.0.10" title="SSH host" hidden>
+    <input id="host" value="172.32.0.93" title="Board address (host or host:port)" hidden>
     <button id="refresh" class="ghost" title="Rescan ADB devices">⟳</button>
     <button id="connect" class="primary">Connect</button>
   </div>

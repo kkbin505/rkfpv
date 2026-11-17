@@ -388,11 +388,15 @@ async function cliSend(e) {
 
 // ---------------------------------------------------------------- wiring
 
+// USB RNDIS address for fpvd today; the wfb tunnel address (issue #1) later
+const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10" };
 $("#transport").onchange = () => {
-  const ssh = $("#transport").value === "ssh";
-  $("#host").hidden = !ssh;
-  $("#device").hidden = ssh;
-  $("#refresh").hidden = ssh;
+  const t = $("#transport").value;
+  const net = t !== "adb";
+  $("#host").hidden = !net;
+  $("#device").hidden = net;
+  $("#refresh").hidden = net;
+  if (net && Object.values(DEFAULT_HOST).includes($("#host").value)) $("#host").value = DEFAULT_HOST[t];
 };
 $("#refresh").onclick = loadDevices;
 $("#connect").onclick = connect;

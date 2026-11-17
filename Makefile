@@ -34,7 +34,7 @@ LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lpthread -lm -lstdc++
 SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
-all: build/rkfpv build/mavbridge
+all: build/rkfpv build/mavbridge build/fpvd
 
 build/%.o: src/%.c | build
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -44,6 +44,9 @@ build/rkfpv: $(OBJS)
 
 # no SDK libs needed
 build/mavbridge: src/mavbridge.c | build
+	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
+
+build/fpvd: src/fpvd.c | build
 	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
 
 build:
@@ -62,10 +65,14 @@ build-host/send_file: test/send_file.c src/rtp_h265.c | build-host
 build-host/mavbridge: src/mavbridge.c | build-host
 	gcc -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge
+build-host/fpvd: src/fpvd.c | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
+
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd
 	./build-host/test_rtp
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh
+	python3 -I test/test_fpvd.py build-host/fpvd files/fpv
 
 clean:
 	rm -rf build build-host
