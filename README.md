@@ -155,6 +155,30 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
+## 画质（ISP）和 IQ 文件
+
+rkfpv 直接调用 rkaiq 的运行时接口改画质。majestic 在 Rockchip 上并没有调用这些接口。和其他设置一样，每一项都是 `fpv` 参数表里的一行，可以用 `fpv set` 修改，FPV 运行时立即生效：
+
+| 设置 | 作用 |
+|---|---|
+| `isp_exp_max` | 最长曝光（毫秒），对运动模糊影响最大；IQ 文件里是 30 ms，FPV 常用 2～8 ms。低于 10 ms 时自动关闭防闪烁 |
+| `isp_nr_temporal` / `isp_nr_spatial` | 时域 / 空域降噪，**默认关闭**：快速运动时不拖影，代价是低照度下噪点更多 |
+| `isp_gain_max` | 最大增益（IQ 文件里是 512×） |
+| `isp_ae_delay` / `isp_ae_damp` | 自动曝光的反应延迟和阻尼（从亮到暗） |
+| `isp_blc` / `isp_hlc` | 逆光补偿 / 强光抑制 |
+| `isp_brightness` `contrast` `saturation` `hue` `sharpness` `wb` `dehaze` `antiflicker` | 颜色、锐度、白平衡等 |
+
+设成 `iq` 的项用 IQ 文件里的值。rkfpv 启动时会读出 IQ 文件的原值，所以把某项改回 `iq` 能立即恢复。
+
+**IQ 文件**：出厂文件（`/oem/usr/share/iqfiles`）永远只读。修改的是 `/userdata/iq` 里的副本：
+```sh
+fpv iq status                      # 当前用的是哪个、是否回退
+fpv iq copy-stock                  # 复制出厂文件作为修改起点（不会覆盖已改过的文件）
+fpv set iq_dir /userdata/iq        # 使用修改版（需要 fpv restart video）
+fpv iq history / rollback <文件> [版本]
+```
+配置工具的 **Image** 页可以下载、上传 IQ 文件。上传会先检查：JSON 格式、rkaiq 必需的段、文件名和出厂文件一致；然后按原样逐字节写入（保留 CRLF），在板子上校验 md5，没问题才替换，旧版本自动保留最近 5 个。修改版启动失败时，或者连续两次没有出图时，rkfpv 自动改用出厂 IQ，保证一定有图像。
+
 ## DVR：录像到 TF 卡
 
 DVR 默认录**独立的高画质码流**：ISP 有两个硬件缩放输出，主通路（main path）出 1080p，用单独的编码器、更高码率录到 TF 卡；副通路（self path）出 720p，给图传用。

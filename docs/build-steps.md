@@ -162,3 +162,8 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 - New partition table (set by `luckfox/mkoverlay.sh`): `…,256M(userdata),512M(rootfs),-(dvr)`. **Reflash needed.** First boot formats the DVR partition as ext4.
 - Settings: `dvr`, `dvr_segment` (600 s), `dvr_min_free` (300 MB), `dvr_overwrite`, `dvr_format`. Control: `fpv dvr status|start|stop|list|delete|delete-all`.
 - Download without removing the card: boot with the PC on USB (debug mode), then use the configurator's DVR tab or `adb pull /mnt/dvr/<file>`.
+
+## 14. Image (ISP) settings and IQ files
+
+- `isp_*` settings call rkaiq at runtime (exposure cap, gain cap, AE delay/damping, NR, BLC/HLC, colour, sharpness, WB, dehaze, anti-flicker). `iq` = the IQ file's value; spatial and temporal NR default to **off**.
+- IQ files: stock `/oem/usr/share/iqfiles` is read-only; edits live in `/userdata/iq` (`fpv iq copy-stock|install|history|rollback`, `iq_dir`). Uploads are validated, md5-checked and swapped atomically; the last 5 versions are kept. A custom IQ that fails, or two starts in a row without a frame, falls back to stock.

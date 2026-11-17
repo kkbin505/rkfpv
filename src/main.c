@@ -51,6 +51,8 @@ static volatile sig_atomic_t g_dvr_cmd;   /* 1 start, 2 stop */
 
 extern const dvr_writer dvr_rkmuxer;
 #define DVR_STATUS "/tmp/dvr.status"
+#define ISP_STATUS "/tmp/isp.status"
+#define IQ_STOCK "/oem/usr/share/iqfiles"
 
 /* Where the stream loop is, for the SIGSEGV report below. */
 static volatile int g_stage;          /* 1 GetStream, 2 send, 3 Release */
@@ -120,6 +122,87 @@ static void write_dvr_status(dvr_t *d, const char *why_off)
 	fprintf(f, "%s\n", line);
 	fclose(f);
 	rename(DVR_STATUS ".tmp", DVR_STATUS);
+}
+
+/* ---- IQ file with fallback ----------------------------------------------
+ * A custom IQ directory (e.g. /userdata/iq) must never cost the video:
+ *  - rkaiq fails to start with it -> start again with the stock IQ;
+ *  - it crashed or hung rkfpv twice in a row (<dir>/.tries, cleared at the
+ *    first encoded frame) -> use the stock IQ for this start. */
+static char g_iq_used[160], g_iq_note[96];
+static int g_iq_fallback;
+
+static void iq_tries_path(const char *dir, char *out, size_t n)
+{
+	snprintf(out, n, "%s/.tries", dir);
+}
+
+static int iq_tries_read(const char *dir)
+{
+	char p[200];
+	int n = 0;
+	iq_tries_path(dir, p, sizeof p);
+	FILE *f = fopen(p, "r");
+	if (f) {
+		if (fscanf(f, "%d", &n) != 1)
+			n = 0;
+		fclose(f);
+	}
+	return n;
+}
+
+static void iq_tries_write(const char *dir, int n)
+{
+	char p[200];
+	iq_tries_path(dir, p, sizeof p);
+	if (n <= 0) {
+		unlink(p);
+		return;
+	}
+	FILE *f = fopen(p, "w");
+	if (f) {
+		fprintf(f, "%d\n", n);
+		fflush(f);
+		fsync(fileno(f));
+		fclose(f);
+	}
+}
+
+static void write_isp_status(const char *configured)
+{
+	FILE *f = fopen(ISP_STATUS ".tmp", "w");
+	if (!f)
+		return;
+	fprintf(f, "sensor=%s\niq_dir=%s\nconfigured=%s\nfallback=%d\nnote=%s\n",
+		isp_sensor_name(), g_iq_used, configured, g_iq_fallback, g_iq_note);
+	fclose(f);
+	rename(ISP_STATUS ".tmp", ISP_STATUS);
+}
+
+static int isp_start_safe(const rkfpv_config_t *c)
+{
+	int custom = strcmp(c->iq_dir, IQ_STOCK) != 0;
+	snprintf(g_iq_used, sizeof g_iq_used, "%s", c->iq_dir);
+	if (custom) {
+		int tries = iq_tries_read(c->iq_dir);
+		if (tries >= 2) {
+			fprintf(stderr, "iq: custom IQ in %s failed %d starts in a row, using stock\n",
+				c->iq_dir, tries);
+			snprintf(g_iq_note, sizeof g_iq_note, "custom IQ failed %d starts in a row", tries);
+			g_iq_fallback = 1;
+			snprintf(g_iq_used, sizeof g_iq_used, "%s", IQ_STOCK);
+		} else
+			iq_tries_write(c->iq_dir, tries + 1);
+	}
+	if (isp_start(g_iq_used, c->fps, c->mirror, c->flip) == 0)
+		return 0;
+	if (!custom || g_iq_fallback)
+		return -1;
+	fprintf(stderr, "iq: custom failed, using stock\n");
+	snprintf(g_iq_note, sizeof g_iq_note, "rkaiq could not start with the custom IQ");
+	g_iq_fallback = 1;
+	snprintf(g_iq_used, sizeof g_iq_used, "%s", IQ_STOCK);
+	return isp_start(g_iq_used, c->fps, c->mirror, c->flip);
 }
 
 static uint64_t now_us(void)
@@ -462,9 +545,12 @@ int main(int argc, char **argv)
 	MPP_CHN_S ddst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = DVR_VENC };
 
 	if (cfg.iq_dir[0]) {
-		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip))
+		int isp_rc = isp_start_safe(&cfg);
+		write_isp_status(cfg.iq_dir);
+		if (isp_rc)
 			goto out;
 		isp_up = 1;
+		isp_apply(&cfg.isp);
 	} else {
 		fprintf(stderr, "warning: iq_dir empty, AIQ not started (colors will be off)\n");
 	}
@@ -587,6 +673,10 @@ int main(int argc, char **argv)
 					dp = dvr_params(&cfg);
 					venc_apply_rc(DVR_VENC, &dp);
 				}
+				if (n.iq_dir[0] && strcmp(n.iq_dir, cfg.iq_dir))
+					fprintf(stderr, "reload: iq_dir needs a restart\n");
+				isp_apply(&n.isp);
+				cfg.isp = n.isp;
 				cfg.rc = n.rc;
 				cfg.bitrate_kbps = n.bitrate_kbps;
 				cfg.max_bitrate_kbps = n.max_bitrate_kbps;
@@ -661,6 +751,9 @@ int main(int argc, char **argv)
 
 		if (!got_first) {
 			got_first = 1;
+			/* the custom IQ got the pipeline running: not a bad file */
+			if (!g_iq_fallback && strcmp(cfg.iq_dir, IQ_STOCK))
+				iq_tries_write(cfg.iq_dir, 0);
 			fprintf(stderr, "rkfpv: first frame after %llu ms (%llu B)\n",
 				(unsigned long long)((now_us() - t_start) / 1000),
 				(unsigned long long)bytes);
