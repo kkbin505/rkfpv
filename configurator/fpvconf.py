@@ -33,6 +33,7 @@ TOKEN = secrets.token_hex(16)
 BOARD_FILES = [
     ("files/fpv", "/usr/bin/fpv", "755"),
     ("files/S99fpv", "/etc/init.d/S99fpv", "755"),
+    ("files/wfb.sh", "/usr/bin/wfb.sh", "755"),
 ]
 DEFAULT_FILES = [("files/rkfpv.conf", "rkfpv.conf"), ("files/wfb.yaml", "wfb.yaml")]
 

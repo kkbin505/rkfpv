@@ -12,7 +12,7 @@ python3 configurator/fpvconf.py --no-browser --port 9000
 ```
 
 1. 不插 WiFi 网卡，板子 USB 直接接电脑，上电。约 15 秒后进入调试模式，ADB 出现。
-2. 选设备，点 **Connect**。如果板子上还没有 `fpv`，界面会提示 **Install it now**。也可以在 Status 页点 **Install / update on board**，会把仓库里的 `files/fpv` 和 `files/S99fpv` 推到板子上。
+2. 选设备，点 **Connect**。如果板子上还没有 `fpv`，界面会提示 **Install it now**。也可以在 Status 页点 **Install / update on board**，会把仓库里的 `files/fpv`、`files/S99fpv` 和 `files/wfb.sh` 推到板子上。
 3. 在 Video / Camera / Radio / Telemetry 页修改参数，改过的项会标黄，然后点 **Save**。
 
 URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备并跳到 Radio 页。
