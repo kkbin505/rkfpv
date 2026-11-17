@@ -133,6 +133,123 @@ limit_dirty_memory() {
 	echo 4194304 > /proc/sys/vm/dirty_bytes
 }
 
+# ---- hotspot mode --------------------------------------------------------
+# A switch from GPIO1_C6 to GND (gpio-keys "hotspot-switch") turns the WiFi
+# card into a WPA2 access point: http://192.168.73.1/ for recordings, fpvd
+# on 192.168.73.1:7000 for settings. fpvd watches the switch and calls
+# hotspot-on / hotspot-off; at boot, start() asks `fpvd -q`.
+HS_ADDR=192.168.73.1
+MODE_STATUS=/tmp/mode.status
+WLAN=wlan0
+
+set_mode() { echo "$1" > "$MODE_STATUS"; }
+
+fpv_val() { /usr/bin/fpv get "$1" | sed 's/^[^=]*= *//'; }
+
+# first time: a name from the SoC serial and a random password
+hotspot_defaults() {
+	[ -n "$(fpv_val hotspot_ssid)" ] && [ -n "$(fpv_val hotspot_pass)" ] && return 0
+	id=$(sed -n 's/^Serial[^:]*: *//p' /proc/cpuinfo | tr -d '\n' | tail -c 4)
+	case "$id" in ''|0000) id=$(tr -dc 'a-f0-9' < /dev/urandom | head -c 4) ;; esac
+	pass="rkfpv-$(tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
+	/usr/bin/fpv set hotspot_ssid "rkfpv-$id" hotspot_pass "$pass" > /dev/null
+	log "hotspot: created network rkfpv-$id"
+}
+
+hotspot_on() {
+	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
+		log "hotspot: switch ignored, USB is on a PC (debug mode)"
+		return 0
+	fi
+	set_mode switching
+	log "hotspot: on"
+	stop_video                      # closes the DVR file cleanly
+	/usr/bin/wfb.sh stop
+	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ] && [ "$(cat "$USB_ROLE")" != host ]; then
+		echo host > "$USB_ROLE"
+	fi
+	if ! /usr/bin/wfb.sh adapter; then
+		log "hotspot: no WiFi adapter, staying in FPV"
+		set_mode fpv
+		return 1
+	fi
+	hotspot_defaults
+	ssid=$(fpv_val hotspot_ssid); pass=$(fpv_val hotspot_pass)
+	ch=$(fpv_val hotspot_channel); cc=$(fpv_val hotspot_country | tr 'a-z' 'A-Z')
+
+	ip link set "$WLAN" down
+	iw dev "$WLAN" set type managed
+	iw reg set "$cc"
+	ip link set "$WLAN" up
+	iw dev "$WLAN" set txpower auto 2>/dev/null
+	ip addr flush dev "$WLAN"
+	ip addr add "$HS_ADDR/24" dev "$WLAN"
+
+	if [ "$ch" -le 14 ]; then
+		hw=g; ht="[SHORT-GI-20]"
+	else
+		hw=a
+		case "$ch" in 36|44|149|157) ht="[HT40+][SHORT-GI-20][SHORT-GI-40]" ;;
+			*) ht="[HT40-][SHORT-GI-20][SHORT-GI-40]" ;; esac
+	fi
+	umask 077
+	cat > /tmp/hostapd-fpv.conf <<EOF
+interface=$WLAN
+driver=nl80211
+ssid=$ssid
+country_code=$cc
+ieee80211d=1
+hw_mode=$hw
+channel=$ch
+ieee80211n=1
+ht_capab=$ht
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$pass
+EOF
+	umask 022
+	if ! hostapd -B -P /var/run/hostapd-fpv.pid /tmp/hostapd-fpv.conf; then
+		log "hotspot: hostapd failed (channel $ch / country $cc not allowed for an access point?)"
+		hotspot_off
+		return 1
+	fi
+	dnsmasq --conf-file=/dev/null --port=0 --interface="$WLAN" --bind-interfaces \
+		--dhcp-range=192.168.73.10,192.168.73.50,255.255.255.0,12h \
+		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
+	start-stop-daemon -S -q -b -m -p /var/run/dvrhttpd.pid -x /usr/bin/dvrhttpd -- \
+		-b "$HS_ADDR" -p 80 -d "$DVR_DIR"
+	set_mode hotspot
+	log "hotspot: '$ssid' channel $ch, http://$HS_ADDR/ for recordings"
+}
+
+hotspot_stop_services() {
+	start-stop-daemon -K -q -p /var/run/dvrhttpd.pid
+	for f in /var/run/dnsmasq-fpv.pid /var/run/hostapd-fpv.pid; do
+		[ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null
+		rm -f "$f"
+	done
+	rm -f /tmp/hostapd-fpv.conf
+}
+
+hotspot_off() {
+	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
+		return 0
+	fi
+	set_mode switching
+	log "hotspot: off, back to FPV"
+	hotspot_stop_services
+	sleep 1
+	ip addr flush dev "$WLAN" 2>/dev/null
+	ip link set "$WLAN" down 2>/dev/null
+	iw dev "$WLAN" set type monitor 2>/dev/null
+	/usr/bin/wfb.sh start               # monitor mode, channel, TX power
+	start_video
+	set_mode fpv
+}
+
 start() {
 	rotate_logs
 	limit_dirty_memory
@@ -140,6 +257,7 @@ start() {
 	start_fpvd
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
+		set_mode off
 		# debug mode means ADB: make sure the port is a device, whatever
 		# role it booted in
 		if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ] &&
@@ -152,6 +270,7 @@ start() {
 		echo host > "$USB_ROLE"
 		if [ ! -e /userdata/fpv.force ] && ! adapter_present; then
 			log "no WiFi adapter on USB: debug mode (ADB/RNDIS), FPV not started"
+			set_mode debug
 			back_to_device
 			return 0
 		fi
@@ -163,11 +282,19 @@ start() {
 		log "no USB role switch found, USB stays as is"
 	fi
 
+	# hotspot switch closed at power-up: straight into hotspot mode
+	if /usr/bin/fpvd -q > /dev/null 2>&1; then
+		log "hotspot switch closed at boot"
+		hotspot_on && return 0
+	fi
+
 	/usr/bin/wfb.sh start
 	start_video
+	set_mode fpv
 }
 
 stop() {
+	hotspot_stop_services
 	stop_video                      # rkfpv closes the current recording
 	/usr/bin/wfb.sh stop
 	sync
@@ -180,8 +307,10 @@ stop() {
 case "$1" in
 	start|stop) "$1" ;;
 	restart) stop; sleep 1; start ;;
+	hotspot-on) hotspot_on ;;
+	hotspot-off) hotspot_off ;;
 	restart-video) log "restart: video"; stop_video; start_video ;;
 	restart-link) log "restart: link"; /usr/bin/wfb.sh start ;;
 	restart-all) log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video ;;
-	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all}"; exit 1 ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off}"; exit 1 ;;
 esac

@@ -22,6 +22,7 @@ const IMAGE_GROUPS = [["Picture", "#imgPicture"], ["Exposure", "#imgExposure"], 
 const APPLY_TAG = {
   venc: ["live", "live"], radio: ["live", "live"], fec: ["live", "live"], txpower: ["live", "live"],
   video: ["restart", "restart"], link: ["link", "link"], boot: ["restart", "next boot"],
+  hotspot: ["restart", "next hotspot"],
 };
 
 // ---------------------------------------------------------------- transport
@@ -79,7 +80,7 @@ function showTab(tab) {
   $("#notConnected").hidden = state.connected;
   $$(".tab").forEach((s) => (s.hidden = true));
   if (!state.connected) return;
-  if (tab === "status") { $("#tab-status").hidden = false; refreshStatus(); }
+  if (tab === "status") { $("#tab-status").hidden = false; refreshStatus(); renderForm("Hotspot", $("#hsSettings")); loadHotspot(); }
   else if (tab === "logs") { $("#tab-logs").hidden = false; loadLog(); }
   else if (tab === "cli") { $("#tab-cli").hidden = false; $("#cliIn").focus(); }
   else if (tab === "presets") { $("#tab-presets").hidden = false; loadPresets(); }
@@ -133,7 +134,7 @@ async function connect() {
     showTab(state.tab);
     if (state.tab !== "status") refreshStatus();   // mode badge
     state.pollTimer = setInterval(() => {
-      if (state.tab === "status") refreshStatus();
+      if (state.tab === "status") { refreshStatus(); loadHotspot(); }
       if (state.tab === "dvr") refreshDvr();
     }, 2000);
   } catch (e) {
@@ -234,6 +235,19 @@ function control(p, value) {
     const cb = wrap.querySelector("input");
     cb.checked = value === "1";
     cb.onchange = () => onChange(cb.checked ? "1" : "0");
+  } else if (p.type === "str") {
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.maxLength = p.max;
+    inp.spellcheck = false;
+    inp.autocomplete = "off";
+    inp.value = value;
+    inp.oninput = () => {
+      const ok = validValue(p, inp.value);
+      inp.classList.toggle("invalid", !ok);
+      ok ? onChange(inp.value) : (state.edits[p.key] = null, updateSaveBar());
+    };
+    wrap.appendChild(inp);
   } else if (p.type === "enum") {
     const sel = document.createElement("select");
     for (const c of p.choices) sel.add(new Option(c, c));
@@ -294,7 +308,7 @@ function renderForm(group, body = $("#formBody")) {
     row.appendChild(control(p, value));
     const help = document.createElement("div");
     help.className = "help";
-    help.textContent = `${p.help} (default ${p.default}${range})`;
+    help.textContent = p.default === "" ? p.help : `${p.help} (default ${p.default}${range})`;
     row.appendChild(help);
     box.appendChild(row);
   }
@@ -372,12 +386,30 @@ function rerenderForms() {
   if (!NON_FORM_TABS.includes(state.tab)) renderForm(state.tab);
   else if (state.tab === "dvr") renderForm("DVR", $("#dvrSettings"));
   else if (state.tab === "image") renderImage();
+  else if (state.tab === "status") renderForm("Hotspot", $("#hsSettings"));
 }
 
 function revert() {
   state.edits = {};
   updateSaveBar();
   rerenderForms();
+}
+
+// ---------------------------------------------------------------- hotspot
+
+async function loadHotspot() {
+  const r = await fpv("hotspot", "status");
+  const box = $("#hsState");
+  box.innerHTML = "";
+  if (!r.ok) { box.textContent = r.error; return; }
+  const b = document.createElement("span");
+  b.className = "recbadge" + (r.mode === "hotspot" ? " rec" : "");
+  b.textContent = r.mode === "hotspot" ? "● hotspot on" : r.mode === "switching" ? "switching…" : "hotspot off";
+  const t = document.createElement("span");
+  t.className = "sub";
+  t.textContent = `switch ${r.switch} · network ${r.ssid || "(created on first use)"} · password ${r.pass || "-"}` +
+    ` · channel ${r.channel}` + (r.mode === "hotspot" ? ` · ${r.clients} client(s) · http://${r.address}/` : "");
+  box.append(b, t);
 }
 
 // ---------------------------------------------------------------- image + IQ
@@ -530,10 +562,10 @@ async function loadDvrFiles() {
   tb.innerHTML = "";
   if (!r.ok) { $("#dvrHint").textContent = r.error; dvrFiles = []; return; }
   dvrFiles = r.files;
-  const adb = $("#transport").value === "adb";
+  const adb = ["adb", "hotspot"].includes($("#transport").value);
   $("#dvrHint").textContent = !r.files.length ? "No recordings on the card."
     : adb ? `Files are saved on this PC in the folder 'Open folder' shows.`
-    : "Downloading needs the ADB (USB) connection.";
+    : "Downloading needs the ADB (USB) or WiFi hotspot connection.";
   for (const f of r.files) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td class="mono"></td><td></td><td></td>`;
@@ -582,6 +614,7 @@ async function pullAll() {
 // same rules as files/fpv validate(); fpv checks again on save
 function validValue(p, v) {
   if (p.specials && p.specials.includes(v)) return true;
+  if (p.type === "str") return /^[A-Za-z0-9_.-]*$/.test(v) && v.length >= p.min && v.length <= p.max;
   if (p.type === "enum") return p.choices.includes(v);
   if (!/^\d+$/.test(v)) return false;
   return +v >= p.min && +v <= p.max;
@@ -748,7 +781,7 @@ async function cliSend(e) {
 // ---------------------------------------------------------------- wiring
 
 // USB RNDIS address for fpvd today; the wfb tunnel address (issue #1) later
-const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10" };
+const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "192.168.73.1" };
 $("#transport").onchange = () => {
   const t = $("#transport").value;
   const net = t !== "adb";

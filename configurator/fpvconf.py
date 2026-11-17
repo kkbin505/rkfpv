@@ -24,6 +24,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -193,6 +195,8 @@ def transport_for(req):
         return Ssh(host)
     if kind == "fpvd":
         return Fpvd(req.get("host") or "172.32.0.93")
+    if kind == "hotspot":
+        return Fpvd(req.get("host") or "192.168.73.1")
     raise TransportError(f"unknown transport {kind}")
 
 
@@ -268,18 +272,35 @@ def list_presets():
     return r
 
 
+def http_pull(host, name, dest):
+    """hotspot mode: dvrhttpd on the board (http://<host>/dvr/<name>)"""
+    part = dest + ".part"
+    try:
+        with urllib.request.urlopen(f"http://{host}/dvr/{name}", timeout=15) as r, open(part, "wb") as f:
+            shutil.copyfileobj(r, f, 1 << 20)
+    except (urllib.error.URLError, OSError) as e:
+        if os.path.exists(part):
+            os.unlink(part)
+        raise TransportError(f"download over the hotspot failed: {e}")
+    os.replace(part, dest)
+
+
 def dvr_pull(t, name):
-    """copy one recording from the board's DVR partition to this PC (ADB)"""
-    if not isinstance(t, Adb):
-        raise TransportError("downloading recordings needs ADB (USB)")
+    """copy one recording from the board's DVR partition to this PC:
+    adb pull over USB, or HTTP over the hotspot"""
     if not DVR_NAME.match(name or ""):
         raise TransportError(f"not a recording name: {name!r}")
     os.makedirs(dvr_local_dir, exist_ok=True)
     dest = os.path.join(dvr_local_dir, name)
     t0 = time.time()
-    rc, out, err = t._run(t._base() + ["pull", f"{DVR_BOARD_DIR}/{name}", dest], 1800)
-    if rc != 0:
-        raise TransportError((err or out).strip() or "adb pull failed")
+    if isinstance(t, Fpvd):
+        http_pull(t.addr[0], name, dest)
+    elif isinstance(t, Adb):
+        rc, out, err = t._run(t._base() + ["pull", f"{DVR_BOARD_DIR}/{name}", dest], 1800)
+        if rc != 0:
+            raise TransportError((err or out).strip() or "adb pull failed")
+    else:
+        raise TransportError("downloading recordings needs ADB (USB) or the WiFi hotspot")
     size = os.path.getsize(dest)
     secs = max(time.time() - t0, 0.001)
     return {"ok": True, "path": dest, "size": size, "seconds": round(secs, 1),
