@@ -1,6 +1,7 @@
 #!/bin/sh
 # wfb-ng video TX for rkfpv on Luckfox firmware.
 # Trimmed from OpenIPC's /usr/bin/wifibroadcast: no majestic, no cli.
+# Derived from OpenIPC (MIT, Copyright (c) 2021 OpenIPC); see THIRD_PARTY_NOTICES.md.
 # wfb_tx reads RTP from UDP $video_port (rkfpv sends there) instead of the
 # rtp_local unix socket majestic uses.
 
