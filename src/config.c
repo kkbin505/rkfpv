@@ -57,6 +57,8 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.dehaze = ISP_IQ;
 	c->isp.wb = WB_AUTO;
 
+	c->osd = 1;
+
 	c->stats_interval = 5;
 }
 
@@ -175,6 +177,7 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("pt", pt, 96, 127);
 	INT_KEY("stats", stats_interval, 0, 3600);
 	INT_KEY("dvr", dvr, 0, 1);
+	INT_KEY("osd", osd, 0, 1);
 	INT_KEY("dvr_segment", dvr_segment, 10, 3600);
 	INT_KEY("dvr_min_free", dvr_min_free, 10, 1000000);
 	INT_KEY("dvr_overwrite", dvr_overwrite, 0, 1);
