@@ -71,12 +71,16 @@ build-host/mavbridge: src/mavbridge.c | build-host
 build-host/test_dvr: test/test_dvr.c src/dvr.c src/dvr.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -Wno-format-truncation -O1 -g -fsanitize=address,undefined -pthread -o $@ test/test_dvr.c src/dvr.c
 
+build-host/test_config: test/test_config.c src/config.c src/config.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -Isrc -o $@ test/test_config.c src/config.c
+
 build-host/fpvd: src/fpvd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
+	./build-host/test_config files/rkfpv.conf
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh
 	python3 -I test/test_fpvd.py build-host/fpvd files/fpv

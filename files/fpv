@@ -12,6 +12,7 @@
 #   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
+#   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -22,6 +23,10 @@ WFB_CONF=$R/etc/wfb.yaml
 DEFAULTS=$R/etc/fpv/defaults
 LOGDIR=$R/userdata/log
 USERDATA=$R/userdata
+IQ_STOCK=$R/oem/usr/share/iqfiles
+IQ_CUSTOM=$R/userdata/iq
+ISP_STATUS=$R/tmp/isp.status
+IQ_HISTORY_KEEP=5
 DVR_DIR=$R/mnt/dvr
 DVR_STATUS=$R/tmp/dvr.status
 INIT=$R/etc/init.d/S99fpv
@@ -37,7 +42,9 @@ WLAN=wlan0
 # file:   rkfpv -> /etc/rkfpv.conf (key = value)
 #         wfb   -> /etc/wfb.yaml under <section>: (key: value)
 # type:   int (min..max) | bool (0/1) | enum (choices in min, comma separated)
-#         default "auto" means the key may be unset (written commented out)
+#         a type like int+iq+off also accepts those words besides a number:
+#           auto (wfb keys: written commented out = adapter default)
+#           iq   (keep the IQ file's value)   off
 # apply:  venc    SIGHUP rkfpv (live)
 #         radio   wfb_tx_cmd set_radio (live)
 #         fec     wfb_tx_cmd set_fec (live)
@@ -62,9 +69,9 @@ mirror|rkfpv||bool|0|1|1|video|Camera|Mirror left-right
 flip|rkfpv||bool|0|1|1|video|Camera|Flip upside down (mirror + flip = rotate 180)
 channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
 width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
-txpower_8812au|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
-txpower_8812cu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812CU / 8822CU TX power: level / 2 = dBm (auto = 20 = 10 dBm)
-txpower_8812eu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812EU TX power: level / 2 = dBm (auto = 40 = 20 dBm); high levels draw a lot of current
+txpower_8812au|wfb|wireless|int+auto|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
+txpower_8812cu|wfb|wireless|int+auto|1|63|auto|txpower|Radio|RTL8812CU / 8822CU TX power: level / 2 = dBm (auto = 20 = 10 dBm)
+txpower_8812eu|wfb|wireless|int+auto|1|63|auto|txpower|Radio|RTL8812EU TX power: level / 2 = dBm (auto = 40 = 20 dBm); high levels draw a lot of current
 mcs_index|wfb|broadcast|int|0|7|2|radio|Radio|Modulation: 0 slowest / longest range ... 7 fastest
 stbc|wfb|broadcast|bool|0|1|0|radio|Radio|STBC (needs 2 TX antennas)
 ldpc|wfb|broadcast|bool|0|1|0|radio|Radio|LDPC coding
@@ -73,6 +80,23 @@ fec_n|wfb|broadcast|int|2|32|12|fec|Radio|FEC packets per block incl. recovery (
 link_id|wfb|broadcast|int|0|16777215|7669206|link|Radio|Link ID (ground station must match)
 telemetry_enabled|wfb|telemetry|enum|true,false||true|link|Telemetry|MAVLink telemetry over wfb-ng
 baud|wfb|telemetry|enum|57600,115200,230400,460800,921600||115200|link|Telemetry|Flight-controller UART baud rate
+isp_brightness|rkfpv||int+iq|0|255|iq|venc|Picture|Brightness, 128 = neutral (iq = the IQ file's value)
+isp_contrast|rkfpv||int+iq|0|255|iq|venc|Picture|Contrast, 128 = neutral
+isp_saturation|rkfpv||int+iq|0|255|iq|venc|Picture|Saturation, 128 = neutral (0 = black and white)
+isp_hue|rkfpv||int+iq|0|255|iq|venc|Picture|Hue, 128 = neutral
+isp_sharpness|rkfpv||int+iq|0|100|iq|venc|Picture|Sharpness (high values also sharpen noise)
+isp_wb|rkfpv||enum|auto,daylight,cloudy,shade,twilight,fluorescent,incandescent||auto|venc|Picture|White balance
+isp_exp_max|rkfpv||int+iq|1|33|iq|venc|Exposure|Longest exposure, ms (IQ: 30). Shorter = less motion blur, darker and noisier in low light; FPV often 2-8. Below 10 ms anti-flicker is turned off
+isp_gain_max|rkfpv||int+iq|1|512|iq|venc|Exposure|Highest gain, x (IQ: 512). Lower = less noise at night, darker image
+isp_antiflicker|rkfpv||enum|iq,off,50,60||iq|venc|Exposure|Mains-light flicker, Hz (indoors); needs exposure steps of 10 / 8.3 ms
+isp_ae_delay|rkfpv||int+iq|0|4|iq|venc|Exposure|Frames before auto-exposure reacts (IQ: 2). 0 = fastest, may hunt under flickering light
+isp_ae_damp|rkfpv||int+iq|0|100|iq|venc|Exposure|AE damping bright-to-dark, x0.01 (IQ: 0.45). Which way is faster is still to be checked on the board
+isp_blc|rkfpv||int+off|1|100|off|venc|Exposure|Backlight compensation: brighter subject against a bright sky (do not combine with highlight comp)
+isp_hlc|rkfpv||int+off|1|100|off|venc|Exposure|Highlight compensation: hold back bright areas such as sky (do not combine with backlight comp)
+isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise reduction. off = sharpest, noisier in low light
+isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
+isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)
+iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
 dvr|rkfpv||bool|0|1|1|boot|DVR|Record automatically when FPV starts (Start/Stop works any time)
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
@@ -200,8 +224,10 @@ validate() {
 	IFS='|' read -r k file section type min max def apply group help <<EOF
 $line
 EOF
-	[ "$2" = auto ] && [ "$def" = auto ] && return 0
-	case "$type" in
+	case "+${type#*+}+" in
+		*"+$2+"*) [ "$type" != "${type#*+}" ] && return 0 ;;   # a special word of int+...
+	esac
+	case "${type%%+*}" in
 		int|bool)
 			case "$2" in ''|*[!0-9]*) echo "$1: '$2' is not a number"; return 1 ;; esac
 			if [ "$2" -lt "$min" ] || [ "$2" -gt "$max" ]; then
@@ -267,7 +293,7 @@ cmd_schema() {
 			case "$type" in
 				enum) range=$min ;; *) range="$min..$max" ;;
 			esac
-			[ "$def" = auto ] && range="$range,auto"
+			[ "$type" != "${type#*+}" ] && range="$range,$(echo "${type#*+}" | tr + ,)"
 			printf '%-18s %-9s %-8s %-22s %-10s %s\n' "$k" "$group" "$apply" "$range" "$(get_value "$k")" "$help"
 		done
 		return
@@ -275,7 +301,10 @@ cmd_schema() {
 	printf '{"ok":true,"params":['
 	sep=
 	params | while IFS='|' read -r k file section type min max def apply group help; do
-		printf '%s{"key":"%s","file":"%s","type":"%s",' "$sep" "$k" "$file" "$type"
+		printf '%s{"key":"%s","file":"%s","type":"%s",' "$sep" "$k" "$file" "${type%%+*}"
+		if [ "$type" != "${type#*+}" ]; then
+			printf '"specials":["%s"],' "$(echo "${type#*+}" | sed 's/+/","/g')"
+		fi
 		if [ "$type" = enum ]; then
 			printf '"choices":["%s"],' "$(echo "$min" | sed 's/,/","/g')"
 		else
@@ -324,7 +353,7 @@ cmd_set() {
 		IFS='|' read -r _k file section type min max def apply group help <<EOF
 $(param_line "$k")
 EOF
-		[ "$v" = auto ] && v=""
+		[ "$file" = wfb ] && [ "$v" = auto ] && v=""
 		[ "$file" = rkfpv ] && t=$trk || t=$twf
 		write_value "$t" "$file" "$section" "$k" "$v" > "$t.new" && mv "$t.new" "$t"
 		applies="$applies $apply"
@@ -605,6 +634,120 @@ dvr_cmd() {
 	esac
 }
 
+# ---------------------------------------------------------------- IQ files
+# Stock IQ files are only ever read. Edited copies live in /userdata/iq;
+# every replaced version is kept in /userdata/iq/history (last 5).
+
+valid_iq_name() {
+	echo "$1" | grep -Eq '^[A-Za-z0-9_.-]+\.json$' && [ -f "$IQ_STOCK/$1" ]
+}
+
+iq_field() {
+	[ -f "$ISP_STATUS" ] && sed -n "s/^$1=//p" "$ISP_STATUS" | head -1
+}
+
+iq_files_json() {   # <dir> -> [{"name","size"},...]
+	ls -ln "$1" 2>/dev/null | awk 'NF >= 9 && $9 ~ /\.json$/ {
+		printf "%s{\"name\":\"%s\",\"size\":%s}", sep, $9, $5; sep = "," }'
+}
+
+iq_cmd() {
+	sub=${1:-status}
+	[ $# -gt 0 ] && shift
+	case "$sub" in
+	status|list)
+		conf=$(get_value iq_dir)
+		used=$(running rkfpv && iq_field iq_dir)
+		fb=$(running rkfpv && iq_field fallback)
+		note=$(running rkfpv && iq_field note)
+		tries=$(cat "$IQ_CUSTOM/.tries" 2>/dev/null)
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"configured":"%s","in_use":"%s","fallback":%s,"note":"%s","tries":"%s","sensor":"%s","stock":[' \
+				"$conf" "$used" "$([ "$fb" = 1 ] && echo true || echo false)" "$(jesc "$note")" \
+				"${tries:-0}" "$(jesc "$(iq_field sensor)")"
+			iq_files_json "$IQ_STOCK"
+			printf '],"custom":['
+			iq_files_json "$IQ_CUSTOM"
+			printf ']}\n'
+		else
+			echo "configured: $conf"
+			[ -n "$used" ] && echo "in use:     $used${fb:+$([ "$fb" = 1 ] && echo "  (FALLBACK: $note)")}"
+			echo "stock:  $(ls "$IQ_STOCK" 2>/dev/null | grep '\.json$' | tr '\n' ' ')"
+			echo "custom: $(ls "$IQ_CUSTOM" 2>/dev/null | grep '\.json$' | tr '\n' ' ')"
+		fi ;;
+	copy-stock)
+		mkdir -p "$IQ_CUSTOM" || die "cannot create $IQ_CUSTOM"
+		n=0
+		for f in "$IQ_STOCK"/*.json; do
+			[ -f "$f" ] || continue
+			b=${f##*/}
+			[ -e "$IQ_CUSTOM/$b" ] && continue       # never overwrite an edited file
+			cp "$f" "$IQ_CUSTOM/$b.new" && mv "$IQ_CUSTOM/$b.new" "$IQ_CUSTOM/$b" && n=$((n + 1))
+		done
+		sync
+		[ "$JSON" = 1 ] && printf '{"ok":true,"copied":%s}\n' "$n" || echo "copied $n stock file(s) to $IQ_CUSTOM (existing files kept)"
+		;;
+	install)
+		# after `adb push <file> /userdata/iq/<name>.new`: verify, keep the
+		# old version in history, then move into place
+		[ $# -eq 2 ] || die "usage: fpv iq install <name.json> <md5>"
+		name=$1; want=$2
+		valid_iq_name "$name" || die "not a stock IQ file name: $name"
+		echo "$want" | grep -Eq '^[0-9a-f]{32}$' || die "bad md5"
+		new="$IQ_CUSTOM/$name.new"
+		[ -f "$new" ] || die "no uploaded file $new"
+		got=$(md5sum "$new" | cut -d' ' -f1)
+		if [ "$got" != "$want" ]; then
+			rm -f "$new"
+			die "upload damaged (md5 $got, expected $want): nothing changed"
+		fi
+		iq_keep "$name"
+		mv "$new" "$IQ_CUSTOM/$name" && sync || die "install failed"
+		[ "$JSON" = 1 ] && printf '{"ok":true,"installed":"%s","md5":"%s"}\n' "$name" "$got" || echo "installed $name ($got)"
+		;;
+	history)
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"history":['
+			ls -ln "$IQ_CUSTOM/history" 2>/dev/null | awk 'NF >= 9 && $9 ~ /\.json\.[0-9]+$/ {
+				n = $9; v = n; sub(/.*\./, "", v); sub(/\.[0-9]+$/, "", n)
+				printf "%s{\"name\":\"%s\",\"version\":%s,\"size\":%s}", sep, n, v, $5; sep = "," }'
+			printf ']}\n'
+		else
+			ls -ln "$IQ_CUSTOM/history" 2>/dev/null | awk 'NF >= 9 { print $9, $5 " bytes" }'
+		fi ;;
+	rollback)
+		[ $# -ge 1 ] || die "usage: fpv iq rollback <name.json> [version]"
+		name=$1; ver=$2
+		valid_iq_name "$name" || die "not a stock IQ file name: $name"
+		[ -z "$ver" ] && ver=$(iq_versions "$name" | tail -1)
+		echo "$ver" | grep -Eq '^[0-9]+$' || die "no earlier version of $name"
+		old="$IQ_CUSTOM/history/$name.$ver"
+		[ -f "$old" ] || die "no version $ver of $name"
+		cp "$old" "$IQ_CUSTOM/$name.new" || die "copy failed"
+		iq_keep "$name"
+		mv "$IQ_CUSTOM/$name.new" "$IQ_CUSTOM/$name" && sync
+		[ "$JSON" = 1 ] && printf '{"ok":true,"restored":"%s","version":%s}\n' "$name" "$ver" || echo "restored $name version $ver (the replaced file is in history too)"
+		;;
+	*) die "iq: status | list | copy-stock | install <name> <md5> | history | rollback <name> [version]" ;;
+	esac
+}
+
+iq_versions() {   # numbers of the kept versions of <name>, ascending
+	ls "$IQ_CUSTOM/history" 2>/dev/null | sed -n "s/^$(echo "$1" | sed 's/\./\\./g')\.\([0-9][0-9]*\)$/\1/p" | sort -n
+}
+
+# move the active custom <name> into history as the next version; keep the last few
+iq_keep() {
+	[ -f "$IQ_CUSTOM/$1" ] || return 0
+	mkdir -p "$IQ_CUSTOM/history"
+	last=$(iq_versions "$1" | tail -1)
+	next=$(( ${last:-0} + 1 ))
+	mv "$IQ_CUSTOM/$1" "$IQ_CUSTOM/history/$1.$next"
+	for v in $(iq_versions "$1" | awk -v k=$IQ_HISTORY_KEEP '{ a[NR] = $0 } END { for (i = 1; i <= NR - k; i++) print a[i] }'); do
+		rm -f "$IQ_CUSTOM/history/$1.$v"
+	done
+}
+
 usage() {
 	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -633,6 +776,7 @@ case "$cmd" in
 	mode) cmd_mode "$@" ;;
 	reset) cmd_reset ;;
 	dvr) dvr_cmd "$@" ;;
+	iq) iq_cmd "$@" ;;
 	help|-h|--help) usage ;;
 	*) die "unknown command '$cmd' (fpv help)" ;;
 esac

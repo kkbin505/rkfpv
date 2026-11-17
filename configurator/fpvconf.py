@@ -10,6 +10,8 @@ command, so anything the UI does can also be typed in `adb shell`.
 Python 3.8+ standard library only; needs `adb` (or `ssh`) on PATH.
 """
 import argparse
+import base64
+import hashlib
 import json
 import os
 import re
@@ -284,6 +286,75 @@ def dvr_pull(t, name):
             "mbps": round(size / secs / 1e6, 1)}
 
 
+IQ_STOCK_DIR = "/oem/usr/share/iqfiles"
+IQ_CUSTOM_DIR = "/userdata/iq"
+IQ_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.json$")
+IQ_KEYS = ("sensor_calib", "module_calib", "main_scene")   # what rkaiq needs at top level
+IQ_MAX = 8 * 1024 * 1024
+
+
+def iq_pull(t, name, where):
+    """IQ JSON from the board, returned to the browser as base64 (ADB)"""
+    if not isinstance(t, Adb):
+        raise TransportError("downloading IQ files needs ADB (USB)")
+    if not IQ_NAME.match(name or "") or where not in ("stock", "custom"):
+        raise TransportError(f"bad IQ file: {name!r}")
+    src = f"{IQ_STOCK_DIR if where == 'stock' else IQ_CUSTOM_DIR}/{name}"
+    fd, tmp = tempfile.mkstemp(prefix="fpvconf-iq-")
+    os.close(fd)
+    try:
+        rc, out, err = t._run(t._base() + ["pull", src, tmp], 120)
+        if rc != 0:
+            raise TransportError((err or out).strip() or "adb pull failed")
+        with open(tmp, "rb") as f:
+            data = f.read()
+    finally:
+        os.unlink(tmp)
+    return {"ok": True, "name": name, "size": len(data), "data": base64.b64encode(data).decode()}
+
+
+def iq_push(t, name, data_b64):
+    """Check an edited IQ JSON, push it next to the active custom file and let
+    `fpv iq install` verify the md5 and swap it in (old version -> history).
+    Nothing on the board changes unless every check passes."""
+    if not isinstance(t, Adb):
+        raise TransportError("uploading IQ files needs ADB (USB)")
+    if not IQ_NAME.match(name or ""):
+        raise TransportError(f"not an IQ file name: {name!r}")
+    try:
+        data = base64.b64decode(data_b64 or "", validate=True)
+    except ValueError:
+        raise TransportError("upload garbled (base64)")
+    if not 1000 <= len(data) <= IQ_MAX:
+        raise TransportError(f"{name}: {len(data)} bytes is not a plausible IQ file")
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise TransportError(f"{name} is not valid JSON: {e}")
+    missing = [k for k in IQ_KEYS if not isinstance(doc, dict) or k not in doc]
+    if missing:
+        raise TransportError(f"{name} is missing {', '.join(missing)}: not an rkaiq IQ file")
+    st = run_fpv(t, ["iq", "list"])
+    if not st.get("ok"):
+        raise TransportError(st.get("error", "fpv iq list failed"))
+    if name not in [f["name"] for f in st.get("stock", [])]:
+        raise TransportError(f"{name} does not match a stock IQ file name; rkaiq picks the file by name "
+                             f"(stock: {', '.join(f['name'] for f in st.get('stock', []))})")
+    md5 = hashlib.md5(data).hexdigest()
+    fd, tmp = tempfile.mkstemp(prefix="fpvconf-iq-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)                       # byte for byte: CRLF etc. kept
+        t.shell(f"mkdir -p {IQ_CUSTOM_DIR}")
+        t.push(tmp, f"{IQ_CUSTOM_DIR}/{name}.new")
+    finally:
+        os.unlink(tmp)
+    r = run_fpv(t, ["iq", "install", name, md5])
+    if not r.get("ok"):
+        raise TransportError(r.get("error", "install failed"))
+    return r
+
+
 def open_folder():
     os.makedirs(dvr_local_dir, exist_ok=True)
     if sys.platform.startswith("win"):
@@ -363,6 +434,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": "bad token"}, 403)
         try:
             n = int(self.headers.get("Content-Length", 0))
+            if n > 4 * IQ_MAX:          # base64 of the largest IQ file, with room
+                return self._json({"ok": False, "error": "request too large"}, 413)
             req = json.loads(self.rfile.read(n) or b"{}")
             t = transport_for(req)
             if self.path == "/api/fpv":
@@ -378,6 +451,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(dvr_pull(t, str(req.get("name", ""))))
             if self.path == "/api/dvr/open":
                 return self._json(open_folder())
+            if self.path == "/api/iq/pull":
+                return self._json(iq_pull(t, str(req.get("name", "")), str(req.get("where", ""))))
+            if self.path == "/api/iq/push":
+                return self._json(iq_push(t, str(req.get("name", "")), req.get("data", "")))
             return self._json({"ok": False, "error": "no such endpoint"}, 404)
         except TransportError as e:
             return self._json({"ok": False, "error": str(e), "transport_error": True})
