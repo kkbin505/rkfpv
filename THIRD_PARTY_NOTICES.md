@@ -1,0 +1,82 @@
+# Third-party notices
+
+rkfpv's own code is under the MIT license (see `LICENSE`). This file lists the third-party material it is derived from, patches, downloads at build time, or links against, together with each license.
+
+## Material in this repository
+
+### OpenIPC: `files/wfb.sh`
+`files/wfb.sh` is trimmed and adapted from OpenIPC's `/usr/bin/wifibroadcast` script (https://github.com/OpenIPC/firmware). The following were also taken from OpenIPC:
+- the wfb-ng start parameters
+- the USB-ID → driver table
+- the module options
+- the per-driver TX-power scale
+
+```
+MIT License
+
+Copyright (c) 2021 OpenIPC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Rockchip samples: `src/isp.c`, parts of `src/main.c`
+Two pieces follow Rockchip's samples in the Luckfox Pico SDK:
+- The ISP (rkaiq) bring-up sequence in `src/isp.c` follows `media/samples/example/common/isp3.x/sample_comm_isp.c`.
+- The VENC stream handling in `src/main.c` follows the RKMPI samples and rkipc.
+
+The sample's header reads:
+
+```
+Copyright 2020 Fuzhou Rockchip Electronics Co., Ltd. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+```
+
+### Patches in `luckfox/patches/`
+Each patch file is a derivative of the project it patches and stays under that project's license:
+
+| Directory | Patches | License |
+|---|---|---|
+| `luckfox/patches/rtl8812au/` | openipc/realtek-wlan (RTL8812AU driver); from OpenIPC's buildroot package | GPL-2.0 |
+| `luckfox/patches/rtl88x2eu/` | libc0607/rtl88x2eu-20230815 (RTL8812EU driver) | GPL-2.0 |
+| `luckfox/patches/buildroot/libffi/` | libffi 3.4.4 (host build fix for GCC 14) | MIT (libffi) |
+
+## Downloaded at build time (not in this repository)
+`luckfox/build-deps.sh` and `gs/build.sh` fetch these at pinned revisions and build them. They are separate programs and kernel modules: rkfpv talks to wfb-ng over UDP and does not link against any of them.
+
+| Project | Revision | License | Used for |
+|---|---|---|---|
+| [svpcom/wfb-ng](https://github.com/svpcom/wfb-ng) | `ae2122c1` | GPL-3.0 | radio link (`wfb_tx`, `wfb_rx`, `wfb_tx_cmd`) |
+| [openipc/realtek-wlan](https://github.com/openipc/realtek-wlan), branch `rtl8812au_fpv` | `ee92cdfa` | GPL-2.0 | RTL8812AU driver (air unit) |
+| [libc0607/rtl88x2cu-20230728](https://github.com/libc0607/rtl88x2cu-20230728) | `6ca5aa09` | GPL-2.0 | RTL8812CU / 8822CU driver |
+| [libc0607/rtl88x2eu-20230815](https://github.com/libc0607/rtl88x2eu-20230815) | `12977e40` | GPL-2.0 | RTL8812EU driver |
+| [svpcom/rtl8812au](https://github.com/svpcom/rtl8812au) | `35779999` (v5.2.20) | GPL-2.0 | RTL8812AU driver (bench ground station) |
+
+## Linked at build time, from the Luckfox Pico SDK (not in this repository)
+rkfpv links these libraries from the user's own copy of the [Luckfox Pico SDK](https://github.com/LuckfoxTECH/luckfox-pico). They are not distributed here.
+
+| Library | License |
+|---|---|
+| `librockit` (RKMPI) | Rockchip proprietary |
+| `librkaiq` (ISP) | Rockchip proprietary |
+| `librockchip_mpp` | Apache-2.0 |
+| `librga` | Rockchip |
+
+## Distributing built firmware images
+A built `sd_update.img` contains GPL software, including the Linux kernel and the Realtek drivers (GPL-2.0) and wfb-ng (GPL-3.0). Whoever distributes such an image must also provide the corresponding source, including the kernel changes made in the Luckfox SDK (Mini DTS USB role switch, `drivers/usb/dwc3/drd.c`). The image also contains Rockchip's proprietary libraries, whose redistribution terms are set by Rockchip and Luckfox. This repository publishes source and build scripts only.
