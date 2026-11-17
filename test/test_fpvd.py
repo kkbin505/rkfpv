@@ -103,6 +103,11 @@ def main():
         r, _, _ = request(s, "s2", "schema")
         check("retry completes from cache", r and r["ok"] and runs() == n + 1, runs() - n)
 
+        r, _, _ = request(s, "d1", "dvr status")
+        check("dvr allowed over fpvd", r and r.get("ok") and "state" in r, r)
+        r, _, _ = request(s, "d2", "dvr delete ../../etc/rkfpv.conf")
+        check("dvr path delete rejected", r and r["ok"] is False, r)
+
         r, _, _ = request(s, "e1", "set bitrate 999999")
         check("fpv error passed through", r and r["ok"] is False and "range" in r["error"], r)
         r, _, _ = request(s, "e2", "sh -c reboot")

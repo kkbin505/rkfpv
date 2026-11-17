@@ -29,6 +29,14 @@ void config_defaults(rkfpv_config_t *c)
 	 * OpenIPC ground stations pick the decoder from it */
 	c->pt = 97;
 
+	c->dvr = 1;
+	snprintf(c->dvr_dir, sizeof(c->dvr_dir), "/mnt/dvr");
+	c->dvr_segment = 600;
+	c->dvr_min_free = 300;
+	c->dvr_overwrite = 1;
+	c->dvr_ts = 0;
+	c->dvr_buffer_kb = 1024;
+
 	c->stats_interval = 5;
 }
 
@@ -71,6 +79,15 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 		snprintf(c->dst_ip, sizeof(c->dst_ip), "%s", val);
 		return 0;
 	}
+	if (!strcmp(key, "dvr_format")) {
+		if (!strcmp(val, "mp4")) { c->dvr_ts = 0; return 0; }
+		if (!strcmp(val, "ts")) { c->dvr_ts = 1; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "dvr_dir")) {
+		snprintf(c->dvr_dir, sizeof c->dvr_dir, "%s", val);
+		return 0;
+	}
 	if (!strcmp(key, "iq_dir")) {
 		snprintf(c->iq_dir, sizeof(c->iq_dir), "%s", val);
 		return 0;
@@ -89,6 +106,11 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("pkt_size", pkt_size, 200, 4000);
 	INT_KEY("pt", pt, 96, 127);
 	INT_KEY("stats", stats_interval, 0, 3600);
+	INT_KEY("dvr", dvr, 0, 1);
+	INT_KEY("dvr_segment", dvr_segment, 10, 3600);
+	INT_KEY("dvr_min_free", dvr_min_free, 10, 1000000);
+	INT_KEY("dvr_overwrite", dvr_overwrite, 0, 1);
+	INT_KEY("dvr_buffer_kb", dvr_buffer_kb, 256, 16384);
 	return -1;
 }
 
@@ -140,10 +162,13 @@ void config_print(const rkfpv_config_t *c)
 	fprintf(stderr,
 		"rkfpv: %dx%d@%d vi_chn=%d iq=%s mirror=%d flip=%d\n"
 		"rkfpv: h265 %s %d kbps (max %d) gop=%d stat=%ds slice=%d ir=%d\n"
-		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d\n",
+		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d\n"
+		"rkfpv: dvr=%d %s segment=%ds min_free=%dMB overwrite=%d %s buffer=%dKB\n",
 		c->width, c->height, c->fps, c->vi_chn,
 		c->iq_dir[0] ? c->iq_dir : "(none)", c->mirror, c->flip,
 		c->rc == RC_CBR ? "cbr" : "vbr", c->bitrate_kbps,
 		c->max_bitrate_kbps, c->gop, c->stat_time, c->slice_bytes,
-		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt);
+		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt,
+		c->dvr, c->dvr_dir, c->dvr_segment, c->dvr_min_free, c->dvr_overwrite,
+		c->dvr_ts ? "ts" : "mp4", c->dvr_buffer_kb);
 }

@@ -74,6 +74,37 @@ pc_connected() {
 	return 1
 }
 
+# DVR partition (last partition of the TF card, see luckfox/mkoverlay.sh).
+# Mounted in debug mode too, so recordings can be pulled over ADB.
+DVR_DIR=/mnt/dvr
+
+dvr_mount() {
+	mountpoint -q "$DVR_DIR" && return 0
+	dev=
+	for u in /sys/class/block/mmcblk*p*/uevent; do
+		grep -q '^PARTNAME=dvr$' "$u" 2>/dev/null || continue
+		dev=/dev/$(sed -n 's/^DEVNAME=//p' "$u")
+		break
+	done
+	if [ -z "$dev" ] || [ ! -b "$dev" ]; then
+		log "dvr: no partition named 'dvr' (image without it?), recording disabled"
+		return 1
+	fi
+	# first boot: the partition is empty. Only ever format the partition the
+	# kernel calls "dvr", and only when it has no ext2/3/4 superblock.
+	if [ "$(od -An -tx1 -j1080 -N2 "$dev" | tr -d ' ')" != "53ef" ]; then
+		log "dvr: formatting $dev (first boot)"
+		mkfs.ext4 -F -q -L dvr -m 0 "$dev" || { log "dvr: mkfs failed"; return 1; }
+	fi
+	mkdir -p "$DVR_DIR"
+	if ! mount -t ext4 -o noatime,errors=remount-ro "$dev" "$DVR_DIR"; then
+		log "dvr: mount failed, checking $dev"
+		e2fsck -p "$dev" > /dev/null 2>&1
+		mount -t ext4 -o noatime,errors=remount-ro "$dev" "$DVR_DIR" || { log "dvr: mount failed"; return 1; }
+	fi
+	log "dvr: $dev mounted on $DVR_DIR ($(df -h "$DVR_DIR" | awk 'END { print $(NF-2) }') free)"
+}
+
 # command service for the configurator: runs in debug and FPV mode
 # (reachable over USB RNDIS now, over the wfb tunnel later: issue #1)
 start_fpvd() {
@@ -83,6 +114,7 @@ start_fpvd() {
 
 start() {
 	rotate_logs
+	dvr_mount
 	start_fpvd
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
@@ -105,8 +137,10 @@ start() {
 }
 
 stop() {
-	stop_video
+	stop_video                      # rkfpv closes the current recording
 	/usr/bin/wfb.sh stop
+	sync
+	mountpoint -q "$DVR_DIR" && umount "$DVR_DIR"
 	start-stop-daemon -K -q -p /var/run/fpvd.pid
 }
 

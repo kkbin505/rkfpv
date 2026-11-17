@@ -7,7 +7,8 @@
  *   rkfpv [-c /etc/rkfpv.conf] [-s key=value]...
  *
  * SIGHUP re-reads the config file and applies bitrate / max_bitrate / gop /
- * rc / stat_time live. Other keys need a restart.
+ * rc / stat_time and the dvr_* limits live. Other keys need a restart.
+ * SIGUSR1 starts DVR recording, SIGUSR2 stops it; state in /tmp/dvr.status.
  */
 #include <errno.h>
 #include <getopt.h>
@@ -15,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,6 +27,7 @@
 #include "rk_mpi_vi.h"
 
 #include "config.h"
+#include "dvr.h"
 #include "isp.h"
 #include "rtp_h265.h"
 
@@ -34,6 +37,10 @@
 
 static volatile sig_atomic_t g_quit;
 static volatile sig_atomic_t g_reload;
+static volatile sig_atomic_t g_dvr_cmd;   /* 1 start, 2 stop */
+
+extern const dvr_writer dvr_rkmuxer;
+#define DVR_STATUS "/tmp/dvr.status"
 
 /* Where the stream loop is, for the SIGSEGV report below. */
 static volatile int g_stage;          /* 1 GetStream, 2 send, 3 Release */
@@ -70,8 +77,39 @@ static void on_signal(int sig)
 {
 	if (sig == SIGHUP)
 		g_reload = 1;
+	else if (sig == SIGUSR1)
+		g_dvr_cmd = 1;
+	else if (sig == SIGUSR2)
+		g_dvr_cmd = 2;
 	else
 		g_quit = 1;
+}
+
+/* only record onto the DVR partition itself: an unmounted /mnt/dvr is a
+ * plain directory on the root filesystem, which recording would fill */
+static int is_mountpoint(const char *dir)
+{
+	char parent[160];
+	struct stat a, b;
+	snprintf(parent, sizeof parent, "%s/..", dir);
+	if (stat(dir, &a) || stat(parent, &b) || !S_ISDIR(a.st_mode))
+		return 0;
+	return a.st_dev != b.st_dev;
+}
+
+static void write_dvr_status(dvr_t *d, const char *why_off)
+{
+	char line[300];
+	if (d)
+		dvr_status(d, line, sizeof line);
+	else
+		snprintf(line, sizeof line, "state=%s", why_off);
+	FILE *f = fopen(DVR_STATUS ".tmp", "w");
+	if (!f)
+		return;
+	fprintf(f, "%s\n", line);
+	fclose(f);
+	rename(DVR_STATUS ".tmp", DVR_STATUS);
 }
 
 static uint64_t now_us(void)
@@ -307,6 +345,8 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGHUP, &sa, NULL);
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	struct sigaction sv;
 	memset(&sv, 0, sizeof(sv));
@@ -323,6 +363,8 @@ int main(int argc, char **argv)
 	rtp.pt = (uint8_t)cfg.pt;
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
+	dvr_t *dvr = NULL;
+	const char *dvr_off = "off";
 	MPP_CHN_S src = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = cfg.vi_chn };
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
 
@@ -358,6 +400,28 @@ int main(int argc, char **argv)
 	if (!st.pstPack)
 		goto out;
 
+	if (!is_mountpoint(cfg.dvr_dir)) {
+		dvr_off = "no-card";
+		fprintf(stderr, "dvr: %s is not a mounted partition, recording disabled\n", cfg.dvr_dir);
+	} else {
+		dvr_config dc;
+		memset(&dc, 0, sizeof dc);
+		snprintf(dc.dir, sizeof dc.dir, "%s", cfg.dvr_dir);
+		dc.segment_s = cfg.dvr_segment;
+		dc.min_free_mb = cfg.dvr_min_free;
+		dc.overwrite = cfg.dvr_overwrite;
+		dc.ts = cfg.dvr_ts;
+		dc.ring_bytes = (size_t)cfg.dvr_buffer_kb * 1024;
+		dc.stream = (dvr_stream_info){ cfg.width, cfg.height, cfg.fps, cfg.bitrate_kbps, cfg.dvr_ts };
+		dvr = dvr_create(&dc, &dvr_rkmuxer, 1);
+		if (!dvr)
+			fprintf(stderr, "dvr: cannot start (out of memory?)\n");
+		else if (cfg.dvr)
+			dvr_start(dvr);
+	}
+	write_dvr_status(dvr, dvr_off);
+	uint64_t t_dvr_status = now_us();
+
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
 	uint64_t pkts0 = 0, t_start = t0;
 	int got_first = 0;
@@ -378,7 +442,18 @@ int main(int argc, char **argv)
 				cfg.max_bitrate_kbps = n.max_bitrate_kbps;
 				cfg.gop = n.gop;
 				cfg.stat_time = n.stat_time;
+				dvr_reconfig(dvr, n.dvr_segment, n.dvr_min_free, n.dvr_overwrite, n.dvr_ts);
 			}
+		}
+		if (g_dvr_cmd) {
+			int c = g_dvr_cmd;
+			g_dvr_cmd = 0;
+			if (!dvr)
+				fprintf(stderr, "dvr: %s requested, but DVR is %s\n", c == 1 ? "start" : "stop", dvr_off);
+			else if (c == 1)
+				dvr_start(dvr);
+			else
+				dvr_stop(dvr);
 		}
 
 		g_stage = 1;
@@ -411,6 +486,7 @@ int main(int argc, char **argv)
 			}
 
 			rtp_h265_send(&rtp, data, len, ts, p->bFrameEnd);
+			dvr_push(dvr, data, len, p->u64PTS, p->bFrameEnd);
 
 			bytes += len;
 			cur_frame += len;
@@ -425,6 +501,13 @@ int main(int argc, char **argv)
 		g_stage = 3;
 		RK_MPI_VENC_ReleaseStream(VENC_CHN, &st);
 
+		if (dvr_want_idr(dvr))
+			RK_MPI_VENC_RequestIDR(VENC_CHN, RK_TRUE);
+		if (now_us() - t_dvr_status >= 1000000u) {
+			write_dvr_status(dvr, dvr_off);
+			t_dvr_status = now_us();
+		}
+
 		if (!got_first) {
 			got_first = 1;
 			fprintf(stderr, "rkfpv: first frame after %llu ms (%llu B)\n",
@@ -435,11 +518,16 @@ int main(int argc, char **argv)
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
+			char ds[300];
+			if (dvr)
+				dvr_status(dvr, ds, sizeof ds);
+			else
+				snprintf(ds, sizeof ds, "state=%s", dvr_off);
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu\n",
+				"%.0f pkt/s, send errors %llu | dvr %s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors);
+				(unsigned long long)rtp.send_errors, ds);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
@@ -451,6 +539,11 @@ int main(int argc, char **argv)
 
 out:
 	/* each step is logged so a crash during teardown shows where it was */
+	if (dvr) {
+		fprintf(stderr, "rkfpv: dvr close\n");
+		dvr_destroy(dvr);       /* finishes the current file */
+		write_dvr_status(NULL, "off");
+	}
 	if (bound) {
 		fprintf(stderr, "rkfpv: unbind\n");
 		RK_MPI_SYS_UnBind(&src, &dst);

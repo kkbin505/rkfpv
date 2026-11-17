@@ -155,6 +155,26 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
+## DVR：录像到 TF 卡
+
+rkfpv 把发给图传的**同一路 H.265 码流**录到 TF 卡的 DVR 分区，不额外编码，所以不增加编码负担，画质和图传一致。
+
+- **分区**：`luckfox/mkoverlay.sh` 把分区表改成 `…,256M(userdata),512M(rootfs),-(dvr)`，卡上剩余空间全部给 DVR。首次开机 `S99fpv` 会把它格式化成 ext4，并挂载到 `/mnt/dvr`。只会格式化内核报告名字为 `dvr` 的分区。**改了分区表，需要重新烧卡。**
+- **格式**：默认 fMP4（分段 MP4），断电后文件仍能播放，最多丢最后 1～2 秒；也可以选 TS。复用 SDK 的 `librkmuxer`，rkipc 录像用的也是它。
+- **切文件**：默认每 10 分钟一个文件，到时间后在下一个关键帧切换。文件名是 `rec_会话_序号.mp4`，例如 `rec_0003_01.mp4`。板子没有实时时钟，所以每次开始录像算一个新会话，会话号递增。
+- **空间**：卡上剩余空间少于 `dvr_min_free` 时，自动删除最旧的录像（`dvr_overwrite = 1`），或者停止录像（`= 0`）。
+- **控制**：开机自动录像（`dvr = 1`）；`fpv dvr start|stop`，或者配置工具 DVR 页的按钮，随时开始或停止。
+- **取文件不用拔卡**：板子接电脑开机进入调试模式，DVR 分区同样会挂载。在配置工具的 DVR 页点 **Download**，或者手动执行 `adb pull /mnt/dvr/rec_0003_01.mp4`。
+
+```sh
+fpv dvr status            # 状态、当前文件、剩余空间
+fpv dvr list              # 卡上的录像
+fpv dvr delete rec_0003_01.mp4
+fpv dvr delete-all        # 正在录的那个文件不会删
+```
+
+H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEVC 视频扩展"。
+
 ## 致谢
 
 这个项目站在很多开源项目的肩膀上，感谢：
