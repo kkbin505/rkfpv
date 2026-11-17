@@ -16,6 +16,8 @@ const state = {
   txpowerKey: "",    // txpower_<card> of the adapter in use (from status)
 };
 
+const NON_FORM_TABS = ["status", "presets", "logs", "cli"];
+
 const APPLY_TAG = {
   venc: ["live", "live"], radio: ["live", "live"], fec: ["live", "live"], txpower: ["live", "live"],
   video: ["restart", "restart"], link: ["link", "link"], boot: ["restart", "next boot"],
@@ -79,6 +81,7 @@ function showTab(tab) {
   if (tab === "status") { $("#tab-status").hidden = false; refreshStatus(); }
   else if (tab === "logs") { $("#tab-logs").hidden = false; loadLog(); }
   else if (tab === "cli") { $("#tab-cli").hidden = false; $("#cliIn").focus(); }
+  else if (tab === "presets") { $("#tab-presets").hidden = false; loadPresets(); }
   else { $("#tab-form").hidden = false; renderForm(tab); }
 }
 
@@ -318,19 +321,17 @@ function updateSaveBar() {
     : `${keys.length} unsaved change${keys.length > 1 ? "s" : ""}: ` + keys.map((k) => `${k}=${state.edits[k]}`).join("  ");
 }
 
-async function save() {
+// one `fpv set` for a {key: value} object (form Save, presets, restore);
+// fpv validates every pair before it writes anything
+async function applyValues(values) {
   const args = ["set"];
-  for (const [k, v] of Object.entries(state.edits)) args.push(k, v);
-  $("#save").disabled = true;
+  for (const [k, v] of Object.entries(values)) args.push(k, v);
+  if (args.length === 1) return null;
   const r = await fpv(...args);
-  $("#save").disabled = false;
-  if (!r.ok) return toast(r.error, "err");
+  if (!r.ok) { toast(r.error, "err"); return r; }
 
   for (const res of r.results) state.values[res.key] = res.value;
   state.schema.forEach((p) => (p.value = state.values[p.key]));
-  state.edits = {};
-  updateSaveBar();
-  if (!["status", "logs", "cli"].includes(state.tab)) renderForm(state.tab);
 
   const lines = r.results.map((x) => `${x.key} = ${x.value}  → ${x.result}`);
   if (r.warning) lines.push("", "⚠ " + r.warning);
@@ -345,12 +346,158 @@ async function save() {
     }]);
   }
   toast(lines.join("\n"), "ok", actions);
+  return r;
+}
+
+async function save() {
+  $("#save").disabled = true;
+  const r = await applyValues(state.edits);
+  $("#save").disabled = false;
+  if (!r || !r.ok) return;
+  state.edits = {};
+  updateSaveBar();
+  if (!NON_FORM_TABS.includes(state.tab)) renderForm(state.tab);
 }
 
 function revert() {
   state.edits = {};
   updateSaveBar();
-  if (!["status", "logs", "cli"].includes(state.tab)) renderForm(state.tab);
+  if (!NON_FORM_TABS.includes(state.tab)) renderForm(state.tab);
+}
+
+// ---------------------------------------------------------------- presets + backup
+
+// same rules as files/fpv validate(); fpv checks again on save
+function validValue(p, v) {
+  if (v === "auto") return p.default === "auto";
+  if (p.type === "enum") return p.choices.includes(v);
+  if (!/^\d+$/.test(v)) return false;
+  return +v >= p.min && +v <= p.max;
+}
+
+function factoryPreset() {
+  return {
+    file: "", name: "Factory defaults",
+    description: "The built-in default of every setting (from fpv schema). Not the same as " +
+      "'fpv reset', which restores the image's config files (e.g. mirror/flip for your camera mount).",
+    values: Object.fromEntries(state.schema.map((p) => [p.key, p.default])),
+  };
+}
+
+async function loadPresets() {
+  const list = $("#presetList");
+  list.textContent = "loading…";
+  let presets = [];
+  try {
+    const r = await fetch("/api/presets", { headers: { "X-Token": window.FPV_TOKEN } }).then((x) => x.json());
+    if (r.ok) presets = r.presets;
+    else toast(r.error, "err");
+  } catch (e) { toast("presets: " + e, "err"); }
+  presets.unshift(factoryPreset());
+  list.innerHTML = "";
+  for (const pr of presets) {
+    const card = document.createElement("div");
+    card.className = "preset";
+    const keys = Object.keys(pr.values);
+    card.innerHTML = `<div class="pname"></div><div class="pdesc"></div><div class="pkeys"></div>`;
+    card.querySelector(".pname").textContent = pr.name;
+    card.querySelector(".pdesc").textContent = pr.description || "";
+    card.querySelector(".pkeys").textContent =
+      keys.length > 8 ? `${keys.length} settings` : keys.join(" · ");
+    const b = document.createElement("button");
+    b.textContent = "Compare & apply…";
+    b.onclick = () => showDiff(`Preset: ${pr.name}`, pr.description || "", pr.values);
+    card.appendChild(b);
+    list.appendChild(card);
+  }
+}
+
+async function backup() {
+  const r = await fpv("get");
+  if (!r.ok) return toast(r.error, "err");
+  const now = new Date();
+  const doc = { format: "rkfpv-backup", version: 1, created: now.toISOString(), values: r.values };
+  const pad = (n) => String(n).padStart(2, "0");
+  const name = `rkfpv-backup-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `-${pad(now.getHours())}${pad(now.getMinutes())}.json`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2) + "\n"], { type: "application/json" }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`Backup saved: ${name}\n${Object.keys(r.values).length} settings`, "ok");
+}
+
+async function restoreFile(file) {
+  let doc;
+  try { doc = JSON.parse(await file.text()); } catch (e) { return toast(`${file.name}: not JSON (${e.message})`, "err"); }
+  const values = doc && typeof doc.values === "object" && !Array.isArray(doc.values) && doc.values;
+  if (!values) return toast(`${file.name}: no "values" object (not an rkfpv backup or preset)`, "err");
+  const when = doc.created ? ` (saved ${new Date(doc.created).toLocaleString()})` : "";
+  showDiff(`Restore: ${file.name}`, (doc.description || "Backup") + when, values);
+}
+
+// Compare `values` with the board and tick what to apply. Link settings
+// start unticked: changing them without the ground station loses the link.
+let diffRows = [];
+function showDiff(title, desc, values) {
+  if (Object.keys(state.edits).length &&
+      !confirm("You have unsaved changes in the settings tabs. Discard them?")) return;
+  revert();
+  const box = $("#diffBox");
+  $("#diffTitle").textContent = title;
+  $("#diffDesc").textContent = desc;
+  const tb = $("#diffTable tbody");
+  tb.innerHTML = "";
+  diffRows = [];
+  const same = [], skipped = [];
+  for (const [key, raw] of Object.entries(values)) {
+    const p = state.schema.find((x) => x.key === key);
+    const v = String(raw);
+    if (!p) { skipped.push(`${key} (unknown on this board)`); continue; }
+    if (v === state.values[key]) { same.push(key); continue; }
+    const ok = validValue(p, v);
+    const link = p.apply === "link";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input type="checkbox"></td><td class="mono"></td><td class="old"></td><td>→</td><td class="new"></td><td class="note"></td>`;
+    const cb = tr.querySelector("input");
+    cb.checked = ok && !link;
+    cb.disabled = !ok;
+    tr.children[1].textContent = key;
+    tr.children[2].textContent = state.values[key];
+    tr.children[4].textContent = v;
+    const [cls, label] = APPLY_TAG[p.apply] || ["restart", p.apply];
+    tr.children[5].innerHTML = !ok ? `<span class="tag link">invalid here</span>`
+      : link ? `<span class="tag link">link</span> ground station must match`
+      : `<span class="tag ${cls}">${label}</span>`;
+    if (!ok) tr.className = "bad";
+    cb.onchange = updateDiffButton;
+    tb.appendChild(tr);
+    diffRows.push({ key, value: v, cb });
+  }
+  const extra = [];
+  if (same.length) extra.push(`${same.length} already the same: ${same.join(", ")}`);
+  if (skipped.length) extra.push(`skipped: ${skipped.join(", ")}`);
+  $("#diffExtra").textContent = extra.join("\n");
+  $("#diffEmpty").hidden = diffRows.length > 0;
+  $("#diffTable").hidden = diffRows.length === 0;
+  box.hidden = false;
+  updateDiffButton();
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function updateDiffButton() {
+  const n = diffRows.filter((r) => r.cb.checked).length;
+  $("#diffApply").disabled = n === 0;
+  $("#diffApply").textContent = n ? `Apply ${n} change${n > 1 ? "s" : ""}` : "Nothing selected";
+}
+
+async function applyDiff() {
+  const sel = Object.fromEntries(diffRows.filter((r) => r.cb.checked).map((r) => [r.key, r.value]));
+  $("#diffApply").disabled = true;
+  const r = await applyValues(sel);
+  if (r && r.ok) $("#diffBox").hidden = true;
+  else updateDiffButton();
 }
 
 // ---------------------------------------------------------------- logs + cli
@@ -418,6 +565,15 @@ $("#cliIn").onkeydown = (e) => {
   if (e.key === "ArrowDown") { histPos = Math.min(cliHistory.length, histPos + 1); $("#cliIn").value = cliHistory[histPos] || ""; }
 };
 $("#save").onclick = save;
+$("#backup").onclick = backup;
+$("#restore").onclick = () => $("#restoreFile").click();
+$("#restoreFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) restoreFile(f); };
+$("#diffApply").onclick = applyDiff;
+$("#diffCancel").onclick = () => ($("#diffBox").hidden = true);
+$$("#diffAll, #diffNone").forEach((b) => (b.onclick = () => {
+  diffRows.forEach((r) => { if (!r.cb.disabled) r.cb.checked = b.id === "diffAll"; });
+  updateDiffButton();
+}));
 $("#revert").onclick = revert;
 window.onbeforeunload = () => (Object.keys(state.edits).length ? "unsaved changes" : undefined);
 
