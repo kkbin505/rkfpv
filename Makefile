@@ -34,7 +34,7 @@ LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
 # uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lrkmuxer -lpthread -lm -lstdc++
 
-SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c
+SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
 all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd
@@ -80,13 +80,18 @@ build-host/test_config: test/test_config.c src/config.c src/config.h | build-hos
 build-host/dvrhttpd: src/dvrhttpd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
+# OSD drawing with the RGN calls stubbed (SDK headers only, no SDK libs)
+build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c
+
 build-host/fpvd: src/fpvd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
 	./build-host/test_config files/rkfpv.conf
+	./build-host/test_osd build-host/osd.pgm > /dev/null && echo "osd drawing ok"
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh
 	python3 -I test/test_fpvd.py build-host/fpvd files/fpv
