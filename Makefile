@@ -65,6 +65,7 @@ build-host/mavbridge: src/mavbridge.c | build-host
 test: build-host/test_rtp build-host/send_file build-host/mavbridge
 	./build-host/test_rtp
 	python3 -I test/test_mavbridge.py build-host/mavbridge
+	test/test_fpv.sh
 
 clean:
 	rm -rf build build-host
