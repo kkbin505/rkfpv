@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI_DIR = os.path.join(HERE, "ui")
+PRESET_DIR = os.path.join(HERE, "presets")
 REPO = os.path.dirname(HERE)
 TIMEOUT = 20
 # a page from another site could POST to localhost; it cannot read this token
@@ -238,6 +239,28 @@ def push_lf(t, rel, remote):
         os.unlink(tmp)
 
 
+def list_presets():
+    """configurator/presets/*.json: {"name", "description", "values": {key: value}}"""
+    out, bad = [], []
+    for f in sorted(os.listdir(PRESET_DIR)) if os.path.isdir(PRESET_DIR) else []:
+        if not f.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(PRESET_DIR, f), encoding="utf-8") as fh:
+                d = json.load(fh)
+            if not isinstance(d.get("values"), dict) or not d.get("name"):
+                raise ValueError('needs "name" and a "values" object')
+            out.append({"file": f, "name": str(d["name"]),
+                        "description": str(d.get("description", "")),
+                        "values": {str(k): str(v) for k, v in d["values"].items()}})
+        except (OSError, ValueError) as e:
+            bad.append(f"{f}: {e}")
+    r = {"ok": True, "presets": out}
+    if bad:
+        r["warnings"] = bad
+    return r
+
+
 def install(t):
     if isinstance(t, Fpvd):
         raise TransportError("installing files needs ADB")
@@ -285,10 +308,10 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/":
             path = "/index.html"
-        if path == "/api/devices":
+        if path in ("/api/devices", "/api/presets"):
             if self.headers.get("X-Token") != TOKEN:
                 return self._json({"ok": False, "error": "bad token"}, 403)
-            return self._json(Adb.devices())
+            return self._json(Adb.devices() if path == "/api/devices" else list_presets())
         name = os.path.normpath(path.lstrip("/"))
         full = os.path.join(UI_DIR, name)
         if name.startswith("..") or not os.path.isfile(full):

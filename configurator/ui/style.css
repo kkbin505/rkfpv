@@ -83,6 +83,22 @@ main { flex: 1; overflow: auto; padding: 16px; padding-bottom: 80px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 
+/* presets + backup */
+.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.preset { border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 6px; background: var(--panel2); }
+.preset .pname { font-weight: 600; font-size: 15px; }
+.preset .pdesc { color: var(--muted); font-size: 12.5px; flex: 1; }
+.preset .pkeys { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--muted); }
+.preset button { align-self: flex-start; }
+table.diff { border-collapse: collapse; width: 100%; margin: 6px 0; }
+table.diff th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+table.diff td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.diff td.mono { font-family: ui-monospace, Consolas, monospace; }
+table.diff td.old { color: var(--muted); text-decoration: line-through; }
+table.diff td.new { color: var(--accent); font-weight: 600; }
+table.diff td.note { font-size: 12px; color: var(--muted); }
+table.diff tr.bad td { opacity: .6; }
+
 /* settings forms */
 .param {
   display: grid; grid-template-columns: 200px minmax(160px, 260px) 1fr; gap: 6px 14px;
