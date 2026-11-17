@@ -30,6 +30,15 @@ typedef struct {
 	int pkt_size;           /* max RTP packet size (mlink - 100 in OpenIPC) */
 	int pt;                 /* RTP payload type: 97 = H.265 as majestic sends it */
 
+	/* DVR (TF card) */
+	int dvr;                /* record from start */
+	char dvr_dir[128];
+	int dvr_segment;        /* seconds per file */
+	int dvr_min_free;       /* MB kept free */
+	int dvr_overwrite;      /* delete oldest files when full */
+	int dvr_ts;             /* 1: .ts, 0: fragmented .mp4 */
+	int dvr_buffer_kb;      /* ring between stream loop and card writer */
+
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;
 

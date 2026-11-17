@@ -33,6 +33,7 @@
     <a data-tab="Camera">Camera</a>
     <a data-tab="Radio">Radio</a>
     <a data-tab="Telemetry">Telemetry</a>
+    <a data-tab="dvr">DVR</a>
     <a data-tab="presets">Presets &amp; Backup</a>
     <a data-tab="logs">Logs</a>
     <a data-tab="cli">CLI</a>
@@ -77,6 +78,39 @@
 
     <section id="tab-form" class="tab" hidden>
       <div id="formBody"></div>
+    </section>
+
+    <section id="tab-dvr" class="tab" hidden>
+      <div class="box dvrstate">
+        <h3>Recording</h3>
+        <div class="row">
+          <span id="dvrBadge" class="recbadge">–</span>
+          <div class="dvrinfo">
+            <div id="dvrFile" class="big"></div>
+            <div id="dvrSub" class="sub"></div>
+          </div>
+          <span class="spacer"></span>
+          <button id="dvrToggle" class="primary bigbtn">Start recording</button>
+        </div>
+        <div class="space"><div id="dvrBar"></div></div>
+        <div id="dvrSpace" class="sub"></div>
+      </div>
+      <div class="box">
+        <h3>Recordings on the card</h3>
+        <div class="row">
+          <button id="dvrRefresh" class="ghost">Refresh</button>
+          <button id="dvrAll">Download all</button>
+          <button id="dvrOpen" class="ghost">Open folder</button>
+          <span class="spacer"></span>
+          <button id="dvrDelAll" class="ghost danger">Delete all</button>
+        </div>
+        <p id="dvrHint" class="sub"></p>
+        <table class="diff files">
+          <thead><tr><th>file</th><th>size</th><th></th></tr></thead>
+          <tbody id="dvrFiles"></tbody>
+        </table>
+      </div>
+      <div id="dvrSettings"></div>
     </section>
 
     <section id="tab-presets" class="tab" hidden>

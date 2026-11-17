@@ -12,6 +12,7 @@ Python 3.8+ standard library only; needs `adb` (or `ssh`) on PATH.
 import argparse
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -27,6 +28,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI_DIR = os.path.join(HERE, "ui")
 PRESET_DIR = os.path.join(HERE, "presets")
+DVR_BOARD_DIR = "/mnt/dvr"
+DVR_NAME = re.compile(r"^rec_[0-9]+_[0-9]+\.(mp4|ts)$")
+# where downloaded recordings go; --dvr-dir changes it
+dvr_local_dir = os.path.join(os.path.expanduser("~"), "Videos", "rkfpv-dvr")
 REPO = os.path.dirname(HERE)
 TIMEOUT = 20
 # a page from another site could POST to localhost; it cannot read this token
@@ -261,6 +266,34 @@ def list_presets():
     return r
 
 
+def dvr_pull(t, name):
+    """copy one recording from the board's DVR partition to this PC (ADB)"""
+    if not isinstance(t, Adb):
+        raise TransportError("downloading recordings needs ADB (USB)")
+    if not DVR_NAME.match(name or ""):
+        raise TransportError(f"not a recording name: {name!r}")
+    os.makedirs(dvr_local_dir, exist_ok=True)
+    dest = os.path.join(dvr_local_dir, name)
+    t0 = time.time()
+    rc, out, err = t._run(t._base() + ["pull", f"{DVR_BOARD_DIR}/{name}", dest], 1800)
+    if rc != 0:
+        raise TransportError((err or out).strip() or "adb pull failed")
+    size = os.path.getsize(dest)
+    secs = max(time.time() - t0, 0.001)
+    return {"ok": True, "path": dest, "size": size, "seconds": round(secs, 1),
+            "mbps": round(size / secs / 1e6, 1)}
+
+
+def open_folder():
+    os.makedirs(dvr_local_dir, exist_ok=True)
+    if sys.platform.startswith("win"):
+        os.startfile(dvr_local_dir)  # noqa: only on Windows
+    else:
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([opener, dvr_local_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "path": dvr_local_dir}
+
+
 def install(t):
     if isinstance(t, Fpvd):
         raise TransportError("installing files needs ADB")
@@ -341,6 +374,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(run_cli(t, str(req.get("line", ""))))
             if self.path == "/api/install":
                 return self._json(install(t))
+            if self.path == "/api/dvr/pull":
+                return self._json(dvr_pull(t, str(req.get("name", ""))))
+            if self.path == "/api/dvr/open":
+                return self._json(open_folder())
             return self._json({"ok": False, "error": "no such endpoint"}, 404)
         except TransportError as e:
             return self._json({"ok": False, "error": str(e), "transport_error": True})
@@ -349,10 +386,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global dvr_local_dir
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--dvr-dir", help=f"where downloaded recordings go (default {dvr_local_dir})")
     a = ap.parse_args()
+    if a.dvr_dir:
+        dvr_local_dir = os.path.abspath(a.dvr_dir)
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     url = f"http://127.0.0.1:{a.port}/"
     print(f"rkfpv configurator on {url}  (Ctrl+C to quit)")

@@ -26,7 +26,7 @@ need "$WFB/wfb_rx"
 need "$KO"
 
 rm -rf "$OV"
-install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko"
+install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko" "$OV/mnt/dvr"
 
 install -m 755 "$HERE/build/rkfpv" "$HERE/build/mavbridge" "$HERE/build/fpvd" "$OV/usr/bin/"
 install -m 755 "$HERE/files/wfb.sh" "$HERE/files/fpv" "$OV/usr/bin/"
@@ -39,6 +39,13 @@ install -d "$OV/etc/fpv/defaults"
 install -m 644 "$HERE/files/rkfpv.conf" "$HERE/files/wfb.yaml" "$OV/etc/fpv/defaults/"
 install -m 600 "$KEY" "$OV/etc/drone.key"
 install -m 644 "$HERE"/luckfox/out/*.ko "$OV/oem/usr/ko/"
+
+# DVR partition: fixed-size rootfs, the rest of the TF card for recordings
+# (formatted on first boot by S99fpv). Changes the card layout: reflash.
+if grep -q '256M(userdata),-(rootfs)"' "$BOARD"; then
+	sed -i 's/256M(userdata),-(rootfs)"/256M(userdata),512M(rootfs),-(dvr)"/' "$BOARD"
+fi
+grep '^export RK_PARTITION_CMD_IN_ENV' "$BOARD"
 
 # hook the overlay into the board config once
 if ! grep -q 'overlay-rkfpv' "$BOARD"; then

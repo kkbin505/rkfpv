@@ -11,6 +11,7 @@
 #   fpv restart [video|link|all]     apply settings that need a restart
 #   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
 #   fpv reset                        restore shipped defaults
+#   fpv dvr status|start|stop|list|delete <file>|delete-all
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -21,6 +22,8 @@ WFB_CONF=$R/etc/wfb.yaml
 DEFAULTS=$R/etc/fpv/defaults
 LOGDIR=$R/userdata/log
 USERDATA=$R/userdata
+DVR_DIR=$R/mnt/dvr
+DVR_STATUS=$R/tmp/dvr.status
 INIT=$R/etc/init.d/S99fpv
 WFB_CMD_PORT=8000
 WLAN=wlan0
@@ -70,6 +73,11 @@ fec_n|wfb|broadcast|int|2|32|12|fec|Radio|FEC packets per block incl. recovery (
 link_id|wfb|broadcast|int|0|16777215|7669206|link|Radio|Link ID (ground station must match)
 telemetry_enabled|wfb|telemetry|enum|true,false||true|link|Telemetry|MAVLink telemetry over wfb-ng
 baud|wfb|telemetry|enum|57600,115200,230400,460800,921600||115200|link|Telemetry|Flight-controller UART baud rate
+dvr|rkfpv||bool|0|1|1|boot|DVR|Record automatically when FPV starts (Start/Stop works any time)
+dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
+dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
+dvr_overwrite|rkfpv||bool|0|1|1|venc|DVR|When full: 1 = delete the oldest recordings, 0 = stop recording
+dvr_format|rkfpv||enum|mp4,ts||mp4|venc|DVR|mp4 = fragmented MP4 (plays after a power cut), ts = MPEG-TS; from the next file
 EOF
 }
 
@@ -403,6 +411,9 @@ cmd_status() {
 	temp=$(cat "$R/sys/class/thermal/thermal_zone0/temp" 2>/dev/null)
 	[ -n "$temp" ] && temp=$((temp / 1000))
 	up=$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null)
+	if running rkfpv && [ -f "$DVR_STATUS" ]; then dvrst=$(dvr_field state); dvrfile=$(dvr_field file)
+	elif dvr_mounted; then dvrst=stopped; dvrfile=-
+	else dvrst=no-card; dvrfile=-; fi
 
 	if [ "$JSON" = 1 ]; then
 		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
@@ -410,7 +421,8 @@ cmd_status() {
 			"$pid_rk" "$pid_tx" "$fps" "$kbps" "$(jesc "$stats")"
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
 		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
-		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s"}\n' "$mem" "$temp" "$up"
+		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s",' "$mem" "$temp" "$up"
+		printf '"dvr_state":"%s","dvr_file":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")"
 	else
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
 		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
@@ -419,6 +431,7 @@ cmd_status() {
 		echo "memory:    ${mem:-?} kB available"
 		echo "temp:      ${temp:-?} C"
 		echo "uptime:    ${up:-?} s"
+		echo "dvr:       $dvrst${dvrfile:+ $dvrfile}"
 	fi
 }
 
@@ -484,6 +497,108 @@ cmd_reset() {
 	[ "$JSON" = 1 ] && echo '{"ok":true}' || echo "defaults restored; 'fpv restart' or reboot to use them"
 }
 
+# ---------------------------------------------------------------- DVR
+
+dvr_mounted() {
+	# tests (FPV_ROOT) have no real mount; on the board it must be the partition
+	if [ -n "$R" ]; then [ -d "$DVR_DIR" ]; else mountpoint -q "$DVR_DIR"; fi
+}
+
+# key=value from rkfpv's status line ("state=recording file=... bytes=...")
+dvr_field() {
+	[ -f "$DVR_STATUS" ] || return 0
+	tr ' ' '\n' < "$DVR_STATUS" | sed -n "s/^$1=//p" | head -1
+}
+
+dvr_space() {   # -> "total_mb free_mb"
+	df -k "$DVR_DIR" 2>/dev/null | awk 'END { if (NF >= 5) printf "%d %d", $(NF-4) / 1024, $(NF-2) / 1024 }'
+}
+
+valid_rec_name() {
+	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts)$'
+}
+
+dvr_cmd() {
+	sub=${1:-status}
+	[ $# -gt 0 ] && shift
+	case "$sub" in
+	status)
+		if running rkfpv && [ -f "$DVR_STATUS" ]; then
+			state=$(dvr_field state)
+		elif dvr_mounted; then
+			state=stopped
+		else
+			state=no-card
+		fi
+		file=$(dvr_field file); bytes=$(dvr_field bytes); drops=$(dvr_field drops); err=$(dvr_field error)
+		running rkfpv || { file=-; bytes=0; drops=0; }
+		set -- $(dvr_space)
+		total=${1:-0}; free=${2:-0}
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"state":"%s","file":"%s","bytes":"%s","drops":"%s","total_mb":"%s","free_mb":"%s","fpv_running":%s,"error":"%s"}\n' \
+				"$state" "$(jesc "$file")" "${bytes:-0}" "${drops:-0}" "$total" "$free" \
+				"$(running rkfpv && echo true || echo false)" "$(jesc "$err")"
+		else
+			echo "dvr:   $state${err:+ ($err)}"
+			[ "$file" != - ] && [ -n "$file" ] && echo "file:  $file ($bytes bytes, $drops dropped frames)"
+			echo "card:  $free MB free of $total MB"
+		fi ;;
+	start|stop)
+		if ! running rkfpv; then
+			die "FPV is not running (debug mode): recording only happens in FPV mode"
+		fi
+		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		if [ "$sub" = start ]; then sig=USR1; else sig=USR2; fi
+		killall -$sig rkfpv || die "could not signal rkfpv"
+		[ "$JSON" = 1 ] && printf '{"ok":true,"requested":"%s"}\n' "$sub" || echo "dvr: $sub requested"
+		;;
+	list)
+		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		cur=$(running rkfpv && dvr_field file)
+		# newest first: session, then segment, numerically
+		files=$(ls -ln "$DVR_DIR" 2>/dev/null | awk '$9 ~ /^rec_[0-9]+_[0-9]+\.(mp4|ts)$/ { print $5, $9 }' \
+			| awk '{ split($2, a, /[_.]/); printf "%010d %010d %s %s\n", a[2], a[3], $1, $2 }' | sort -r)
+		set -- $(dvr_space)
+		total=${1:-0}; free=${2:-0}
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"total_mb":"%s","free_mb":"%s","recording":"%s","files":[' "$total" "$free" "$cur"
+			echo "$files" | awk -v cur="$cur" 'NF == 4 {
+				printf "%s{\"name\":\"%s\",\"size\":%s,\"recording\":%s}", sep, $4, $3, ($4 == cur ? "true" : "false"); sep = "," }'
+			printf ']}\n'
+		else
+			echo "$files" | awk -v cur="$cur" 'NF == 4 { printf "%-22s %8.1f MB%s\n", $4, $3 / 1048576, ($4 == cur ? "  (recording)" : "") }'
+			echo "card: $free MB free of $total MB"
+		fi ;;
+	delete)
+		[ $# -ge 1 ] || die "usage: fpv dvr delete <rec_SSSS_NN.mp4> [...]"
+		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		cur=$(running rkfpv && dvr_field file)
+		for n in "$@"; do
+			valid_rec_name "$n" || die "not a recording name: $n"
+			[ "$n" = "$cur" ] && die "$n is being recorded; stop recording first"
+			[ -f "$DVR_DIR/$n" ] || die "no such recording: $n"
+		done
+		for n in "$@"; do rm -f "$DVR_DIR/$n"; done
+		sync
+		[ "$JSON" = 1 ] && printf '{"ok":true,"deleted":%s}\n' "$#" || echo "deleted $# file(s)"
+		;;
+	delete-all)
+		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		cur=$(running rkfpv && dvr_field file)
+		n=0
+		for f in "$DVR_DIR"/rec_*; do
+			b=${f##*/}
+			valid_rec_name "$b" || continue
+			[ "$b" = "$cur" ] && continue
+			rm -f "$f" && n=$((n + 1))
+		done
+		sync
+		[ "$JSON" = 1 ] && printf '{"ok":true,"deleted":%s}\n' "$n" || echo "deleted $n file(s)${cur:+ (kept $cur, being recorded)}"
+		;;
+	*) die "dvr: status | start | stop | list | delete <file> | delete-all" ;;
+	esac
+}
+
 usage() {
 	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 }
@@ -511,6 +626,7 @@ case "$cmd" in
 	restart) cmd_restart "$@" ;;
 	mode) cmd_mode "$@" ;;
 	reset) cmd_reset ;;
+	dvr) dvr_cmd "$@" ;;
 	help|-h|--help) usage ;;
 	*) die "unknown command '$cmd' (fpv help)" ;;
 esac

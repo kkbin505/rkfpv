@@ -12,7 +12,7 @@
  *   reply:    FPV1 <id> <seq>/<total>\n<chunk>      (one or more datagrams)
  *
  *   <id>     1-16 chars [A-Za-z0-9_-], chosen by the client, new per request
- *   <cmd>    get set schema status log restart mode reset, or ping
+ *   <cmd>    get set schema status log restart mode reset dvr, or ping
  *   payload  the JSON that `fpv <cmd> [arg ...] --json` prints, split into
  *            chunks of at most CHUNK bytes; seq counts from 1
  *
@@ -54,7 +54,7 @@ static int g_verbose;
 static const char *g_fpv = "/usr/bin/fpv";
 
 static const char *const ALLOWED[] = {
-	"get", "set", "schema", "status", "log", "restart", "mode", "reset", NULL
+	"get", "set", "schema", "status", "log", "restart", "mode", "reset", "dvr", NULL
 };
 
 struct entry {
