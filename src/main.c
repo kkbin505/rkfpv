@@ -537,7 +537,10 @@ int main(int argc, char **argv)
 	struct dvr_cap cap;
 	dvr_t *dvr = NULL;
 	const char *dvr_off = "off";
-	int dvr_card = is_mountpoint(cfg.dvr_dir);
+	/* dvr = 0: no DVR at all, nothing allocated (no second encoder, no
+	 * ring buffer, no muxer). Memory on the 64 MB board is too tight to
+	 * keep it around "just in case". */
+	int dvr_card = cfg.dvr ? is_mountpoint(cfg.dvr_dir) : 0;
 	enc_params_t lp = link_params(&cfg), dp = dvr_params(&cfg);
 	MPP_CHN_S src = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = cfg.vi_chn };
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
@@ -614,7 +617,10 @@ int main(int argc, char **argv)
 	if (!st.pstPack)
 		goto out;
 
-	if (!dvr_card) {
+	if (!cfg.dvr) {
+		dvr_off = "disabled";
+		fprintf(stderr, "dvr: disabled (dvr = 0)\n");
+	} else if (!dvr_card) {
 		dvr_off = "no-card";
 		fprintf(stderr, "dvr: %s is not a mounted partition, recording disabled\n", cfg.dvr_dir);
 	} else {
