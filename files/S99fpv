@@ -48,9 +48,13 @@ stop_video() {
 	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
 	killall -q rkfpv
 	# let the encoder / ISP tear down before a new instance grabs them
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# (polled every 0.1 s, up to 10 s: a 1 s poll added up to a second
+	# of black screen to every `fpv restart`)
+	i=0
+	while [ $i -lt 100 ]; do
 		pidof rkfpv > /dev/null || return 0
-		sleep 1
+		usleep 100000
+		i=$((i + 1))
 	done
 	killall -q -9 rkfpv
 }

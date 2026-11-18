@@ -9,6 +9,7 @@
 #   fpv status                       mode, stream stats, radio, memory, temperature
 #   fpv log [rkfpv|rkfpv-prev|fpv|kernel] [lines]
 #   fpv restart [video|link|all]     apply settings that need a restart
+#                                    (no argument: only what pending changes need)
 #   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
 #   fpv reset                        restore shipped defaults
 #   add --json to any command for machine-readable output
@@ -331,8 +332,9 @@ EOF
 	case "$applies" in *radio*) [ $lnk = 1 ] && apply_radio && res_radio=live ;; esac
 	case "$applies" in *fec*) [ $lnk = 1 ] && apply_fec && res_fec=live ;; esac
 	case "$applies" in *txpower*) [ $lnk = 1 ] && apply_txpower && res_tx=live ;; esac
-	[ $vid = 1 ] && res_video=restart-needed
-	[ $lnk = 1 ] && res_link=restart-needed
+	# only settings that were actually changed ask for a restart
+	case "$applies" in *video*) [ $vid = 1 ] && res_video=restart-needed && pending_add video ;; esac
+	case "$applies" in *link*) [ $lnk = 1 ] && res_link=restart-needed && pending_add link ;; esac
 	case "$applies" in *link*)
 		warn="channel / width / link_id / telemetry: the ground station must use the same values" ;;
 	esac
@@ -442,8 +444,25 @@ cmd_log() {
 	fi
 }
 
+# what `fpv set` changed that still needs a restart (cleared on reboot)
+PENDING=$R/tmp/fpv.pending
+pending_add() { grep -qx "$1" "$PENDING" 2>/dev/null || echo "$1" >> "$PENDING"; }
+
 cmd_restart() {
-	what=${1:-all}
+	what=$1
+	if [ -z "$what" ]; then
+		# no argument: restart only what pending settings need, so a video
+		# change does not also drop the link (and the other way round)
+		v=0; l=0
+		grep -qx video "$PENDING" 2>/dev/null && v=1
+		grep -qx link "$PENDING" 2>/dev/null && l=1
+		case "$v$l" in 11) what=all ;; 10) what=video ;; 01) what=link ;;
+		*)
+			msg="nothing to restart: no pending restart-needed settings (use 'fpv restart all' to force)"
+			[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":false,"message":"%s"}\n' "$msg" || echo "$msg"
+			return 0 ;;
+		esac
+	fi
 	case "$what" in video|link|all) ;; *) die "restart: video | link | all" ;; esac
 	if ! running rkfpv && ! running wfb_tx; then
 		msg="FPV is not running (debug mode); settings are used at the next FPV boot"
@@ -451,6 +470,10 @@ cmd_restart() {
 		return 0
 	fi
 	"$INIT" "restart-$what" > /dev/null 2>&1
+	case "$what" in
+		all) rm -f "$PENDING" ;;
+		*) [ -f "$PENDING" ] && grep -vx "$what" "$PENDING" > "$PENDING.tmp"; mv -f "$PENDING.tmp" "$PENDING" 2>/dev/null ;;
+	esac
 	[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":true,"what":"%s"}\n' "$what" || echo "restarted: $what"
 }
 
@@ -481,6 +504,7 @@ cmd_reset() {
 	cp "$DEFAULTS/rkfpv.conf" "$RKFPV_CONF.tmp" && mv "$RKFPV_CONF.tmp" "$RKFPV_CONF"
 	cp "$DEFAULTS/wfb.yaml" "$WFB_CONF.tmp" && mv "$WFB_CONF.tmp" "$WFB_CONF"
 	sync
+	pending_add video; pending_add link
 	[ "$JSON" = 1 ] && echo '{"ok":true}' || echo "defaults restored; 'fpv restart' or reboot to use them"
 }
 
