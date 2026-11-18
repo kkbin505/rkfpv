@@ -37,7 +37,7 @@ install -m 755 "$HERE/files/wfb.sh" "$OV/usr/bin/"
 install -m 755 "$WFB/wfb_tx" "$WFB/wfb_rx" "$OV/usr/bin/"
 [ -e "$WFB/wfb_tx_cmd" ] && install -m 755 "$WFB/wfb_tx_cmd" "$OV/usr/bin/"
 install -m 755 "$HERE/files/S21appinit" "$HERE/files/S99fpv" "$OV/etc/init.d/"
-install -m 644 "$HERE/files/rkfpv.conf" "$HERE/files/wfb.yaml" "$OV/etc/"
+install -m 644 "$HERE/files/rkfpv.conf" "$HERE/files/wfb.yaml" "$HERE/files/motd" "$OV/etc/"
 install -m 600 "$KEY" "$OV/etc/drone.key"
 install -m 644 "$HERE"/luckfox/out/*.ko "$OV/oem/usr/ko/"
 
