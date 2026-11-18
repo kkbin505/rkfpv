@@ -17,7 +17,10 @@ KO=$HERE/luckfox/out/88XXau.ko	# all three drivers come from build-deps.sh
 KEY=${DRONE_KEY:-$(cd "$HERE/.." && pwd)/openipc/keys/drone.key}
 
 need() { [ -e "$1" ] || { echo "missing: $1" >&2; exit 1; }; }
-TRIM_SERVICES="S49ntp S50telnet S41dhcpcd S99python S99hciinit S60micinit S99_auto_reboot S80dnsmasq"
+# S99luckfoxconfigload / S99luckfoxcustomoverlay: bash scripts that dump the
+# device tree to text in /tmp (RAM) and run dtc while rkfpv is starting; the
+# board hung there at boot. Pins come from our DTS, so they have nothing to do.
+TRIM_SERVICES="S49ntp S50telnet S41dhcpcd S99python S99hciinit S60micinit S99_auto_reboot S80dnsmasq S99luckfoxconfigload S99luckfoxcustomoverlay"
 TRIM_MODULES="rknpu snd-soc-rv1106 motor rve imx415 os04a10 sc4336 sc530ai gc2053 sc200ai sc401ai sc450ai techpoint mis5001 mia1321"
 need "$HERE/build/rkfpv"
 need "$HERE/build/mavbridge"

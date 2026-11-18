@@ -22,13 +22,21 @@ echo -900 > /proc/$$/oom_score_adj 2>/dev/null
 
 log() { echo "$1" | logger -s -t fpv; }
 
+# Console (115200 serial) only gets errors from here on: printk to the
+# console is synchronous, and the WiFi driver's few hundred info lines
+# held up the boot by about a second. Everything still goes to dmesg.
+echo 4 > /proc/sys/kernel/printk 2>/dev/null
+
 pc_connected() {
 	# "default"/"addressed"/"configured" all need a USB host that reset
 	# and talked to us; Windows can sit before "configured" for a while
 	# (or for good, without a driver). "powered"/"suspended" do not count:
 	# VBUS is the board's own 5 V rail, present with an OTG adapter too.
-	# Give the host up to 10 s.
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# A PC resets the bus well under a second after the gadget binds
+	# (state goes to "default" even on Windows without a driver), so
+	# 3 s is plenty; polled every 0.2 s. Was 10 s: half the boot time.
+	i=0
+	while [ $i -lt 15 ]; do
 		for s in /sys/class/udc/*/state; do
 			st=$(cat "$s" 2>/dev/null)
 			case "$st" in
@@ -36,7 +44,8 @@ pc_connected() {
 					log "USB gadget state: $st"; return 0 ;;
 			esac
 		done
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	return 1
 }
@@ -54,6 +63,9 @@ start() {
 	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
 		echo host > "$USB_ROLE"
 		log "USB switched to host"
+		# adbd only serves the USB gadget, which is gone in host mode:
+		# ~1 MB of RAM back for the link. Debug mode (PC) never gets here.
+		killall -q adbd
 	else
 		log "no USB role switch found, USB stays as is"
 	fi

@@ -39,10 +39,13 @@ detect_driver() {
 
 load_modules() {
 	# the adapter needs a moment to enumerate after the switch to host mode
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# (polled every 0.2 s, up to 10 s)
+	i=0
+	while [ $i -lt 50 ]; do
 		detect_driver
 		[ -n "$driver" ] && break
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	if [ -z "$driver" ]; then
 		log "no supported WiFi adapter (8812AU/8812CU/8822CU/8812EU) detected (is USB in host mode?)"
@@ -56,9 +59,11 @@ load_modules() {
 	opts=""
 	[ "$driver" != 88XXau ] && opts="rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0 MaxTxBufLen=32"
 	insmod "$ko_dir/$driver.ko" $opts || return 1
-	for i in 1 2 3 4 5; do
+	i=0
+	while [ $i -lt 25 ]; do
 		[ -e /sys/class/net/"$wfb_dev" ] && return 0
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	log "$wfb_dev did not appear"
 	return 1
