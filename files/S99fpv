@@ -1,10 +1,10 @@
 #!/bin/sh
 # Boot: pick the USB role, bring up wfb-ng (+ MAVLink), start rkfpv.
 #
-# USB is a single OTG port:
-#   - plugged into a PC (gadget gets "configured")  -> stay a device so ADB /
-#     RNDIS work; FPV link is not started (debug mode)
-#   - anything else (RTL8812AU on an OTG adapter)   -> switch to host, start FPV
+# USB is a single OTG port. At boot it is switched to host for up to 3 s:
+#   - a supported WiFi card shows up      -> stay host, start FPV
+#   - nothing (e.g. a PC on the cable)    -> back to device so ADB / RNDIS
+#     work; FPV link is not started (debug mode)
 # Override: touch /userdata/fpv.force (always FPV) or /userdata/fpv.off (never).
 
 # Rockchip env: LD_LIBRARY_PATH for /oem/usr/lib, PATH for /oem/usr/bin
@@ -27,27 +27,27 @@ log() { echo "$1" | logger -s -t fpv; }
 # held up the boot by about a second. Everything still goes to dmesg.
 echo 4 > /proc/sys/kernel/printk 2>/dev/null
 
-pc_connected() {
-	# "default"/"addressed"/"configured" all need a USB host that reset
-	# and talked to us; Windows can sit before "configured" for a while
-	# (or for good, without a driver). "powered"/"suspended" do not count:
-	# VBUS is the board's own 5 V rail, present with an OTG adapter too.
-	# A PC resets the bus well under a second after the gadget binds
-	# (state goes to "default" even on Windows without a driver), so
-	# 3 s is plenty; polled every 0.2 s. Was 10 s: half the boot time.
-	i=0
-	while [ $i -lt 15 ]; do
-		for s in /sys/class/udc/*/state; do
-			st=$(cat "$s" 2>/dev/null)
-			case "$st" in
-				default|addressed|configured)
-					log "USB gadget state: $st"; return 0 ;;
-			esac
-		done
-		usleep 200000
-		i=$((i + 1))
-	done
-	return 1
+adapter_present() {
+	# A supported WiFi card shows up on the bus ~0.3 s after the switch to
+	# host. Testing for the card (deterministic) instead of waiting for a
+	# PC to enumerate us (seconds, and it varies per PC / OS / port) means
+	# FPV boots without any wait; only debug mode pays the 3 s.
+	/usr/bin/wfb.sh detect 3 > /dev/null
+}
+
+back_to_device() {
+	echo device > "$USB_ROLE"
+	# adbd's FunctionFS endpoints go stale across the host round trip (the
+	# PC sees the board, ADB does not): unbind, restart adbd so it writes
+	# its descriptors again, rebind.
+	G=/sys/kernel/config/usb_gadget/rockchip
+	[ -d "$G" ] || return 0
+	echo none > "$G/UDC" 2>/dev/null
+	killall -q adbd
+	usleep 500000
+	start-stop-daemon -S -b -x /usr/bin/adbd
+	sleep 1
+	ls /sys/class/udc | head -1 > "$G/UDC"
 }
 
 start() {
@@ -55,16 +55,16 @@ start() {
 		log "/userdata/fpv.off present, FPV not started"
 		return 0
 	fi
-	if [ ! -e /userdata/fpv.force ] && pc_connected; then
-		log "PC on USB: staying in device mode (ADB/RNDIS), FPV not started"
-		return 0
-	fi
-
 	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
 		echo host > "$USB_ROLE"
+		if [ ! -e /userdata/fpv.force ] && ! adapter_present; then
+			log "no WiFi adapter on USB: debug mode (ADB/RNDIS), FPV not started"
+			back_to_device
+			return 0
+		fi
 		log "USB switched to host"
 		# adbd only serves the USB gadget, which is gone in host mode:
-		# ~1 MB of RAM back for the link. Debug mode (PC) never gets here.
+		# ~1 MB of RAM back for the link. Debug mode never gets here.
 		killall -q adbd
 	else
 		log "no USB role switch found, USB stays as is"

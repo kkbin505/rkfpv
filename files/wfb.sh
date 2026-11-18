@@ -121,7 +121,20 @@ stop() {
 	killall -q mavbridge wfb_tx wfb_rx
 }
 
+# detect [seconds]: is a supported adapter on the bus? (S99fpv's boot test)
+detect() {
+	n=$(( ${1:-3} * 5 )); i=0
+	while [ $i -lt $n ]; do
+		detect_driver
+		[ -n "$driver" ] && { echo "$driver"; return 0; }
+		usleep 200000
+		i=$((i + 1))
+	done
+	return 1
+}
+
 case "$1" in
 	start|stop) "$1" ;;
-	*) echo "Usage: $0 {start|stop}"; exit 1 ;;
+	detect) detect "$2" ;;
+	*) echo "Usage: $0 {start|stop|detect [seconds]}"; exit 1 ;;
 esac
