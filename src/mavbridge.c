@@ -10,7 +10,10 @@
  * ground station's MAVLink parser does that.
  *
  *   mavbridge [-d /dev/ttyS3] [-b 115200] [-o 127.0.0.1:14551] [-i 14550]
- *             [-a 15] [-m 1000] [-t 30] [-r] [-s 0]
+ *             [-a 15] [-m 1000] [-t 30] [-r] [-s 0] [-c 127.0.0.1:14560]
+ *
+ * -c: also send a copy of every downlink datagram there (rkfpv decodes it
+ *     for the OSD); fire and forget, nothing listens -> nothing happens.
  */
 #include <arpa/inet.h>
 #include <errno.h>
@@ -125,6 +128,8 @@ static int frame_len(const uint8_t *b, size_t n)
 typedef struct {
 	int udp;
 	struct sockaddr_in dst;
+	struct sockaddr_in copy;        /* -c: second receiver of the downlink */
+	int have_copy;
 	int max_msgs;           /* flush after this many frames */
 	int max_bytes;          /* datagram size cap */
 	int flush_ms;           /* flush this long after the first queued frame */
@@ -146,6 +151,9 @@ static void flush_out(bridge_t *b)
 		b->datagrams++;
 		b->bytes_down += b->out_len;
 	}
+	if (b->have_copy)
+		sendto(b->udp, b->out, b->out_len, MSG_DONTWAIT,
+		       (struct sockaddr *)&b->copy, sizeof(b->copy));
 	b->out_len = 0;
 	b->out_msgs = 0;
 }
@@ -200,6 +208,7 @@ static void usage(const char *p)
 		"  -a n         frames per datagram       (15; 1 = no packing)\n"
 		"  -m bytes     max datagram size         (1000)\n"
 		"  -t ms        flush timeout             (30)\n"
+		"  -c ip:port   also copy the downlink there (rkfpv OSD)\n"
 		"  -r           raw: forward UART bytes without MAVLink framing\n"
 		"  -s sec       print stats every sec     (0 = off)\n", p);
 }
@@ -214,7 +223,8 @@ int main(int argc, char **argv)
 	b.max_bytes = 1000;
 	b.flush_ms = 30;
 
-	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:h")) != -1) {
+	const char *copy = NULL;
+	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:c:h")) != -1) {
 		switch (opt) {
 		case 'd': dev = optarg; break;
 		case 'b': baud = atoi(optarg); break;
@@ -225,6 +235,7 @@ int main(int argc, char **argv)
 		case 't': b.flush_ms = atoi(optarg); break;
 		case 'r': raw = 1; break;
 		case 's': stats = atoi(optarg); break;
+		case 'c': copy = optarg; break;
 		default: usage(argv[0]); return opt == 'h' ? 0 : 1;
 		}
 	}
@@ -235,6 +246,13 @@ int main(int argc, char **argv)
 	if (parse_hostport(out, &b.dst)) {
 		fprintf(stderr, "bad -o %s\n", out);
 		return 1;
+	}
+	if (copy) {
+		if (parse_hostport(copy, &b.copy)) {
+			fprintf(stderr, "bad -c %s\n", copy);
+			return 1;
+		}
+		b.have_copy = 1;
 	}
 	int ser = open_serial(dev, baud);
 	if (ser < 0)

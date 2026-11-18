@@ -124,7 +124,7 @@ table.diff tr.bad td { opacity: .6; }
 .param .help { color: var(--muted); font-size: 12.5px; }
 .param.changed .name { color: var(--accent); }
 .param.changed .name::after { content: " ●"; }
-.param input[type=number], .param select { width: 100%; }
+.param input[type=number], .param input[type=text], .param select { width: 100%; }
 .param .auto { display: flex; gap: 6px; align-items: center; }
 .param .auto input[type=number] { flex: 1; min-width: 0; }
 .param .auto select { width: auto; flex: 0 0 auto; }

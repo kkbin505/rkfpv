@@ -34,10 +34,10 @@ LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
 # uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lrkmuxer -lpthread -lm -lstdc++
 
-SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c
+SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_layout.c src/telem.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
-all: build/rkfpv build/mavbridge build/fpvd
+all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd
 
 build/%.o: src/%.c | build
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -47,6 +47,9 @@ build/rkfpv: $(OBJS)
 
 # no SDK libs needed
 build/mavbridge: src/mavbridge.c | build
+	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
+
+build/dvrhttpd: src/dvrhttpd.c | build
 	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
 
 build/fpvd: src/fpvd.c | build
@@ -74,16 +77,30 @@ build-host/test_dvr: test/test_dvr.c src/dvr.c src/dvr.h | build-host
 build-host/test_config: test/test_config.c src/config.c src/config.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -Isrc -o $@ test/test_config.c src/config.c
 
+build-host/dvrhttpd: src/dvrhttpd.c | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
+
+# OSD drawing with the RGN calls stubbed (SDK headers only, no SDK libs)
+build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_layout.c src/telem.c | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c src/osd_layout.c src/telem.c
+
+build-host/test_telem: test/test_telem.c src/telem.c src/telem.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_telem.c src/telem.c
+
 build-host/fpvd: src/fpvd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_telem
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
 	./build-host/test_config files/rkfpv.conf
+	./build-host/test_osd build-host/osd.pgm > /dev/null && echo "osd drawing ok"
+	python3 -I test/test_telem.py build-host/test_telem | tail -1
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh
 	python3 -I test/test_fpvd.py build-host/fpvd files/fpv
+	python3 -I test/test_switch.py build-host/fpvd | tail -1
+	python3 -I test/test_dvrhttpd.py build-host/dvrhttpd | tail -1
 
 clean:
 	rm -rf build build-host

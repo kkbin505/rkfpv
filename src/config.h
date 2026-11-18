@@ -66,6 +66,8 @@ typedef struct {
 
 	isp_settings_t isp;
 
+	int osd;                /* experimental: burn a test OSD into the video */
+
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;
 
