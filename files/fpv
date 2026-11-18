@@ -98,11 +98,11 @@ isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise red
 isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
 isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)
 iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
-dvr|rkfpv||bool|0|1|1|boot|DVR|Record automatically when FPV starts (Start/Stop works any time)
+dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
 dvr_overwrite|rkfpv||bool|0|1|1|venc|DVR|When full: 1 = delete the oldest recordings, 0 = stop recording
-dvr_size|rkfpv||enum|1920x1080,1280x720,2304x1296,link||1920x1080|video|DVR|Recording resolution (own encoder on the ISP main path); link = record the radio stream
+dvr_size|rkfpv||enum|link,1920x1080,1280x720,2304x1296||link|video|DVR|Recording resolution. link = record the radio stream (no extra RAM); a size = second encoder on the ISP main path (needs much more RAM/CMA)
 dvr_bitrate|rkfpv||int|1000|20000|8000|venc|DVR|Recording bitrate, kbit/s (the radio stream is set on the Video tab)
 dvr_rc|rkfpv||enum|vbr,cbr||vbr|venc|DVR|Recording rate control: vbr spends bits where the scene needs them
 dvr_gop|rkfpv||int|1|120|30|venc|DVR|Recording keyframe interval, frames. MP4 holds one GOP in RAM (bitrate x GOP): keep about 1 s
@@ -607,6 +607,7 @@ dvr_cmd() {
 			die "FPV is not running (debug mode): recording only happens in FPV mode"
 		fi
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		[ "$(get_value dvr)" = 1 ] || die "DVR is off (dvr = 0): fpv set dvr 1, then restart FPV"
 		if [ "$sub" = start ]; then sig=USR1; else sig=USR2; fi
 		killall -$sig rkfpv || die "could not signal rkfpv"
 		[ "$JSON" = 1 ] && printf '{"ok":true,"requested":"%s"}\n' "$sub" || echo "dvr: $sub requested"

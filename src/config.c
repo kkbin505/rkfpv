@@ -29,15 +29,15 @@ void config_defaults(rkfpv_config_t *c)
 	 * OpenIPC ground stations pick the decoder from it */
 	c->pt = 97;
 
-	c->dvr = 1;
+	c->dvr = 0;             /* off: the 64 MB board has no RAM to spare */
 	snprintf(c->dvr_dir, sizeof(c->dvr_dir), "/mnt/dvr");
 	c->dvr_segment = 600;
 	c->dvr_min_free = 300;
 	c->dvr_overwrite = 1;
 	c->dvr_ts = 0;
 	c->dvr_buffer_kb = 1024;
-	c->dvr_width = 1920;
-	c->dvr_height = 1080;
+	c->dvr_width = 0;       /* "link": record the radio stream, no 2nd encoder */
+	c->dvr_height = 0;
 	c->dvr_rc = RC_VBR;     /* quality where the scene needs it; the card has room */
 	c->dvr_bitrate_kbps = 8000;
 	c->dvr_gop = 30;        /* 1 s: fMP4 fragment and seek granularity */
