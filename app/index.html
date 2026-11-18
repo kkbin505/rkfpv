@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rkfpv 设置器</title>
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<!-- Tango ADB (MIT), vendored in ./vendor: no CDN, no build step. Versions in vendor/VERSIONS. -->
+<script type="importmap">
+{
+  "imports": {
+    "@yume-chan/adb": "./vendor/@yume-chan/adb/esm/index.js",
+    "@yume-chan/adb-daemon-webusb": "./vendor/@yume-chan/adb-daemon-webusb/esm/index.js",
+    "@yume-chan/adb-credential-web": "./vendor/@yume-chan/adb-credential-web/esm/index.js",
+    "@yume-chan/async": "./vendor/@yume-chan/async/esm/index.js",
+    "@yume-chan/event": "./vendor/@yume-chan/event/esm/index.js",
+    "@yume-chan/no-data-view": "./vendor/@yume-chan/no-data-view/esm/index.js",
+    "@yume-chan/stream-extra": "./vendor/@yume-chan/stream-extra/esm/index.js",
+    "@yume-chan/struct": "./vendor/@yume-chan/struct/esm/index.js"
+  }
+}
+</script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="../">rk<span>fpv</span></a>
+  <span class="sub">设置器 · 网页版（原型）</span>
+  <div class="spacer"></div>
+  <span id="devName" class="dev"></span>
+  <button id="btnConnect" class="btn">连接板子</button>
+  <button id="btnDisconnect" class="btn ghost" hidden>断开</button>
+</header>
+
+<main>
+  <div id="unsupported" class="notice warn" hidden>
+    <b>这个浏览器不支持 WebUSB。</b>
+    请在电脑或安卓手机上用 <b>Chrome</b> 或 <b>Edge</b> 打开本页。Firefox、Safari 和所有 iPhone / iPad 上的浏览器都不支持。
+  </div>
+
+  <div id="hint" class="notice" hidden></div>
+
+  <section id="welcome" class="box">
+    <h2>开始</h2>
+    <ol>
+      <li>板子先<b>不接网卡</b>，用数据线直接插电脑（或用 OTG 线插安卓手机），等 15 秒左右进入调试模式。</li>
+      <li>点右上角 <b>连接板子</b>，在弹出的列表里选中板子（Rockchip / rkfpv）。</li>
+      <li>如果电脑上开着 <code>adb</code>，先运行 <code>adb kill-server</code>：同一时间只有一个程序能连板子。</li>
+    </ol>
+    <details>
+      <summary>Linux 上第一次使用</summary>
+      <p>普通用户默认没有权限访问 USB 设备，运行一次下面的命令，然后重新插拔板子：</p>
+      <pre id="udevCmd">echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-rkfpv.rules
+sudo udevadm control --reload-rules</pre>
+    </details>
+  </section>
+
+  <section id="statusBox" class="box" hidden>
+    <h2>状态 <button id="btnRefresh" class="btn small ghost">刷新</button></h2>
+    <div id="status" class="kv"></div>
+  </section>
+
+  <section id="cliBox" class="box" hidden>
+    <h2>命令行</h2>
+    <form id="cliForm" class="cli">
+      <input id="cliInput" autocomplete="off" spellcheck="false" placeholder="例如 fpv get bitrate、fpv help、uname -a">
+      <button class="btn">运行</button>
+    </form>
+    <pre id="cliOut" class="out"></pre>
+  </section>
+
+  <section class="box">
+    <h2>日志</h2>
+    <pre id="log" class="out log"></pre>
+  </section>
+</main>
+</body>
+</html>
