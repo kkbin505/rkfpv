@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rkfpv · 开源数字图传</title>
+<meta name="description" content="rkfpv：跑在 Luckfox Pico Mini（RV1103）上的开源数字 FPV 图传，H.265 + wfb-ng，带电脑配置工具。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #faf7f2;
+    --surface: #ffffff;
+    --text: #1d1b19;
+    --muted: #5c5752;
+    --line: #e7e1d8;
+    --accent: #f54700;
+    --accent-soft: #fff0e8;
+    --code-bg: #f3efe8;
+    --ok: #1f7a3d;
+    --warn: #9a5b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161412;
+      --surface: #1f1c19;
+      --text: #f2eee9;
+      --muted: #b3aca4;
+      --line: #34302b;
+      --accent: #ff6a2b;
+      --accent-soft: #2b1d15;
+      --code-bg: #26221e;
+      --ok: #5cc97f;
+      --warn: #e2a64a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+
+  header.top { border-bottom: 1px solid var(--line); background: var(--surface); }
+  header.top .wrap { display: flex; align-items: center; gap: 24px; height: 56px; }
+  .brand { font-weight: 800; font-size: 20px; color: var(--text); letter-spacing: -0.02em; }
+  .brand span { color: var(--accent); }
+  nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }
+  nav a { color: var(--muted); }
+  nav a:hover { color: var(--accent); text-decoration: none; }
+
+  .hero { padding: 64px 0 48px; }
+  .badge {
+    display: inline-block; font-size: 13px; font-weight: 600; color: var(--warn);
+    border: 1px solid currentColor; border-radius: 999px; padding: 2px 10px; margin-bottom: 16px;
+  }
+  .hero h1 { font-size: clamp(32px, 6vw, 48px); line-height: 1.15; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p.lead { font-size: 18px; color: var(--muted); max-width: 640px; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block; padding: 10px 20px; border-radius: 8px; font-weight: 600;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  .btn.ghost { background: transparent; color: var(--accent); }
+  .btn:hover { text-decoration: none; filter: brightness(1.05); }
+
+  section { padding: 40px 0; border-top: 1px solid var(--line); }
+  section h2 { font-size: 24px; margin: 0 0 20px; letter-spacing: -0.01em; }
+
+  .flow { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .lane { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .side { font-weight: 700; color: var(--accent); width: 4.5em; flex: none; }
+  .step { background: var(--code-bg); border-radius: 6px; padding: 3px 10px; font-size: 14px; white-space: nowrap; }
+  .step.hot { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .lane i { font-style: normal; color: var(--muted); }
+  .air { margin: 10px 0 10px 4.5em; padding-left: 8px; border-left: 2px dashed var(--accent);
+         color: var(--muted); font-size: 13px; line-height: 2; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .tag { font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
+  .tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .tag.exp { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; width: 28%; }
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  .table-wrap tr:last-child th, .table-wrap tr:last-child td { border-bottom: 0; }
+
+  ol.steps { margin: 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 10px; }
+  ol.steps li::marker { color: var(--accent); font-weight: 700; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+  footer p { margin: 6px 0; }
+
+  @media (max-width: 560px) {
+    nav { gap: 14px; font-size: 14px; }
+    nav .opt { display: none; }
+    .hero { padding: 40px 0 32px; }
+    th { width: 36%; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/">rk<span>fpv</span></a>
+    <nav>
+      <a href="#how">原理</a>
+      <a href="#features">功能</a>
+      <a class="opt" href="#hardware">硬件</a>
+      <a href="#start">上手</a>
+      <a href="https://github.com/kkbin505/rkfpv">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div class="badge">开发中 · 实验阶段</div>
+    <h1>几十块的开发板，<br>做一套<em>开源数字图传</em></h1>
+    <p class="lead">
+      rkfpv 跑在 Luckfox Pico Mini（RV1103）上：摄像头画面用 H.265 硬件编码，通过 wfb-ng 发出去，
+      和 OpenIPC 地面站兼容。电脑上有配置工具，不用焊串口就能改设置。
+    </p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/kkbin505/rkfpv">在 GitHub 上查看</a>
+      <a class="btn ghost" href="https://github.com/kkbin505/rkfpv/blob/main/docs/build-steps.md">编译和烧录步骤</a>
+    </div>
+  </div>
+
+  <section id="how">
+    <h2>怎么工作</h2>
+    <div class="flow">
+      <div class="lane"><span class="side">天空端</span>
+        <span class="step">SC3336 摄像头</span><i>→</i><span class="step">ISP</span><i>→</i><span class="step">H.265 编码</span><i>→</i><span class="step">RTP</span><i>→</i><span class="step hot">wfb_tx</span>
+      </div>
+      <div class="air">5 GHz 无线 · FEC</div>
+      <div class="lane"><span class="side">地面端</span>
+        <span class="step hot">wfb_rx</span><i>→</i><span class="step">UDP 5600</span><i>→</i><span class="step">解码</span><i>→</i><span class="step">显示</span>
+      </div>
+    </div>
+    <p>地面端照常接收 UDP 5600 上的 H.265 RTP，现有的 OpenIPC 地面站不用改。
+       飞控的 MAVLink 遥测走同一条无线链路。</p>
+  </section>
+
+  <section id="features">
+    <h2>功能</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>H.265 图传<span class="tag ok">可用</span></h3>
+        <p>720p 30 帧，CBR 码率，wfb-ng FEC。实机已经跑通整条链路。</p>
+      </div>
+      <div class="card">
+        <h3>配置工具<span class="tag ok">可用</span></h3>
+        <p>仿 Betaflight Configurator 的电脑界面，通过 USB（ADB）改设置、看状态、备份和恢复。Windows 和 Linux 都能用。</p>
+      </div>
+      <div class="card">
+        <h3>MAVLink 遥测<span class="tag ok">可用</span></h3>
+        <p>飞控串口的数据打包后走 wfb-ng 上下行，地面站可以直接连接。</p>
+      </div>
+      <div class="card">
+        <h3>多种网卡<span class="tag ok">可用</span></h3>
+        <p>支持 RTL8812AU、RTL8812CU、RTL8812EU，三张卡的发射功率用同一种方式设置。</p>
+      </div>
+      <div class="card">
+        <h3>画质调节<span class="tag exp">实验</span></h3>
+        <p>曝光、降噪、色彩等参数可以实时调；IQ 文件上传前校验，出问题自动退回出厂版本。</p>
+      </div>
+      <div class="card">
+        <h3>TF 卡录像<span class="tag exp">实验</span></h3>
+        <p>录制到 TF 卡的独立分区，分段 MP4，断电后文件也能播放。默认关闭，内存优化完成后再开放。</p>
+      </div>
+      <div class="card">
+        <h3>WiFi 热点模式<span class="tag exp">实验</span></h3>
+        <p>拨一下开关，网卡变成热点：手机或电脑连上就能下载录像、改设置，不用拔 USB。</p>
+      </div>
+      <div class="card">
+        <h3>OSD<span class="tag exp">实验</span></h3>
+        <p>编码器直接把飞行模式、电池、链路质量、飞行时间叠加到画面上。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="hardware">
+    <h2>需要的硬件</h2>
+    <div class="table-wrap">
+      <table>
+        <tr><th>主板</th><td>Luckfox Pico Mini（RV1103，64 MB 内存）</td></tr>
+        <tr><th>摄像头</th><td>SC3336（3MP MIPI）</td></tr>
+        <tr><th>天空端网卡</th><td>RTL8812AU / RTL8812CU（8822CU）/ RTL8812EU，接在板子唯一的 USB 口上</td></tr>
+        <tr><th>存储</th><td>TF 卡，4 GB 以上</td></tr>
+        <tr><th>供电</th><td>独立的 5 V 电源，至少 1 A：网卡发射时电流很大</td></tr>
+        <tr><th>地面端</th><td>任意 wfb-ng 地面站（OpenIPC 地面站、带 RTL8812AU 的 Linux 电脑等）</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>上手步骤</h2>
+    <ol class="steps">
+      <li>按 <a href="https://github.com/kkbin505/rkfpv/blob/main/docs/build-steps.md">编译步骤</a> 用 Luckfox SDK 编出 <code>sd_update.img</code>，烧到 TF 卡。</li>
+      <li>板子直接插电脑（先不接网卡），进入调试模式，打开 <code>configurator/fpvconf.py</code> 改设置。</li>
+      <li>拔掉电脑，接上网卡和独立电源，板子自动进入 FPV 模式，开始发图传。</li>
+      <li>地面端用相同的密钥和信道启动 wfb-ng，就能看到画面。</li>
+    </ol>
+    <p>项目还在快速开发中，部分功能未经实机验证。遇到问题欢迎到
+       <a href="https://github.com/kkbin505/rkfpv/issues">GitHub Issues</a> 反馈。</p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>rkfpv 以 <a href="https://github.com/kkbin505/rkfpv/blob/main/LICENSE">MIT 许可证</a> 开源。
+       感谢 wfb-ng、OpenIPC、Luckfox 等项目，详见
+       <a href="https://github.com/kkbin505/rkfpv/blob/main/THIRD_PARTY_NOTICES.md">第三方声明</a>。</p>
+    <p>rkfpv 是独立的开源项目，与 Rockchip（瑞芯微）、Luckfox 没有关联，也未获得其认可。</p>
+  </div>
+</footer>
+
+</body>
+</html>
