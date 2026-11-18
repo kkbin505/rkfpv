@@ -15,6 +15,11 @@
 USB_ROLE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 PIDFILE=/var/run/rkfpv.pid
 
+# Everything this script starts (wfb_tx/rx, rkfpv, mavbridge) inherits
+# this: when RAM runs out the kernel kills sshd/adbd/... first, not the
+# link (the uplink wfb_rx used to be the OOM victim at boot).
+echo -900 > /proc/$$/oom_score_adj 2>/dev/null
+
 log() { echo "$1" | logger -s -t fpv; }
 
 pc_connected() {
