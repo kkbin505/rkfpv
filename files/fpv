@@ -104,7 +104,7 @@ hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generat
 hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 characters (random on first boot)
 hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz (fast), 1/6/11 = 2.4 GHz (if 5 GHz does not start)
 hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
-osd|rkfpv||bool|0|1|1|video|Video|Experimental: test OSD burned into the video (osd-experiment branch)
+osd|rkfpv||bool|0|1|0|video|Video|Experimental OSD burned into the video (flight mode, battery, link quality). Off by default until tested on hardware
 dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
