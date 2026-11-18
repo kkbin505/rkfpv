@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Latency clock</title>
+<!-- Glass-to-glass latency: point the air unit's camera at this page, put the
+     video window next to it, photograph both with a phone. Latency = the
+     number here minus the number in the video. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; color: #000; font-family: monospace; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #t { font-size: 18vw; font-weight: bold; letter-spacing: -0.02em; }
+  #bar { display: flex; gap: 0.5vw; margin-top: 2vw; }
+  #bar div { width: 7vw; height: 7vw; background: #ddd; }
+  #bar div.on { background: #f54700; }
+  p { font-size: 1.4vw; color: #555; }
+</style>
+<div id="t">0000</div>
+<div id="bar"></div>
+<p>milliseconds (mod 10 s) · 10 blocks = one per 100 ms</p>
+<script>
+const t = document.getElementById("t"), bar = document.getElementById("bar");
+for (let i = 0; i < 10; i++) bar.appendChild(document.createElement("div"));
+const cells = [...bar.children];
+function tick(now) {
+  const ms = Math.floor(performance.timeOrigin + now) % 10000;
+  t.textContent = String(ms).padStart(4, "0");
+  const k = Math.floor(ms / 100) % 10;
+  cells.forEach((c, i) => c.className = i === k ? "on" : "");
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
