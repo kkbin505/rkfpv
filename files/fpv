@@ -55,8 +55,8 @@ slice_bytes|rkfpv||int|0|65536|0|video|Video|Slice size, bytes (0 = one slice pe
 intra_refresh|rkfpv||int|0|64|0|video|Video|Rolling intra refresh rows (0 = off, IDR every gop)
 pkt_size|rkfpv||int|200|4000|1400|video|Video|RTP packet size, bytes
 pt|rkfpv||int|96|127|97|video|Video|RTP payload type (97 = H.265 for OpenIPC ground stations)
-mirror|rkfpv||bool|0|1|0|video|Camera|Mirror left-right
-flip|rkfpv||bool|0|1|0|video|Camera|Flip upside down (mirror + flip = rotate 180)
+mirror|rkfpv||bool|0|1|1|video|Camera|Mirror left-right
+flip|rkfpv||bool|0|1|1|video|Camera|Flip upside down (mirror + flip = rotate 180)
 channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
 width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
 txpower_8812au|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
