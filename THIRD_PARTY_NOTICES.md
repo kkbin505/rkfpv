@@ -96,3 +96,8 @@ rkfpv links these libraries from the user's own copy of the [Luckfox Pico SDK](h
 
 ## Distributing built firmware images
 A built `sd_update.img` contains GPL software, including the Linux kernel and the Realtek drivers (GPL-2.0) and wfb-ng (GPL-3.0). Whoever distributes such an image must also provide the corresponding source, including the kernel changes made in the Luckfox SDK (Mini DTS USB role switch, `drivers/usb/dwc3/drd.c`). The image also contains Rockchip's proprietary libraries, whose redistribution terms are set by Rockchip and Luckfox. This repository publishes source and build scripts only.
+
+## Bundled in the web configurator (`web/app/vendor`)
+| Project | License | Used for |
+|---|---|---|
+| Tango ADB (`@yume-chan/adb`, `adb-daemon-webusb`, `adb-credential-web`, `async`, `event`, `no-data-view`, `stream-extra`, `struct`) | MIT | ADB over WebUSB in the browser. Unmodified ESM builds from npm; versions in `web/app/vendor/VERSIONS`, licence text next to each package. |
