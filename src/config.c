@@ -57,7 +57,7 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.dehaze = ISP_IQ;
 	c->isp.wb = WB_AUTO;
 
-	c->osd = 1;
+	c->osd = 0;             /* experimental, off until tested on hardware */
 
 	c->stats_interval = 5;
 }
