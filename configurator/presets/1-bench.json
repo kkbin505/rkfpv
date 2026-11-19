@@ -1,10 +1,8 @@
 {
   "name": "Bench",
-  "description": "Desk testing with air unit and ground station close together: low TX power on every card (no receiver overload, less heat on a bare board), default link and video.",
+  "description": "Desk testing with air unit and ground station close together: low TX power (5 dBm) (no receiver overload, less heat on a bare board), default link and video.",
   "values": {
-    "txpower_8812au": 10,
-    "txpower_8812cu": 10,
-    "txpower_8812eu": 10,
+    "txpower": 5,
     "mcs_index": 2,
     "fec_k": 8,
     "fec_n": 12,

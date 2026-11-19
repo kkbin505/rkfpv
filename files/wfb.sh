@@ -70,22 +70,29 @@ load_modules() {
 	return 1
 }
 
-# TX power. Each adapter has its own key (txpower_8812au / _8812cu /
-# _8812eu), OpenIPC scale 1-63 (~0.5 dB per step); the old shared `txpower`
-# key is still read as a fallback. Unset -> OpenIPC's default for the card.
-#   88XXau (OpenIPC fork): negative mBm = raw power index -> level x -100
-#   88x2cu / 8812eu:       target power in mBm           -> level x 50 (level/2 dBm)
+# TX power: one key, `txpower`, in dBm (1-30); converted here per driver.
+# Unset (or not a number in range) -> the card's default.
+#   88x2cu / 8812eu:       iw takes the target power in mBm -> dBm x 100
+#   88XXau (OpenIPC fork): negative mBm = raw power index, ~0.5 dB per step
+#                          -> index = 2 x dBm (approximate, not calibrated)
 set_txpower() {
 	case "$driver" in
-		88XXau) key=txpower_8812au; def=20 ;;
-		88x2cu) key=txpower_8812cu; def=20 ;;
-		8812eu) key=txpower_8812eu; def=40 ;;
+		88XXau) def=10 ;;
+		88x2cu) def=10 ;;
+		8812eu) def=20 ;;
 		*) log "txpower: unknown driver '$driver'"; return 1 ;;
 	esac
-	eval "level=\${$key:-\$txpower}"
-	[ -n "$level" ] || level=$def
-	[ "$driver" = 88XXau ] && mbm=$((level * -100)) || mbm=$((level * 50))
-	log "txpower: $key=$level -> iw $mbm"
+	dbm=$txpower
+	case "$dbm" in
+		'') dbm=$def ;;
+		*[!0-9]*) log "txpower: '$dbm' is not a number, using $def dBm"; dbm=$def ;;
+	esac
+	if [ "$dbm" -lt 1 ] || [ "$dbm" -gt 30 ]; then
+		log "txpower: $dbm dBm out of range 1-30, using $def dBm"
+		dbm=$def
+	fi
+	[ "$driver" = 88XXau ] && mbm=$((dbm * -200)) || mbm=$((dbm * 100))
+	log "txpower: $dbm dBm ($driver) -> iw $mbm"
 	iw dev "$wfb_dev" set txpower fixed "$mbm"
 }
 
