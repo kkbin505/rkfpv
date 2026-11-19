@@ -99,6 +99,12 @@ start() {
 	start_fpvd
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
+		# debug mode means ADB: make sure the port is a device, whatever
+		# role it booted in
+		if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ] &&
+		   [ "$(cat "$USB_ROLE")" != device ]; then
+			back_to_device
+		fi
 		return 0
 	fi
 	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
