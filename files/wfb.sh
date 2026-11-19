@@ -106,7 +106,9 @@ start_telemetry() {
 	[ "$telemetry_enabled" = "true" ] || return 0
 	: "${serial:=ttyS3}" "${baud:=115200}" "${tun_index:=1}"
 	log "telemetry: /dev/$serial @ $baud"
-	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -u 14550 "$wfb_dev" > /dev/null 2>&1 &
+	# -R: libpcap's default 2 MB capture ring is resident memory; the uplink
+	# carries a few hundred bytes/s, 128 KB is plenty (VmRSS 4.4 -> 2.8 MB)
+	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -R 131072 -u 14550 "$wfb_dev" > /dev/null 2>&1 &
 	wfb_tx -K "$wfb_key" -M "$tun_index" -B "$width" -k 1 -n 2 \
 		-S "$stbc" -L "$ldpc" -i "$link_id" -p 16 -u 14551 "$wfb_dev" > /dev/null 2>&1 &
 	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
