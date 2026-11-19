@@ -1,5 +1,5 @@
 diff --git a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
-index bea465d80..267bfac36 100644
+index bea465d80..62474edd0 100644
 --- a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 +++ b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 @@ -38,6 +38,7 @@
@@ -40,7 +40,7 @@ index bea465d80..267bfac36 100644
 +	{0x320a, 0x02},
 +	{0x320b, 0x88},
 +	{0x320e, 0x02},
-+	{0x320f, 0xc8},
++	{0x320f, 0xa8},
 +	{0x3210, 0x00},
 +	{0x3211, 0x02},
 +	{0x3212, 0x00},
@@ -197,11 +197,11 @@ index bea465d80..267bfac36 100644
 +		.height = 648,
 +		.max_fps = {
 +			.numerator = 10000,
-+			.denominator = 573000,
++			.denominator = 600000,
 +		},
 +		.exp_def = 0x0080,
 +		.hts_def = 0x0578,
-+		.vts_def = 0x02c8,
++		.vts_def = 0x02a8,
 +		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 +		.reg_list = sc3336_linear_10_1152x648_57fps_regs,
 +		.hdr_mode = NO_HDR,
