@@ -60,9 +60,7 @@ mirror|rkfpv||bool|0|1|1|video|Camera|Mirror left-right
 flip|rkfpv||bool|0|1|1|video|Camera|Flip upside down (mirror + flip = rotate 180)
 channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
 width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
-txpower_8812au|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
-txpower_8812cu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812CU / 8822CU TX power: level / 2 = dBm (auto = 20 = 10 dBm)
-txpower_8812eu|wfb|wireless|int|1|63|auto|txpower|Radio|RTL8812EU TX power: level / 2 = dBm (auto = 40 = 20 dBm); high levels draw a lot of current
+txpower|wfb|wireless|int|1|30|auto|txpower|Radio|TX power, dBm (auto = card default: 8812AU and 8812CU 10, 8812EU 20). 8812AU: approximate. High power draws a lot of current
 mcs_index|wfb|broadcast|int|0|7|2|radio|Radio|Modulation: 0 slowest / longest range ... 7 fastest
 stbc|wfb|broadcast|bool|0|1|0|radio|Radio|STBC (needs 2 TX antennas)
 ldpc|wfb|broadcast|bool|0|1|0|radio|Radio|LDPC coding
@@ -212,13 +210,6 @@ wlan_driver() {
 
 # the conversion per driver lives in wfb.sh only
 apply_txpower() { "$R/usr/bin/wfb.sh" txpower > /dev/null 2>&1; }
-
-# txpower key for the adapter that is plugged in
-txpower_key() {
-	case "$(wlan_driver)" in
-		88XXau) echo txpower_8812au ;; 88x2cu) echo txpower_8812cu ;; 8812eu) echo txpower_8812eu ;;
-	esac
-}
 
 apply_radio() {
 	wfb_tx_cmd "$WFB_CMD_PORT" set_radio -B "$(get_value width)" -M "$(get_value mcs_index)" \
@@ -396,9 +387,9 @@ cmd_status() {
 		fec=$(wfb_tx_cmd "$WFB_CMD_PORT" get_fec 2>/dev/null | tr '\n' ' ')
 	fi
 	drv=$(wlan_driver)
-	txk=$(txpower_key); txl=; txiw=
-	if [ -n "$txk" ]; then
-		txl=$(get_value "$txk")
+	txl=; txiw=
+	if [ -n "$drv" ]; then
+		txl=$(get_value txpower)
 		txiw=$(iw dev "$WLAN" info 2>/dev/null | sed -n 's/.*txpower \([0-9.]*\) dBm.*/\1/p')
 	fi
 	mem=$(awk '/^MemAvailable:/ {print $2}' "$R/proc/meminfo" 2>/dev/null)
@@ -411,13 +402,13 @@ cmd_status() {
 		printf '"rkfpv_pid":"%s","wfb_tx_pid":"%s","fps":"%s","kbps":"%s","last_stats":"%s",' \
 			"$pid_rk" "$pid_tx" "$fps" "$kbps" "$(jesc "$stats")"
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
-		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
+		printf '"txpower":"%s","txpower_iw_dbm":"%s",' "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s"}\n' "$mem" "$temp" "$up"
 	else
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
 		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
 		echo "wfb_tx:    ${pid_tx:-not running}  ${radio:+| $radio}${fec:+| $fec}"
-		echo "adapter:   ${drv:-none loaded}${txk:+  | $txk = $txl (driver reports ${txiw:-?} dBm)}"
+		echo "adapter:   ${drv:-none loaded}${drv:+  | txpower = $txl (driver reports ${txiw:-?} dBm)}"
 		echo "memory:    ${mem:-?} kB available"
 		echo "temp:      ${temp:-?} C"
 		echo "uptime:    ${up:-?} s"

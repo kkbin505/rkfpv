@@ -13,7 +13,6 @@ const state = {
   tab: "status",
   log: "rkfpv",
   pollTimer: null,
-  txpowerKey: "",    // txpower_<card> of the adapter in use (from status)
 };
 
 const NON_FORM_TABS = ["status", "presets", "logs", "cli"];
@@ -169,10 +168,6 @@ async function refreshStatus() {
     return;
   }
   setBadge(s.mode);
-  if ((s.txpower_key || "") !== state.txpowerKey) {
-    state.txpowerKey = s.txpower_key || "";
-    if (state.tab === "Radio") renderForm("Radio");   // move the "in use" tag
-  }
   $("#stMode").textContent = { fpv: "FPV", debug: "Debug", idle: "Idle" }[s.mode] || s.mode;
   $("#stModeSub").textContent = `USB role: ${s.usb_role || "?"}\nboot override: ${s.override}`;
 
@@ -188,8 +183,8 @@ async function refreshStatus() {
     const r = kv(s.radio), f = kv(s.fec);
     $("#stRadio").textContent = `MCS ${r.mcs_index ?? "?"} · FEC ${f.k ?? "?"}/${f.n ?? "?"}`;
     $("#stRadioSub").textContent = `${s.driver || "?"} · ${r.bandwidth ?? "?"} MHz · STBC ${r.stbc ?? "?"} · LDPC ${r.ldpc ?? "?"}` +
-      (s.txpower_key ? `\nTX power ${s.txpower} (${s.txpower_key.replace("txpower_", "")})` +
-        (s.txpower_iw_dbm ? `, driver reports ${s.txpower_iw_dbm} dBm` : "") : "");
+      `\nTX power ${s.txpower === "auto" ? "auto" : s.txpower + " dBm"}` +
+      (s.txpower_iw_dbm ? `, driver reports ${s.txpower_iw_dbm} dBm` : "");
   } else {
     $("#stRadio").textContent = "off";
     $("#stRadioSub").textContent = s.driver ? `driver ${s.driver} loaded` : "no WiFi adapter driver loaded";
@@ -280,8 +275,7 @@ function renderForm(group) {
     row.className = "param" + (p.key in state.edits ? " changed" : "");
     const [cls, label] = APPLY_TAG[p.apply] || ["restart", p.apply];
     const range = p.type === "int" ? ` · ${p.min}–${p.max}` : "";
-    const inUse = p.key === state.txpowerKey ? `<span class="tag inuse">in use</span>` : "";
-    row.innerHTML = `<div class="name">${p.key}<span class="tag ${cls}">${label}</span>${inUse}</div>`;
+    row.innerHTML = `<div class="name">${p.key}<span class="tag ${cls}">${label}</span></div>`;
     const value = p.key in state.edits && state.edits[p.key] !== null ? state.edits[p.key] : state.values[p.key];
     row.appendChild(control(p, value));
     const help = document.createElement("div");

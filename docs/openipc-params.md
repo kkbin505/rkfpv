@@ -16,7 +16,7 @@ How OpenIPC changes them:
 
 | Key | OpenIPC default | FPV default (`video_settings`) | Meaning | rkfpv `wfb.yaml` |
 |---|---|---|---|---|
-| `wireless.txpower` | 1 | 20 (8812AU), 40 (8812EU) | TX power. Driver units: 88XXau ×−100 (raw power index), others ×50 (level ÷ 2 = dBm) | per card: `txpower_8812au` / `_8812cu` / `_8812eu` (unset → 20 / 20 / 40); old `txpower` still read as fallback |
+| `wireless.txpower` | 1 | 20 (8812AU), 40 (8812EU) | TX power. Driver units: 88XXau ×−100 (raw power index), others ×50 (level ÷ 2 = dBm) | `txpower` in **dBm** (1-30), one key for every card; `wfb.sh` converts: 88x2cu / 8812eu ×100 (mBm), 88XXau ×−200 (power index = 2 × dBm, approximate). Unset → 10 / 10 / 20 dBm (8812AU / 8812CU / 8812EU). An OpenIPC `txpower` value is **not** in dBm: halve it |
 | `wireless.channel` | 161 | | 5 GHz channel | 161 |
 | `wireless.width` | 20 | | 20 or 40 MHz (40 = HT40+) | 20 |
 | `wireless.mlink` | 1500 | 3994 | Interface MTU; majestic RTP size = mlink − 100 | n/a → `pkt_size` in rkfpv.conf (1400) |

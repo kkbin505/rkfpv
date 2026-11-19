@@ -116,7 +116,6 @@ table.diff tr.bad td { opacity: .6; }
 .tag.live { background: #e5f1dc; color: #3a7419; }
 .tag.restart { background: #f8ecd2; color: #8a5d00; }
 .tag.link { background: var(--accent-soft); color: #b83500; }
-.tag.inuse { background: #e3ecf8; color: #2459a6; }
 .box.note { font-size: 13px; color: var(--muted); }
 .box.note b { color: var(--text); }
 .switch { position: relative; width: 42px; height: 22px; display: inline-block; }

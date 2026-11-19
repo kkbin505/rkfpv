@@ -36,7 +36,7 @@ check() { # check <name> <expected> <actual>
 setup
 check "get bitrate" "bitrate = 3500" "$(fpv get bitrate)"
 check "get mcs_index (yaml)" "mcs_index = 2" "$(fpv get mcs_index)"
-check "get unset txpower -> auto" "txpower_8812eu = auto" "$(fpv get txpower_8812eu)"
+check "get unset txpower -> auto" "txpower = auto" "$(fpv get txpower)"
 check "get commented max_bitrate -> default" "max_bitrate = 0" "$(fpv get max_bitrate)"
 check "get mirror ignores inline comment" "mirror = 1" "$(fpv get mirror)"
 
@@ -52,16 +52,16 @@ check "inline comment kept" "mirror = 0                  # mirror + flip = rotat
 fpv set max_bitrate 4500 > /dev/null
 check "uncomment rkfpv key" "max_bitrate = 4500        # VBR only" "$(grep '^max_bitrate' "$T/root/etc/rkfpv.conf")"
 
-fpv set txpower_8812cu 25 > /dev/null
-check "uncomment yaml setting, not the prose line" "  txpower_8812cu: 25" "$(grep '^  txpower_8812cu' "$T/root/etc/wfb.yaml")"
+fpv set txpower 25 > /dev/null
+check "uncomment yaml setting, not the prose line" "  txpower: 25" "$(grep '^  txpower' "$T/root/etc/wfb.yaml")"
 check "prose comments untouched" "$(grep '^  # .*[a-z] [a-z]' "$HERE/files/wfb.yaml")" "$(grep '^  # .*[a-z] [a-z]' "$T/root/etc/wfb.yaml")"
-check "other cards stay unset" "txpower_8812au = auto" "$(fpv get txpower_8812au)"
-fpv set txpower_8812cu auto > /dev/null
-check "txpower auto -> commented out" "txpower_8812cu = auto" "$(fpv get txpower_8812cu)"
+fpv set txpower auto > /dev/null
+check "txpower auto -> commented out" "txpower = auto" "$(fpv get txpower)"
 check "no active txpower line" 0 "$(grep -c '^  txpower' "$T/root/etc/wfb.yaml")"
-fpv set txpower_8812eu 64 > /dev/null 2>&1 && bad "txpower 64 accepted" || ok "txpower 64 rejected"
+fpv set txpower 31 > /dev/null 2>&1 && bad "txpower 31 accepted" || ok "txpower 31 rejected"
+fpv set txpower_8812cu 20 > /dev/null 2>&1 && bad "old per-card key accepted" || ok "old per-card key rejected"
 
-# wfb.sh: per-card key -> iw value, defaults, legacy `txpower` fallback
+# wfb.sh: txpower (dBm) -> iw value per driver, per-card defaults
 txp() { # txp <driver> [yaml lines...]  -> mBm wfb.sh would pass to iw
 	drv=$1; shift
 	printf 'wireless:\n' > "$T/w.yaml"
@@ -74,14 +74,16 @@ txp() { # txp <driver> [yaml lines...]  -> mBm wfb.sh would pass to iw
 EOS
 		wfb_dev=wlan0; driver=$1; wfb_yaml "$2"; set_txpower' x "$drv" "$T/w.yaml"
 }
-check "8812au default 20 -> index"   -2000 "$(txp 88XXau)"
-check "8812cu default 20 -> 10 dBm"   1000 "$(txp 88x2cu)"
-check "8812eu default 40 -> 20 dBm"   2000 "$(txp 8812eu)"
-check "8812au own key"               -6300 "$(txp 88XXau 'txpower_8812au: 63' 'txpower_8812eu: 10')"
-check "8812eu own key, not au's"       500 "$(txp 8812eu 'txpower_8812au: 63' 'txpower_8812eu: 10')"
-check "8812cu ignores commented key"  1000 "$(txp 88x2cu '# txpower_8812cu: 50')"
-check "legacy txpower fallback"       1500 "$(txp 88x2cu 'txpower: 30')"
-check "own key beats legacy"          2500 "$(txp 88x2cu 'txpower: 30' 'txpower_8812cu: 50')"
+check "8812au default 10 dBm -> index 20" -2000 "$(txp 88XXau)"
+check "8812cu default 10 dBm"              1000 "$(txp 88x2cu)"
+check "8812eu default 20 dBm"              2000 "$(txp 8812eu)"
+check "8812cu 10 dBm -> 1000 mBm"          1000 "$(txp 88x2cu 'txpower: 10')"
+check "8812eu 5 dBm"                        500 "$(txp 8812eu 'txpower: 5')"
+check "8812au 15 dBm -> index 30"         -3000 "$(txp 88XXau 'txpower: 15')"
+check "commented key -> default"           1000 "$(txp 88x2cu '# txpower: 25')"
+check "out of range -> card default"       2000 "$(txp 8812eu 'txpower: 40')"
+check "not a number -> card default"       1000 "$(txp 88x2cu 'txpower: high')"
+check "old per-card key is ignored"        1000 "$(txp 88x2cu 'txpower_8812cu: 50')"
 
 # wfb.sh's parser must still read the edited yaml
 fpv set channel 149 stbc 1 > /dev/null
@@ -118,7 +120,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 26 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 24 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
