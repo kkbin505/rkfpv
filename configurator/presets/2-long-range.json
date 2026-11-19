@@ -1,0 +1,13 @@
+{
+  "name": "Long range",
+  "description": "More robust radio: MCS 1 (QPSK 1/2) and more FEC recovery packets (8/14), with the bitrate lowered to 2.5 Mbit/s so the stream still fits. TX power is not changed: set it for your card on the Radio tab.",
+  "values": {
+    "mcs_index": 1,
+    "fec_k": 8,
+    "fec_n": 14,
+    "rc": "cbr",
+    "bitrate": 2500,
+    "gop": 30,
+    "stat_time": 1
+  }
+}

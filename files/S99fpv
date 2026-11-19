@@ -1,10 +1,10 @@
 #!/bin/sh
 # Boot: pick the USB role, bring up wfb-ng (+ MAVLink), start rkfpv.
 #
-# USB is a single OTG port:
-#   - plugged into a PC (gadget gets "configured")  -> stay a device so ADB /
-#     RNDIS work; FPV link is not started (debug mode)
-#   - anything else (RTL8812AU on an OTG adapter)   -> switch to host, start FPV
+# USB is a single OTG port. At boot it is switched to host for up to 3 s:
+#   - a supported WiFi card shows up      -> stay host, start FPV
+#   - nothing (e.g. a PC on the cable)    -> back to device so ADB / RNDIS
+#     work; FPV link is not started (debug mode)
 # Override: touch /userdata/fpv.force (always FPV) or /userdata/fpv.off (never).
 
 # Rockchip env: LD_LIBRARY_PATH for /oem/usr/lib, PATH for /oem/usr/bin
@@ -15,59 +15,124 @@
 USB_ROLE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 PIDFILE=/var/run/rkfpv.pid
 
-log() { echo "$1" | logger -s -t fpv; }
+# Everything this script starts (wfb_tx/rx, rkfpv, mavbridge, fpvd), also
+# on restart-video, inherits this: when RAM runs out the kernel kills
+# sshd/adbd/... first, not the link (the uplink wfb_rx used to be the OOM
+# victim at boot).
+echo -900 > /proc/$$/oom_score_adj 2>/dev/null
 
-pc_connected() {
-	# "default"/"addressed"/"configured" all need a USB host that reset
-	# and talked to us; Windows can sit before "configured" for a while
-	# (or for good, without a driver). "powered"/"suspended" do not count:
-	# VBUS is the board's own 5 V rail, present with an OTG adapter too.
-	# Give the host up to 10 s.
-	for i in 1 2 3 4 5 6 7 8 9 10; do
-		for s in /sys/class/udc/*/state; do
-			st=$(cat "$s" 2>/dev/null)
-			case "$st" in
-				default|addressed|configured)
-					log "USB gadget state: $st"; return 0 ;;
-			esac
-		done
-		sleep 1
+# on the TF card, so `fpv log` over ADB still has the last flight's logs
+LOGDIR=/userdata/log
+mkdir -p "$LOGDIR"
+
+log() {
+	echo "$1" | logger -s -t fpv
+	echo "$(date '+%F %T') $1" >> "$LOGDIR/fpv.log"
+}
+
+# keep the previous boot's logs, cap fpv.log
+rotate_logs() {
+	[ -f "$LOGDIR/rkfpv.log" ] && mv -f "$LOGDIR/rkfpv.log" "$LOGDIR/rkfpv.prev.log"
+	if [ -f "$LOGDIR/fpv.log" ] && [ "$(wc -c < "$LOGDIR/fpv.log")" -gt 65536 ]; then
+		tail -n 200 "$LOGDIR/fpv.log" > "$LOGDIR/fpv.log.tmp" && mv -f "$LOGDIR/fpv.log.tmp" "$LOGDIR/fpv.log"
+	fi
+}
+
+start_video() {
+	# -b would send rkfpv's output to /dev/null; keep it in a log instead
+	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $LOGDIR/rkfpv.log 2>&1"
+}
+
+stop_video() {
+	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
+	killall -q rkfpv
+	# let the encoder / ISP tear down before a new instance grabs them
+	# (polled every 0.1 s, up to 10 s: a 1 s poll added up to a second
+	# of black screen to every `fpv restart`)
+	i=0
+	while [ $i -lt 100 ]; do
+		pidof rkfpv > /dev/null || return 0
+		usleep 100000
+		i=$((i + 1))
 	done
-	return 1
+	killall -q -9 rkfpv
+}
+
+# Console (115200 serial) only gets errors from here on: printk to the
+# console is synchronous, and the WiFi driver's few hundred info lines
+# held up the boot by about a second. Everything still goes to dmesg.
+echo 4 > /proc/sys/kernel/printk 2>/dev/null
+
+adapter_present() {
+	# A supported WiFi card shows up on the bus ~0.3 s after the switch to
+	# host. Testing for the card (deterministic) instead of waiting for a
+	# PC to enumerate us (seconds, and it varies per PC / OS / port) means
+	# FPV boots without any wait; only debug mode pays the 3 s.
+	/usr/bin/wfb.sh detect 3 > /dev/null
+}
+
+back_to_device() {
+	echo device > "$USB_ROLE"
+	# adbd's FunctionFS endpoints go stale across the host round trip (the
+	# PC sees the board, ADB does not): unbind, restart adbd so it writes
+	# its descriptors again, rebind.
+	G=/sys/kernel/config/usb_gadget/rockchip
+	[ -d "$G" ] || return 0
+	echo none > "$G/UDC" 2>/dev/null
+	killall -q adbd
+	usleep 500000
+	start-stop-daemon -S -b -x /usr/bin/adbd
+	sleep 1
+	ls /sys/class/udc | head -1 > "$G/UDC"
+}
+
+# command service for the configurator: runs in debug and FPV mode
+# (reachable over USB RNDIS now, over the wfb tunnel later: issue #1)
+start_fpvd() {
+	[ -x /usr/bin/fpvd ] || return 0
+	start-stop-daemon -S -q -b -m -p /var/run/fpvd.pid -x /usr/bin/fpvd -- -p 7000
 }
 
 start() {
+	rotate_logs
+	start_fpvd
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
 		return 0
 	fi
-	if [ ! -e /userdata/fpv.force ] && pc_connected; then
-		log "PC on USB: staying in device mode (ADB/RNDIS), FPV not started"
-		return 0
-	fi
-
 	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
 		echo host > "$USB_ROLE"
+		if [ ! -e /userdata/fpv.force ] && ! adapter_present; then
+			log "no WiFi adapter on USB: debug mode (ADB/RNDIS), FPV not started"
+			back_to_device
+			return 0
+		fi
 		log "USB switched to host"
+		# adbd only serves the USB gadget, which is gone in host mode:
+		# ~1 MB of RAM back for the link. Debug mode never gets here.
+		killall -q adbd
 	else
 		log "no USB role switch found, USB stays as is"
 	fi
 
 	/usr/bin/wfb.sh start
-
-	# -b would send rkfpv's output to /dev/null; keep it in a log instead
-	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> /var/log/rkfpv.log 2>&1"
+	start_video
 }
 
 stop() {
-	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
-	killall -q rkfpv
+	stop_video
 	/usr/bin/wfb.sh stop
+	start-stop-daemon -K -q -p /var/run/fpvd.pid
 }
 
+# `fpv restart`: re-run one half of the FPV chain with the new settings,
+# without the PC detection / USB role switch of a full start
 case "$1" in
 	start|stop) "$1" ;;
 	restart) stop; sleep 1; start ;;
-	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+	restart-video) log "restart: video"; stop_video; start_video ;;
+	restart-link) log "restart: link"; /usr/bin/wfb.sh start ;;
+	restart-all) log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all}"; exit 1 ;;
 esac

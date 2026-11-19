@@ -1,6 +1,7 @@
 #!/bin/sh
 # wfb-ng video TX for rkfpv on Luckfox firmware.
 # Trimmed from OpenIPC's /usr/bin/wifibroadcast: no majestic, no cli.
+# Derived from OpenIPC (MIT, Copyright (c) 2021 OpenIPC); see THIRD_PARTY_NOTICES.md.
 # wfb_tx reads RTP from UDP $video_port (rkfpv sends there) instead of the
 # rtp_local unix socket majestic uses.
 
@@ -39,10 +40,13 @@ detect_driver() {
 
 load_modules() {
 	# the adapter needs a moment to enumerate after the switch to host mode
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# (polled every 0.2 s, up to 10 s)
+	i=0
+	while [ $i -lt 50 ]; do
 		detect_driver
 		[ -n "$driver" ] && break
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	if [ -z "$driver" ]; then
 		log "no supported WiFi adapter (8812AU/8812CU/8822CU/8812EU) detected (is USB in host mode?)"
@@ -56,12 +60,33 @@ load_modules() {
 	opts=""
 	[ "$driver" != 88XXau ] && opts="rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0 MaxTxBufLen=32"
 	insmod "$ko_dir/$driver.ko" $opts || return 1
-	for i in 1 2 3 4 5; do
+	i=0
+	while [ $i -lt 25 ]; do
 		[ -e /sys/class/net/"$wfb_dev" ] && return 0
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	log "$wfb_dev did not appear"
 	return 1
+}
+
+# TX power. Each adapter has its own key (txpower_8812au / _8812cu /
+# _8812eu), OpenIPC scale 1-63 (~0.5 dB per step); the old shared `txpower`
+# key is still read as a fallback. Unset -> OpenIPC's default for the card.
+#   88XXau (OpenIPC fork): negative mBm = raw power index -> level x -100
+#   88x2cu / 8812eu:       target power in mBm           -> level x 50 (level/2 dBm)
+set_txpower() {
+	case "$driver" in
+		88XXau) key=txpower_8812au; def=20 ;;
+		88x2cu) key=txpower_8812cu; def=20 ;;
+		8812eu) key=txpower_8812eu; def=40 ;;
+		*) log "txpower: unknown driver '$driver'"; return 1 ;;
+	esac
+	eval "level=\${$key:-\$txpower}"
+	[ -n "$level" ] || level=$def
+	[ "$driver" = 88XXau ] && mbm=$((level * -100)) || mbm=$((level * 50))
+	log "txpower: $key=$level -> iw $mbm"
+	iw dev "$wfb_dev" set txpower fixed "$mbm"
 }
 
 load_interface() {
@@ -70,18 +95,7 @@ load_interface() {
 	[ "$width" = "40" ] && ht=HT40+ || ht=HT20
 	iw "$wfb_dev" set channel "$channel" "$ht"
 	iw reg set 00
-	# txpower uses OpenIPC's per-driver scale: 88XXau takes it as negative
-	# mBm (x -100), the others as mBm (x 50). Unset -> OpenIPC's first-boot
-	# default for that adapter (88XXau 20, 8812eu 40; 88x2cu has none there).
-	if [ -z "$txpower" ]; then
-		case "$driver" in
-			8812eu) txpower=40 ;;
-			*) txpower=20 ;;
-		esac
-	fi
-	[ "$driver" = 88XXau ] && wfb_power=$((txpower * -100)) || wfb_power=$((txpower * 50))
-	log "txpower $txpower -> iw $wfb_power"
-	iw "$wfb_dev" set txpower fixed "$wfb_power"
+	set_txpower
 }
 
 # MAVLink over wfb-ng, same radio ports as OpenIPC so ground stations need
@@ -116,7 +130,33 @@ stop() {
 	killall -q mavbridge wfb_tx wfb_rx
 }
 
+# detect [seconds]: is a supported adapter on the bus? (S99fpv's boot test)
+detect() {
+	n=$(( ${1:-3} * 5 )); i=0
+	while [ $i -lt $n ]; do
+		detect_driver
+		[ -n "$driver" ] && { echo "$driver"; return 0; }
+		usleep 200000
+		i=$((i + 1))
+	done
+	return 1
+}
+
+# driver of the adapter that is already up (for `txpower`)
+loaded_driver() {
+	for m in 88XXau 88x2cu 8812eu; do
+		grep -q "^$m " /proc/modules && { driver=$m; return 0; }
+	done
+	return 1
+}
+
 case "$1" in
 	start|stop) "$1" ;;
-	*) echo "Usage: $0 {start|stop}"; exit 1 ;;
+	detect) detect "$2" ;;
+	txpower)
+		# re-apply TX power from wfb.yaml while the link runs (fpv set)
+		wfb_yaml "$wfb_cfg"
+		loaded_driver || { log "txpower: no adapter driver loaded"; exit 1; }
+		set_txpower ;;
+	*) echo "Usage: $0 {start|stop|detect [seconds]|txpower}"; exit 1 ;;
 esac
