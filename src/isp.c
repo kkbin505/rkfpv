@@ -131,3 +131,15 @@ void isp_stop(void)
 	rk_aiq_uapi2_sysctl_deinit(g_ctx);
 	g_ctx = NULL;
 }
+
+int isp_exposure(float *ms, float *gain)
+{
+	Uapi_ExpQueryInfo_t q;
+
+	if (!g_ctx || rk_aiq_user_api2_ae_queryExpResInfo(g_ctx, &q))
+		return -1;
+	*ms = q.LinAeInfo.LinearExp.integration_time * 1000.0f;
+	*gain = q.LinAeInfo.LinearExp.analog_gain * q.LinAeInfo.LinearExp.digital_gain *
+		q.LinAeInfo.LinearExp.isp_dgain;
+	return 0;
+}

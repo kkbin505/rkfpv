@@ -436,11 +436,15 @@ int main(int argc, char **argv)
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
+			char ae[48] = "";
+			float exp_ms, gain;
+			if (isp_up && !isp_exposure(&exp_ms, &gain))
+				snprintf(ae, sizeof(ae), ", exp %.1f ms, gain %.1fx", exp_ms, gain);
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu\n",
+				"%.0f pkt/s, send errors %llu%s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors);
+				(unsigned long long)rtp.send_errors, ae);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
