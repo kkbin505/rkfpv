@@ -13,7 +13,8 @@
 
 static rk_aiq_sys_ctx_t *g_ctx;
 
-int isp_start(const char *iq_dir, int fps, int mirror, int flip)
+int isp_start(const char *iq_dir, int fps, int mirror, int flip,
+	      int sensor_w, int sensor_h)
 {
 	rk_aiq_static_info_t info;
 	rk_aiq_working_mode_t mode = RK_AIQ_WORKING_MODE_NORMAL;
@@ -33,7 +34,7 @@ int isp_start(const char *iq_dir, int fps, int mirror, int flip)
 		fprintf(stderr, "isp: rk_aiq_uapi2_sysctl_init failed\n");
 		return -1;
 	}
-	if (rk_aiq_uapi2_sysctl_prepare(g_ctx, 0, 0, mode)) {
+	if (rk_aiq_uapi2_sysctl_prepare(g_ctx, sensor_w, sensor_h, mode)) {
 		fprintf(stderr, "isp: prepare failed\n");
 		rk_aiq_uapi2_sysctl_deinit(g_ctx);
 		g_ctx = NULL;

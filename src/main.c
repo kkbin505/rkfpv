@@ -254,7 +254,7 @@ static void usage(const char *p)
 {
 	fprintf(stderr,
 		"usage: %s [-c config] [-s key=value]...\n"
-		"keys: size fps vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
+		"keys: size fps sensor(WxH|auto) vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
 		"      gop stat_time slice_bytes intra_refresh dst port pkt_size stats\n"
 		"defaults: size=1280x720 fps=30 rc=cbr bitrate=3500 gop=30 dst=127.0.0.1\n"
 		"          port=5600 pkt_size=1400\n", p);
@@ -327,7 +327,8 @@ int main(int argc, char **argv)
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
 
 	if (cfg.iq_dir[0]) {
-		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip))
+		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip,
+			      cfg.sensor_w, cfg.sensor_h))
 			goto out;
 		isp_up = 1;
 	} else {
