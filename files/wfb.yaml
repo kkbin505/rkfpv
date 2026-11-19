@@ -1,6 +1,11 @@
 wireless:
-  # txpower: OpenIPC per-driver scale; unset = adapter default (see wfb.sh)
-  # txpower: 20
+  # TX power per adapter, OpenIPC scale 1-63, about 0.5 dB per step.
+  #   8812AU: power index (63 = max). 8812CU, 8822CU, 8812EU: level / 2 = dBm.
+  # Unset = adapter default (8812AU 20, 8812CU 20, 8812EU 40). Each card
+  # keeps its own value, so swapping cards never over-drives the new one.
+  # txpower_8812au: 20
+  # txpower_8812cu: 20
+  # txpower_8812eu: 40
   channel: 161
   width: 20
 broadcast:

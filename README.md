@@ -67,7 +67,36 @@ UART3 ← mavbridge ← udp:14550 ← wfb_rx -p 144 ◀──无线── 地面
 
 `mavbridge` 按 MAVLink 帧边界切分，把最多 15 帧、不超过 1000 字节打成一个 UDP 包，最多攒 30 ms 就发。这样丢一个无线包只会丢掉几条完整消息，不会出现半帧数据。遥测的 FEC 用 1/2（每包发两份），不用等攒满一组。
 
-## 运行时调参
+## 改设置：`fpv` 命令和电脑上的配置工具
+
+板子上的 `fpv` 命令统一管理 `/etc/rkfpv.conf` 和 `/etc/wfb.yaml`。通过 `adb shell` 和 `ssh` 用法完全一样：
+
+```sh
+fpv get                         # 所有设置
+fpv set bitrate 4000 mcs_index 3   # 先全部校验再写入；FPV 在跑时能热生效的会立即生效
+fpv schema                      # 每个参数的范围、默认值、生效方式
+fpv status                      # 模式、帧率/码率、无线参数、内存、温度
+fpv log [rkfpv|rkfpv-prev|fpv|kernel]   # 日志存在 /userdata/log，断电重启后还在
+fpv restart [video|link|all]    # 让需要重启的设置生效
+fpv mode [auto|debug|fpv]       # 开机模式（fpv = 总是 FPV，ADB 不再出现，慎用）
+fpv reset                       # 恢复出厂设置
+```
+
+加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
+
+**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
+
+协议很简单，按无线丢包设计：请求 `FPV1 <id> <命令> [参数…]`；回复按 1200 字节分片，每片格式 `FPV1 <id> <序号>/<总数>\n<JSON 片段>`。丢包时客户端用**同一个 id** 重发，fpvd 直接返回缓存的结果，不会重复执行（比如 restart 不会跑两次）。
+
+**电脑上的配置工具**（类似 Betaflight Configurator）：板子接电脑开机进入调试模式后，运行
+
+```sh
+python3 configurator/fpvconf.py
+```
+
+浏览器里会打开界面，详见 `configurator/README.md`。
+
+直接改文件也可以：
 
 ```sh
 vi /etc/rkfpv.conf
@@ -121,4 +150,24 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `src/rtp_h265.c` | H.265 RTP 封包（RFC 7798，单 NAL 包 + FU 分片） |
 | `src/config.c` | key=value 配置解析 |
 | `src/mavbridge.c` | 串口 ↔ UDP 的 MAVLink 转发，按帧打包，不依赖其他库 |
+| `src/fpvd.c` | UDP 命令服务，只执行 `fpv` 子命令 |
+| `files/fpv` | 板子上的设置命令（get / set / status …） |
+| `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
+
+## 致谢
+
+这个项目站在很多开源项目的肩膀上，感谢：
+
+- **[OpenIPC](https://github.com/OpenIPC)**：让 IP 摄像头芯片能做数字图传的思路，以及 `wifibroadcast` 脚本、网卡驱动的整合与补丁、TX 功率刻度、各种参数经验。`files/wfb.sh` 就是从 OpenIPC 的脚本精简来的。
+- **[wfb-ng](https://github.com/svpcom/wfb-ng)**（svpcom）：整个无线链路，包括广播、FEC、加密和遥测通道。
+- **[Luckfox](https://github.com/LuckfoxTECH/luckfox-pico)** 和 **Rockchip**：Luckfox Pico SDK、RKMPI / rkaiq 媒体库和示例代码。
+- **Realtek 网卡驱动的维护者**：[openipc/realtek-wlan](https://github.com/openipc/realtek-wlan)（RTL8812AU FPV 分支）、[libc0607](https://github.com/libc0607) 的 RTL8812CU/8822CU 和 RTL8812EU 驱动、[svpcom/rtl8812au](https://github.com/svpcom/rtl8812au)。
+- **PixelPilot** 等 OpenIPC 地面站项目：本项目的视频格式和它们保持兼容。
+- 界面风格参考了 **[Betaflight Configurator](https://github.com/betaflight/betaflight-configurator)**。
+
+## 许可证
+
+本仓库自己的代码使用 [MIT](LICENSE) 许可证。从第三方项目改编的文件、第三方补丁、构建时下载的组件，以及各自的许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+如果要分发编译好的固件镜像，注意镜像里包含 GPL 软件（内核、网卡驱动、wfb-ng），必须同时提供对应的源码，详见 THIRD_PARTY_NOTICES.md。
