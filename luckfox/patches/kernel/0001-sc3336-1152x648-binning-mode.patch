@@ -1,5 +1,5 @@
 diff --git a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
-index bea465d80..62474edd0 100644
+index bea465d80..24431abfc 100644
 --- a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 +++ b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 @@ -38,6 +38,7 @@
@@ -10,7 +10,7 @@ index bea465d80..62474edd0 100644
  
  #define PIXEL_RATE_WITH_253M_10BIT	(SC3336_LINK_FREQ_253 * 2 * \
  					SC3336_LANES / SC3336_BITS_PER_SAMPLE)
-@@ -460,6 +461,176 @@ static const struct regval sc3336_linear_10_2304x1296_30fps_regs[] = {
+@@ -460,6 +461,187 @@ static const struct regval sc3336_linear_10_2304x1296_30fps_regs[] = {
  	{REG_NULL, 0x00},
  };
  
@@ -26,7 +26,7 @@ index bea465d80..62474edd0 100644
 +	{0x36e9, 0x80},
 +	{0x37f9, 0x80},
 +	{0x301f, 0x67},
-+	{0x30b8, 0x44},
++	{0x30b8, 0x33},
 +	{0x3200, 0x00},
 +	{0x3201, 0x00},
 +	{0x3202, 0x00},
@@ -39,8 +39,10 @@ index bea465d80..62474edd0 100644
 +	{0x3209, 0x80},
 +	{0x320a, 0x02},
 +	{0x320b, 0x88},
++	{0x320c, 0x05},
++	{0x320d, 0xa0},
 +	{0x320e, 0x02},
-+	{0x320f, 0xa8},
++	{0x320f, 0x96},
 +	{0x3210, 0x00},
 +	{0x3211, 0x02},
 +	{0x3212, 0x00},
@@ -129,7 +131,7 @@ index bea465d80..62474edd0 100644
 +	{0x36b6, 0x4f},
 +	{0x36ea, 0x11},
 +	{0x36eb, 0x0d},
-+	{0x36ec, 0x1c},
++	{0x36ec, 0x2c},
 +	{0x36ed, 0x26},
 +	{0x370f, 0x01},
 +	{0x3722, 0x09},
@@ -161,8 +163,17 @@ index bea465d80..62474edd0 100644
 +	{0x3e09, 0x00},
 +	{0x440e, 0x02},
 +	{0x4509, 0x20},
++	{0x4819, 0x04},
++	{0x481b, 0x02},
++	{0x481d, 0x07},
++	{0x481f, 0x02},
++	{0x4821, 0x07},
++	{0x4823, 0x02},
++	{0x4825, 0x02},
++	{0x4827, 0x02},
++	{0x4829, 0x03},
 +	{0x5000, 0x46},
-+	{0x5900, 0x01},
++	{0x5900, 0xf1},
 +	{0x5901, 0x04},
 +	{0x5988, 0x70},
 +	{0x5ae0, 0xfe},
@@ -187,7 +198,7 @@ index bea465d80..62474edd0 100644
  static const struct sc3336_mode supported_modes[] = {
  	{
  		.width = 2304,
-@@ -494,12 +665,30 @@ static const struct sc3336_mode supported_modes[] = {
+@@ -494,12 +676,30 @@ static const struct sc3336_mode supported_modes[] = {
  		.xvclk_freq = 27000000,
  		.link_freq_idx = 0,
  		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
@@ -200,13 +211,13 @@ index bea465d80..62474edd0 100644
 +			.denominator = 600000,
 +		},
 +		.exp_def = 0x0080,
-+		.hts_def = 0x0578,
-+		.vts_def = 0x02a8,
++		.hts_def = 0x05a0,
++		.vts_def = 0x0296,
 +		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 +		.reg_list = sc3336_linear_10_1152x648_57fps_regs,
 +		.hdr_mode = NO_HDR,
 +		.xvclk_freq = 24000000,
-+		.link_freq_idx = 1,
++		.link_freq_idx = 2,
 +		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
  	}
  };
