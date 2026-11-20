@@ -33,6 +33,10 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
 	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
 	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;
+	bad |= d.isp.metering != -1;                             /* default iq */
+	bad |= config_set(&d, "isp_metering", "bottom_strong") || d.isp.metering != METER_BOTTOM_STRONG;
+	bad |= config_set(&d, "isp_metering", "iq") || d.isp.metering != -1;
+	bad |= config_set(&d, "isp_metering", "top") == 0;
 	printf("edge cases %s\n", bad ? "FAIL" : "ok");
 	return r || bad;
 }

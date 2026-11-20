@@ -8,6 +8,8 @@ typedef enum { RC_CBR = 0, RC_VBR = 1 } rc_mode_t;
 /* ISP (rkaiq) runtime controls. ISP_IQ = keep the IQ file's value. */
 #define ISP_IQ (-1)
 enum { WB_AUTO = 0, WB_DAYLIGHT, WB_CLOUDY, WB_SHADE, WB_TWILIGHT, WB_FLUORESCENT, WB_INCANDESCENT };
+/* AE metering grid; ISP_IQ = the IQ file's grid (SC3336: center-weighted) */
+enum { METER_AVERAGE = 1, METER_BOTTOM, METER_BOTTOM_STRONG };
 
 typedef struct {
 	int brightness, contrast, saturation, hue;  /* iq | 0..255 (128 = neutral) */
@@ -17,6 +19,7 @@ typedef struct {
 	int antiflicker;        /* iq | 0 off | 50 | 60 */
 	int ae_delay;           /* iq | 0..4 frames before AE reacts */
 	int ae_damp;            /* iq | 0..100 = AE damping 0.00..1.00 */
+	int metering;           /* iq | METER_*: which part of the picture AE exposes for */
 	int blc, hlc;           /* 0 off | 1..100: backlight / highlight compensation */
 	int nr_spatial;         /* iq | 0 off | 1..100 */
 	int nr_temporal;        /* iq | 0 off | 1..100 */
