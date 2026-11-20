@@ -5,3 +5,10 @@
 [1;38;5;202m/_/ |_| /_/ |_|  /_/ / .___/ |___/[0m
 [1;38;5;202m                    /_/[0m
 
+ Open-source FPV air unit for Luckfox Pico Mini (RV1103):
+ H.265 video over wfb-ng, compatible with OpenIPC ground stations.
+ Source: https://github.com/kkbin505/rkfpv
+
+ Independent hobby project, not affiliated with or endorsed by
+ Rockchip or Luckfox. Provided as is, without warranty.
+
