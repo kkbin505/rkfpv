@@ -18,6 +18,10 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "isp_antiflicker", "55") == 0;
 	bad |= config_set(&d, "isp_wb", "shade") || d.isp.wb != 3;
 	bad |= config_set(&d, "isp_wb", "purple") == 0;
+	bad |= d.isp.metering != -1;                             /* default iq */
+	bad |= config_set(&d, "isp_metering", "bottom_strong") || d.isp.metering != METER_BOTTOM_STRONG;
+	bad |= config_set(&d, "isp_metering", "iq") || d.isp.metering != -1;
+	bad |= config_set(&d, "isp_metering", "top") == 0;
 	printf("edge cases %s\n", bad ? "FAIL" : "ok");
 	return r || bad;
 }
