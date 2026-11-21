@@ -29,6 +29,34 @@ void config_defaults(rkfpv_config_t *c)
 	 * OpenIPC ground stations pick the decoder from it */
 	c->pt = 97;
 
+	c->dvr = 0;             /* off: the 64 MB board has no RAM to spare */
+	snprintf(c->dvr_dir, sizeof(c->dvr_dir), "/mnt/dvr");
+	c->dvr_segment = 600;
+	c->dvr_min_free = 300;
+	c->dvr_overwrite = 1;
+	c->dvr_ts = 0;
+	c->dvr_buffer_kb = 1024;
+	c->dvr_width = 0;       /* "link": record the radio stream, no 2nd encoder */
+	c->dvr_height = 0;
+	c->dvr_rc = RC_VBR;     /* quality where the scene needs it; the card has room */
+	c->dvr_bitrate_kbps = 8000;
+	c->dvr_gop = 30;        /* 1 s: fMP4 fragment and seek granularity */
+
+	/* iq = whatever the active IQ file sets (a custom IQ may set its own) */
+	c->isp.brightness = c->isp.contrast = c->isp.saturation = c->isp.hue = ISP_IQ;
+	c->isp.sharpness = ISP_IQ;
+	c->isp.exp_max_ms = ISP_IQ;
+	c->isp.gain_max = ISP_IQ;
+	c->isp.antiflicker = ISP_IQ;
+	c->isp.ae_delay = ISP_IQ;
+	c->isp.ae_damp = ISP_IQ;
+	c->isp.blc = 0;
+	c->isp.hlc = 0;
+	c->isp.nr_spatial = 0;  /* off: no smearing on fast motion (user's choice) */
+	c->isp.nr_temporal = 0;
+	c->isp.dehaze = ISP_IQ;
+	c->isp.wb = WB_AUTO;
+
 	c->stats_interval = 5;
 }
 
@@ -55,6 +83,21 @@ static int parse_size(const char *v, int *w, int *h)
 	return 0;
 }
 
+/* "iq" -> ISP_IQ, "off" -> 0 where allowed, else a number in lo..hi */
+static int parse_isp(const char *v, int lo, int hi, int allow_off, int *out)
+{
+	if (!strcmp(v, "iq")) { *out = ISP_IQ; return 0; }
+	if (allow_off && !strcmp(v, "off")) { *out = 0; return 0; }
+	return parse_int(v, lo, hi, out);
+}
+
+static const char *const WB_NAMES[] = {
+	"auto", "daylight", "cloudy", "shade", "twilight", "fluorescent", "incandescent", NULL
+};
+
+#define ISP_KEY(name, field, lo, hi, off) \
+	if (!strcmp(key, name)) return parse_isp(val, lo, hi, off, &c->isp.field)
+
 #define INT_KEY(name, field, lo, hi) \
 	if (!strcmp(key, name)) return parse_int(val, lo, hi, &c->field)
 
@@ -69,6 +112,48 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	}
 	if (!strcmp(key, "dst")) {
 		snprintf(c->dst_ip, sizeof(c->dst_ip), "%s", val);
+		return 0;
+	}
+	if (!strcmp(key, "isp_wb")) {
+		for (int i = 0; WB_NAMES[i]; i++)
+			if (!strcmp(val, WB_NAMES[i])) { c->isp.wb = i; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "isp_antiflicker")) {
+		if (!strcmp(val, "50")) { c->isp.antiflicker = 50; return 0; }
+		if (!strcmp(val, "60")) { c->isp.antiflicker = 60; return 0; }
+		return parse_isp(val, 0, 0, 1, &c->isp.antiflicker);
+	}
+	ISP_KEY("isp_brightness", brightness, 0, 255, 0);
+	ISP_KEY("isp_contrast", contrast, 0, 255, 0);
+	ISP_KEY("isp_saturation", saturation, 0, 255, 0);
+	ISP_KEY("isp_hue", hue, 0, 255, 0);
+	ISP_KEY("isp_sharpness", sharpness, 0, 100, 0);
+	ISP_KEY("isp_exp_max", exp_max_ms, 1, 33, 0);
+	ISP_KEY("isp_gain_max", gain_max, 1, 512, 0);
+	ISP_KEY("isp_ae_delay", ae_delay, 0, 4, 0);
+	ISP_KEY("isp_ae_damp", ae_damp, 0, 100, 0);
+	ISP_KEY("isp_blc", blc, 0, 100, 1);
+	ISP_KEY("isp_hlc", hlc, 0, 100, 1);
+	ISP_KEY("isp_nr_spatial", nr_spatial, 1, 100, 1);
+	ISP_KEY("isp_nr_temporal", nr_temporal, 1, 100, 1);
+	ISP_KEY("isp_dehaze", dehaze, 1, 100, 1);
+	if (!strcmp(key, "dvr_size")) {
+		if (!strcmp(val, "link")) { c->dvr_width = c->dvr_height = 0; return 0; }
+		return parse_size(val, &c->dvr_width, &c->dvr_height);
+	}
+	if (!strcmp(key, "dvr_rc")) {
+		if (!strcmp(val, "cbr")) { c->dvr_rc = RC_CBR; return 0; }
+		if (!strcmp(val, "vbr")) { c->dvr_rc = RC_VBR; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "dvr_format")) {
+		if (!strcmp(val, "mp4")) { c->dvr_ts = 0; return 0; }
+		if (!strcmp(val, "ts")) { c->dvr_ts = 1; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "dvr_dir")) {
+		snprintf(c->dvr_dir, sizeof c->dvr_dir, "%s", val);
 		return 0;
 	}
 	if (!strcmp(key, "iq_dir")) {
@@ -89,6 +174,13 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("pkt_size", pkt_size, 200, 4000);
 	INT_KEY("pt", pt, 96, 127);
 	INT_KEY("stats", stats_interval, 0, 3600);
+	INT_KEY("dvr", dvr, 0, 1);
+	INT_KEY("dvr_segment", dvr_segment, 10, 3600);
+	INT_KEY("dvr_min_free", dvr_min_free, 10, 1000000);
+	INT_KEY("dvr_overwrite", dvr_overwrite, 0, 1);
+	INT_KEY("dvr_buffer_kb", dvr_buffer_kb, 256, 16384);
+	INT_KEY("dvr_bitrate", dvr_bitrate_kbps, 500, 50000);
+	INT_KEY("dvr_gop", dvr_gop, 1, 600);
 	return -1;
 }
 
@@ -140,10 +232,16 @@ void config_print(const rkfpv_config_t *c)
 	fprintf(stderr,
 		"rkfpv: %dx%d@%d vi_chn=%d iq=%s mirror=%d flip=%d\n"
 		"rkfpv: h265 %s %d kbps (max %d) gop=%d stat=%ds slice=%d ir=%d\n"
-		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d\n",
+		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d\n"
+		"rkfpv: dvr=%d %s segment=%ds min_free=%dMB overwrite=%d %s buffer=%dKB\n"
+		"rkfpv: dvr stream %s %dx%d %s %d kbps gop=%d\n",
 		c->width, c->height, c->fps, c->vi_chn,
 		c->iq_dir[0] ? c->iq_dir : "(none)", c->mirror, c->flip,
 		c->rc == RC_CBR ? "cbr" : "vbr", c->bitrate_kbps,
 		c->max_bitrate_kbps, c->gop, c->stat_time, c->slice_bytes,
-		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt);
+		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt,
+		c->dvr, c->dvr_dir, c->dvr_segment, c->dvr_min_free, c->dvr_overwrite,
+		c->dvr_ts ? "ts" : "mp4", c->dvr_buffer_kb,
+		c->dvr_width ? "own" : "= link", c->dvr_width, c->dvr_height,
+		c->dvr_rc == RC_CBR ? "cbr" : "vbr", c->dvr_bitrate_kbps, c->dvr_gop);
 }

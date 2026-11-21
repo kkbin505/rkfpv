@@ -23,6 +23,8 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 |---|---|
 | Status | 模式（FPV / 调试）、码流 fps/码率、无线 MCS/FEC、温度、内存；开机模式切换；安装脚本 |
 | Video / Camera / Radio / Telemetry | 根据 `fpv schema` 自动生成的表单 |
+| Image | 画质设置（曝光、降噪、颜色等，FPV 运行时立即生效）；IQ 文件的下载、上传、切换出厂/修改版、历史版本回滚 |
+| DVR | 录像状态、开始/停止按钮、卡上剩余空间；录像文件列表，可以下载（ADB）和删除；DVR 设置 |
 | Presets & Backup | 把所有设置备份成 PC 上的 JSON 文件，或从文件恢复；套用预设（Factory defaults / Bench / Long range / Low latency） |
 | Logs | rkfpv 日志（本次 / 上次开机）、开机日志、内核日志 |
 | CLI | 直接在板子上执行命令，例如 `fpv help`，也可以是任意 shell 命令 |
@@ -32,6 +34,12 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 - **live**：FPV 正在运行时立即生效（编码器 SIGHUP，或 `wfb_tx_cmd`）
 - **restart**：要重启视频才生效，保存后会出现 *Restart* 按钮
 - **link**：信道、带宽、link_id、遥测。**地面站也要改成一样**，否则会断链
+
+## DVR 录像下载
+
+下载录像需要 ADB（USB）。文件默认保存在 `~/Videos/rkfpv-dvr`，Windows 上是 `%USERPROFILE%\Videos\rkfpv-dvr`，可以用 `--dvr-dir` 改位置。**Open folder** 会打开这个文件夹。正在录的文件不能下载，也不能删除。
+
+调试模式（板子接在电脑上）时 FPV 不运行，所以开始/停止按钮是灰的，但是可以下载和删除卡上已有的录像。
 
 ## 备份、恢复和预设
 

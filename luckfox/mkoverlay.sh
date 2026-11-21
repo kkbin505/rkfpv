@@ -31,7 +31,7 @@ need "$WFB/wfb_rx"
 need "$KO"
 
 rm -rf "$OV"
-install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko"
+install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko" "$OV/mnt/dvr"
 
 install -m 755 "$HERE/build/rkfpv" "$HERE/build/mavbridge" "$HERE/build/fpvd" "$OV/usr/bin/"
 install -m 755 "$HERE/files/wfb.sh" "$HERE/files/fpv" "$OV/usr/bin/"
@@ -63,6 +63,19 @@ for m in $TRIM_MODULES; do
 	grep -q "^__insmod $m\.ko" "$OV/oem/usr/ko/insmod_ko.sh" && { echo "insmod trim failed: $m" >&2; exit 1; }
 done
 grep -q '^__insmod sc3336\.ko' "$OV/oem/usr/ko/insmod_ko.sh" || { echo "insmod trim removed sc3336" >&2; exit 1; }
+
+# DVR partition: fixed-size rootfs, the rest of the TF card for recordings
+# (formatted on first boot by S99fpv). Changes the card layout: reflash.
+if grep -q '256M(userdata),-(rootfs)"' "$BOARD"; then
+	sed -i 's/256M(userdata),-(rootfs)"/256M(userdata),512M(rootfs),-(dvr)"/' "$BOARD"
+fi
+grep '^export RK_PARTITION_CMD_IN_ENV' "$BOARD"
+# The SDK packer (lf_blkenvpackage) wants an image for every partition. The
+# dvr one is 64 KB of zeros: it keeps sd_update.img small (the partition
+# grows to the end of the card) and clears any old filesystem header there,
+# so S99fpv formats it on first boot.
+install -d "$SDK/output/image"
+head -c 65536 /dev/zero > "$SDK/output/image/dvr.img"
 
 # hook the overlay into the board config once
 if ! grep -q 'overlay-rkfpv' "$BOARD"; then

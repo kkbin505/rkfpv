@@ -31,8 +31,10 @@
     <a data-tab="status" class="active">Status</a>
     <a data-tab="Video">Video</a>
     <a data-tab="Camera">Camera</a>
+    <a data-tab="image">Image</a>
     <a data-tab="Radio">Radio</a>
     <a data-tab="Telemetry">Telemetry</a>
+    <a data-tab="dvr">DVR</a>
     <a data-tab="presets">Presets &amp; Backup</a>
     <a data-tab="logs">Logs</a>
     <a data-tab="cli">CLI</a>
@@ -77,6 +79,75 @@
 
     <section id="tab-form" class="tab" hidden>
       <div id="formBody"></div>
+    </section>
+
+    <section id="tab-image" class="tab" hidden>
+      <div class="box note">
+        <h3>Image (ISP)</h3>
+        Changes apply live while FPV runs. <b>iq</b> keeps the value from the IQ file. For FPV, the settings
+        that matter most are, in order: the <b>longest exposure</b> (motion blur), <b>temporal noise
+        reduction</b> (ghosting on fast moves), the <b>gain cap</b> (noise at night), and the AE delay
+        (bright to dark). Change one setting at a time and compare.
+      </div>
+      <div id="imgPicture"></div>
+      <div id="imgExposure"></div>
+      <div id="imgNoise"></div>
+      <div class="box">
+        <h3>IQ file (sensor tuning)</h3>
+        <div class="row" id="iqState"></div>
+        <p class="sub">The stock files are never changed. Edits go to a copy in /userdata/iq; every replaced
+          version is kept, and a custom file that does not start falls back to stock automatically.</p>
+        <div class="row">
+          <button id="iqUseStock">Use stock</button>
+          <button id="iqUseCustom">Use custom</button>
+          <button id="iqCopy" class="ghost">Copy stock to custom</button>
+          <span class="spacer"></span>
+          <button id="iqUpload" class="primary">Upload edited JSON…</button>
+          <input type="file" id="iqFile" accept=".json,application/json" hidden>
+        </div>
+        <p id="iqHint" class="sub"></p>
+        <table class="diff files">
+          <thead><tr><th>where</th><th>file</th><th>size</th><th></th></tr></thead>
+          <tbody id="iqFiles"></tbody>
+        </table>
+        <div id="iqHistBox" hidden>
+          <h4>Earlier versions of the custom file</h4>
+          <table class="diff files"><tbody id="iqHistory"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-dvr" class="tab" hidden>
+      <div class="box dvrstate">
+        <h3>Recording</h3>
+        <div class="row">
+          <span id="dvrBadge" class="recbadge">–</span>
+          <div class="dvrinfo">
+            <div id="dvrFile" class="big"></div>
+            <div id="dvrSub" class="sub"></div>
+          </div>
+          <span class="spacer"></span>
+          <button id="dvrToggle" class="primary bigbtn">Start recording</button>
+        </div>
+        <div class="space"><div id="dvrBar"></div></div>
+        <div id="dvrSpace" class="sub"></div>
+      </div>
+      <div class="box">
+        <h3>Recordings on the card</h3>
+        <div class="row">
+          <button id="dvrRefresh" class="ghost">Refresh</button>
+          <button id="dvrAll">Download all</button>
+          <button id="dvrOpen" class="ghost">Open folder</button>
+          <span class="spacer"></span>
+          <button id="dvrDelAll" class="ghost danger">Delete all</button>
+        </div>
+        <p id="dvrHint" class="sub"></p>
+        <table class="diff files">
+          <thead><tr><th>file</th><th>size</th><th></th></tr></thead>
+          <tbody id="dvrFiles"></tbody>
+        </table>
+      </div>
+      <div id="dvrSettings"></div>
     </section>
 
     <section id="tab-presets" class="tab" hidden>

@@ -83,6 +83,21 @@ main { flex: 1; overflow: auto; padding: 16px; padding-bottom: 80px; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 
+/* DVR */
+.recbadge { padding: 6px 14px; border-radius: 16px; font-weight: 700; font-size: 13px; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+.recbadge.rec { background: #d23c2f; color: #fff; border-color: #d23c2f; animation: blink 1.2s infinite; }
+.recbadge.warn { background: #f6e7c6; color: #7a5600; border-color: #e8d29c; }
+@keyframes blink { 50% { opacity: .55; } }
+.dvrinfo .big { font-size: 18px; }
+button.bigbtn { font-size: 16px; padding: 10px 22px; }
+button.danger { color: var(--bad); }
+button.danger:hover { border-color: var(--bad); }
+.space { height: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; margin: 12px 0 4px; overflow: hidden; }
+.space div { height: 100%; width: 0; background: var(--accent); }
+table.files td:nth-child(2) { color: var(--muted); white-space: nowrap; }
+table.files td:last-child { text-align: right; white-space: nowrap; }
+table.files button { padding: 3px 10px; margin-left: 4px; }
+
 /* presets + backup */
 .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .preset { border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 6px; background: var(--panel2); }
@@ -111,7 +126,10 @@ table.diff tr.bad td { opacity: .6; }
 .param.changed .name::after { content: " ●"; }
 .param input[type=number], .param select { width: 100%; }
 .param .auto { display: flex; gap: 6px; align-items: center; }
-.param .auto input[type=number] { flex: 1; }
+.param .auto input[type=number] { flex: 1; min-width: 0; }
+.param .auto select { width: auto; flex: 0 0 auto; }
+#iqState { gap: 10px; }
+h4 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); }
 .tag { white-space: nowrap; font-size: 10.5px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: 1px; text-transform: uppercase; }
 .tag.live { background: #e5f1dc; color: #3a7419; }
 .tag.restart { background: #f8ecd2; color: #8a5d00; }

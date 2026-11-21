@@ -75,6 +75,8 @@ DRONE_KEY=~/github/openipc/keys/drone.key luckfox/mkoverlay.sh
 cd ../luckfox-pico && ./build.sh      # -> output/image/sd_update.img
 ```
 
+`mkoverlay.sh` also writes `output/image/dvr.img` (64 KB of zeros) for the DVR partition: without it the SDK packer stops with `dvr.img not found`. Run it again after an SDK clean.
+
 Overlay contents:
 - `/usr/bin/rkfpv`, `mavbridge`, `wfb_tx`, `wfb_rx`, `wfb_tx_cmd`, `wfb.sh`
 - `/etc/init.d/S99fpv`, `/etc/rkfpv.conf`, `/etc/wfb.yaml`, `/etc/drone.key`
@@ -155,3 +157,15 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 - PC: `python3 configurator/fpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
 - Before reflashing: `adb push files/fpv /usr/bin/` (or the UI's *Install / update on board*).
 - Tests: `test/test_fpv.sh` (dash + busybox sh), part of `make test`.
+
+## 13. DVR (recording to the TF card)
+
+- rkfpv records the same H.265 stream it transmits, through the SDK's `librkmuxer`. The file is fragmented MP4 (default) or TS, on the `dvr` partition mounted at `/mnt/dvr`.
+- New partition table (set by `luckfox/mkoverlay.sh`): `…,256M(userdata),512M(rootfs),-(dvr)`. **Reflash needed.** First boot formats the DVR partition as ext4.
+- Settings: `dvr`, `dvr_segment` (600 s), `dvr_min_free` (300 MB), `dvr_overwrite`, `dvr_format`. Control: `fpv dvr status|start|stop|list|delete|delete-all`.
+- Download without removing the card: boot with the PC on USB (debug mode), then use the configurator's DVR tab or `adb pull /mnt/dvr/<file>`.
+
+## 14. Image (ISP) settings and IQ files
+
+- `isp_*` settings call rkaiq at runtime (exposure cap, gain cap, AE delay/damping, NR, BLC/HLC, colour, sharpness, WB, dehaze, anti-flicker). `iq` = the IQ file's value; spatial and temporal NR default to **off**.
+- IQ files: stock `/oem/usr/share/iqfiles` is read-only; edits live in `/userdata/iq` (`fpv iq copy-stock|install|history|rollback`, `iq_dir`). Uploads are validated, md5-checked and swapped atomically; the last 5 versions are kept. A custom IQ that fails, or two starts in a row without a frame, falls back to stock.

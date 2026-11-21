@@ -7,14 +7,22 @@
  *   rkfpv [-c /etc/rkfpv.conf] [-s key=value]...
  *
  * SIGHUP re-reads the config file and applies bitrate / max_bitrate / gop /
- * rc / stat_time live. Other keys need a restart.
+ * rc / stat_time and the dvr_* limits live. Other keys need a restart.
+ * SIGUSR1 starts DVR recording, SIGUSR2 stops it; state in /tmp/dvr.status.
+ *
+ * Two pipelines when a DVR partition is mounted and dvr_size is set:
+ *   ISP main path (VI chn 0, e.g. 1920x1080) -> VENC 1 -> DVR (TF card)
+ *   ISP self path (VI chn 1, e.g. 1280x720)  -> VENC 0 -> RTP -> wfb-ng
+ * If the DVR pipeline cannot be created, the link stream is recorded.
  */
 #include <errno.h>
 #include <getopt.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,15 +33,26 @@
 #include "rk_mpi_vi.h"
 
 #include "config.h"
+#include "dvr.h"
 #include "isp.h"
 #include "rtp_h265.h"
 
-#define VENC_CHN 0
+#define VENC_CHN 0              /* link stream -> RTP */
+#define DVR_VENC 1              /* DVR stream: own size and bitrate */
+#define DVR_VI_CHN 0            /* ISP main path (full-size capable) */
+#define LINK_VI_CHN_DUAL 1      /* ISP self path, when the DVR has the main path */
+#define MAX_PACKS 8             /* rockit hands out one pack per frame; room for more */
 #define VI_DEV 0
 #define VI_PIPE 0
 
 static volatile sig_atomic_t g_quit;
 static volatile sig_atomic_t g_reload;
+static volatile sig_atomic_t g_dvr_cmd;   /* 1 start, 2 stop */
+
+extern const dvr_writer dvr_rkmuxer;
+#define DVR_STATUS "/tmp/dvr.status"
+#define ISP_STATUS "/tmp/isp.status"
+#define IQ_STOCK "/oem/usr/share/iqfiles"
 
 /* Where the stream loop is, for the SIGSEGV report below. */
 static volatile int g_stage;          /* 1 GetStream, 2 send, 3 Release */
@@ -70,8 +89,120 @@ static void on_signal(int sig)
 {
 	if (sig == SIGHUP)
 		g_reload = 1;
+	else if (sig == SIGUSR1)
+		g_dvr_cmd = 1;
+	else if (sig == SIGUSR2)
+		g_dvr_cmd = 2;
 	else
 		g_quit = 1;
+}
+
+/* only record onto the DVR partition itself: an unmounted /mnt/dvr is a
+ * plain directory on the root filesystem, which recording would fill */
+static int is_mountpoint(const char *dir)
+{
+	char parent[160];
+	struct stat a, b;
+	snprintf(parent, sizeof parent, "%s/..", dir);
+	if (stat(dir, &a) || stat(parent, &b) || !S_ISDIR(a.st_mode))
+		return 0;
+	return a.st_dev != b.st_dev;
+}
+
+static void write_dvr_status(dvr_t *d, const char *why_off)
+{
+	char line[300];
+	if (d)
+		dvr_status(d, line, sizeof line);
+	else
+		snprintf(line, sizeof line, "state=%s", why_off);
+	FILE *f = fopen(DVR_STATUS ".tmp", "w");
+	if (!f)
+		return;
+	fprintf(f, "%s\n", line);
+	fclose(f);
+	rename(DVR_STATUS ".tmp", DVR_STATUS);
+}
+
+/* ---- IQ file with fallback ----------------------------------------------
+ * A custom IQ directory (e.g. /userdata/iq) must never cost the video:
+ *  - rkaiq fails to start with it -> start again with the stock IQ;
+ *  - it crashed or hung rkfpv twice in a row (<dir>/.tries, cleared at the
+ *    first encoded frame) -> use the stock IQ for this start. */
+static char g_iq_used[160], g_iq_note[96];
+static int g_iq_fallback;
+
+static void iq_tries_path(const char *dir, char *out, size_t n)
+{
+	snprintf(out, n, "%s/.tries", dir);
+}
+
+static int iq_tries_read(const char *dir)
+{
+	char p[200];
+	int n = 0;
+	iq_tries_path(dir, p, sizeof p);
+	FILE *f = fopen(p, "r");
+	if (f) {
+		if (fscanf(f, "%d", &n) != 1)
+			n = 0;
+		fclose(f);
+	}
+	return n;
+}
+
+static void iq_tries_write(const char *dir, int n)
+{
+	char p[200];
+	iq_tries_path(dir, p, sizeof p);
+	if (n <= 0) {
+		unlink(p);
+		return;
+	}
+	FILE *f = fopen(p, "w");
+	if (f) {
+		fprintf(f, "%d\n", n);
+		fflush(f);
+		fsync(fileno(f));
+		fclose(f);
+	}
+}
+
+static void write_isp_status(const char *configured)
+{
+	FILE *f = fopen(ISP_STATUS ".tmp", "w");
+	if (!f)
+		return;
+	fprintf(f, "sensor=%s\niq_dir=%s\nconfigured=%s\nfallback=%d\nnote=%s\n",
+		isp_sensor_name(), g_iq_used, configured, g_iq_fallback, g_iq_note);
+	fclose(f);
+	rename(ISP_STATUS ".tmp", ISP_STATUS);
+}
+
+static int isp_start_safe(const rkfpv_config_t *c)
+{
+	int custom = strcmp(c->iq_dir, IQ_STOCK) != 0;
+	snprintf(g_iq_used, sizeof g_iq_used, "%s", c->iq_dir);
+	if (custom) {
+		int tries = iq_tries_read(c->iq_dir);
+		if (tries >= 2) {
+			fprintf(stderr, "iq: custom IQ in %s failed %d starts in a row, using stock\n",
+				c->iq_dir, tries);
+			snprintf(g_iq_note, sizeof g_iq_note, "custom IQ failed %d starts in a row", tries);
+			g_iq_fallback = 1;
+			snprintf(g_iq_used, sizeof g_iq_used, "%s", IQ_STOCK);
+		} else
+			iq_tries_write(c->iq_dir, tries + 1);
+	}
+	if (isp_start(g_iq_used, c->fps, c->mirror, c->flip) == 0)
+		return 0;
+	if (!custom || g_iq_fallback)
+		return -1;
+	fprintf(stderr, "iq: custom failed, using stock\n");
+	snprintf(g_iq_note, sizeof g_iq_note, "rkaiq could not start with the custom IQ");
+	g_iq_fallback = 1;
+	snprintf(g_iq_used, sizeof g_iq_used, "%s", IQ_STOCK);
+	return isp_start(g_iq_used, c->fps, c->mirror, c->flip);
 }
 
 static uint64_t now_us(void)
@@ -115,25 +246,27 @@ static int vi_dev_init(void)
 	return 0;
 }
 
-static int vi_chn_init(const rkfpv_config_t *c)
+static int vi_chn_init(int chn, int width, int height)
 {
 	VI_CHN_ATTR_S a;
 	memset(&a, 0, sizeof(a));
 	a.stIspOpt.u32BufCount = 2;
 	a.stIspOpt.enMemoryType = VI_V4L2_MEMORY_TYPE_DMABUF;
-	a.stSize.u32Width = c->width;
-	a.stSize.u32Height = c->height;
+	a.stIspOpt.stMaxSize.u32Width = width;
+	a.stIspOpt.stMaxSize.u32Height = height;
+	a.stSize.u32Width = width;
+	a.stSize.u32Height = height;
 	a.enPixelFormat = RK_FMT_YUV420SP;
 	a.enCompressMode = COMPRESS_MODE_NONE;
 	a.u32Depth = 0;            /* bound to VENC, we never pull frames */
 	a.stFrameRate.s32SrcFrameRate = -1;
 	a.stFrameRate.s32DstFrameRate = -1;
 
-	RK_S32 ret = RK_MPI_VI_SetChnAttr(VI_PIPE, c->vi_chn, &a);
+	RK_S32 ret = RK_MPI_VI_SetChnAttr(VI_PIPE, chn, &a);
 	if (ret == RK_SUCCESS)
-		ret = RK_MPI_VI_EnableChn(VI_PIPE, c->vi_chn);
+		ret = RK_MPI_VI_EnableChn(VI_PIPE, chn);
 	if (ret != RK_SUCCESS) {
-		fprintf(stderr, "VI channel %d: %#x\n", c->vi_chn, ret);
+		fprintf(stderr, "VI channel %d (%dx%d): %#x\n", chn, width, height, ret);
 		return -1;
 	}
 	return 0;
@@ -141,7 +274,30 @@ static int vi_chn_init(const rkfpv_config_t *c)
 
 /* ---- VENC -------------------------------------------------------------- */
 
-static void fill_rc(VENC_RC_ATTR_S *rc, const rkfpv_config_t *c)
+typedef struct {
+	int width, height, fps;
+	rc_mode_t rc;
+	int bitrate_kbps, max_bitrate_kbps, gop, stat_time, slice_bytes, intra_refresh;
+} enc_params_t;
+
+static enc_params_t link_params(const rkfpv_config_t *c)
+{
+	enc_params_t e = { c->width, c->height, c->fps, c->rc, c->bitrate_kbps,
+			   c->max_bitrate_kbps, c->gop, c->stat_time, c->slice_bytes,
+			   c->intra_refresh };
+	return e;
+}
+
+/* the recording: VBR by default, 1 s GOP so a fragmented MP4 never holds
+ * more than about a second of video in RAM */
+static enc_params_t dvr_params(const rkfpv_config_t *c)
+{
+	enc_params_t e = { c->dvr_width, c->dvr_height, c->fps, c->dvr_rc, c->dvr_bitrate_kbps,
+			   0, c->dvr_gop, 3, 0, 0 };
+	return e;
+}
+
+static void fill_rc(VENC_RC_ATTR_S *rc, const enc_params_t *c)
 {
 	memset(rc, 0, sizeof(*rc));
 	if (c->rc == RC_VBR) {
@@ -170,7 +326,7 @@ static void fill_rc(VENC_RC_ATTR_S *rc, const rkfpv_config_t *c)
 	}
 }
 
-static int venc_init(const rkfpv_config_t *c)
+static int venc_init(int chn, const enc_params_t *c)
 {
 	VENC_CHN_ATTR_S a;
 	memset(&a, 0, sizeof(a));
@@ -189,11 +345,17 @@ static int venc_init(const rkfpv_config_t *c)
 	a.stGopAttr.enGopMode = VENC_GOPMODE_NORMALP;
 	a.stGopAttr.u32MaxLtrCount = 0;
 
-	RK_S32 ret = RK_MPI_VENC_CreateChn(VENC_CHN, &a);
+	RK_S32 ret = RK_MPI_VENC_CreateChn(chn, &a);
 	if (ret != RK_SUCCESS) {
-		fprintf(stderr, "RK_MPI_VENC_CreateChn: %#x\n", ret);
+		fprintf(stderr, "RK_MPI_VENC_CreateChn(%d, %dx%d): %#x\n", chn, c->width, c->height, ret);
 		return -1;
 	}
+
+	/* reference frames share one buffer (as rkipc does): less CMA */
+	VENC_CHN_REF_BUF_SHARE_S share;
+	memset(&share, 0, sizeof(share));
+	share.bEnable = RK_TRUE;
+	RK_MPI_VENC_SetChnRefBufShareAttr(chn, &share);
 
 	if (c->slice_bytes > 0) {
 		VENC_SLICE_SPLIT_S s;
@@ -201,7 +363,7 @@ static int venc_init(const rkfpv_config_t *c)
 		s.bSplitEnable = RK_TRUE;
 		s.u32SplitMode = 0;               /* by byte count */
 		s.u32SplitSize = c->slice_bytes;
-		ret = RK_MPI_VENC_SetSliceSplit(VENC_CHN, &s);
+		ret = RK_MPI_VENC_SetSliceSplit(chn, &s);
 		if (ret != RK_SUCCESS)
 			fprintf(stderr, "warning: slice split: %#x\n", ret);
 	}
@@ -213,7 +375,7 @@ static int venc_init(const rkfpv_config_t *c)
 		ir.enIntraRefreshMode = INTRA_REFRESH_ROW;
 		ir.u32RefreshNum = c->intra_refresh;
 		ir.u32ReqIQp = 30;
-		ret = RK_MPI_VENC_SetIntraRefresh(VENC_CHN, &ir);
+		ret = RK_MPI_VENC_SetIntraRefresh(chn, &ir);
 		if (ret != RK_SUCCESS)
 			fprintf(stderr, "warning: intra refresh: %#x\n", ret);
 	}
@@ -221,7 +383,7 @@ static int venc_init(const rkfpv_config_t *c)
 	VENC_RECV_PIC_PARAM_S r;
 	memset(&r, 0, sizeof(r));
 	r.s32RecvPicNum = -1;
-	ret = RK_MPI_VENC_StartRecvFrame(VENC_CHN, &r);
+	ret = RK_MPI_VENC_StartRecvFrame(chn, &r);
 	if (ret != RK_SUCCESS) {
 		fprintf(stderr, "RK_MPI_VENC_StartRecvFrame: %#x\n", ret);
 		return -1;
@@ -230,22 +392,67 @@ static int venc_init(const rkfpv_config_t *c)
 }
 
 /* Applies the rate-control part of a new config without restarting. */
-static void venc_apply_rc(const rkfpv_config_t *c)
+static void venc_apply_rc(int chn, const enc_params_t *c)
 {
 	VENC_CHN_ATTR_S a;
-	if (RK_MPI_VENC_GetChnAttr(VENC_CHN, &a) != RK_SUCCESS) {
+	if (RK_MPI_VENC_GetChnAttr(chn, &a) != RK_SUCCESS) {
 		fprintf(stderr, "reload: GetChnAttr failed\n");
 		return;
 	}
 	fill_rc(&a.stRcAttr, c);
-	RK_S32 ret = RK_MPI_VENC_SetChnAttr(VENC_CHN, &a);
+	RK_S32 ret = RK_MPI_VENC_SetChnAttr(chn, &a);
 	if (ret != RK_SUCCESS) {
-		fprintf(stderr, "reload: SetChnAttr: %#x\n", ret);
+		fprintf(stderr, "reload: SetChnAttr(%d): %#x\n", chn, ret);
 		return;
 	}
-	RK_MPI_VENC_RequestIDR(VENC_CHN, RK_TRUE);
-	fprintf(stderr, "reload: %s %d kbps gop=%d applied\n",
-		c->rc == RC_CBR ? "cbr" : "vbr", c->bitrate_kbps, c->gop);
+	RK_MPI_VENC_RequestIDR(chn, RK_TRUE);
+	fprintf(stderr, "reload: %s stream %s %d kbps gop=%d applied\n",
+		chn == VENC_CHN ? "link" : "dvr", c->rc == RC_CBR ? "cbr" : "vbr",
+		c->bitrate_kbps, c->gop);
+}
+
+/* ---- DVR stream capture (dual mode) ------------------------------------ */
+
+static volatile int g_cap_quit;
+static volatile unsigned long long g_dvr_frames, g_dvr_bytes;
+
+struct dvr_cap {
+	dvr_t *dvr;
+	size_t max_len;
+};
+
+/* VENC 1 -> dvr_push, in its own thread so the link loop never waits on it.
+ * The encoder runs whether or not we record: pausing a bound encoder can
+ * hold up the shared ISP and with it the link stream. */
+static void *dvr_capture(void *arg)
+{
+	struct dvr_cap *c = arg;
+	VENC_STREAM_S st;
+	memset(&st, 0, sizeof(st));
+	st.pstPack = calloc(MAX_PACKS, sizeof(VENC_PACK_S));
+	if (!st.pstPack)
+		return NULL;
+	while (!g_quit && !g_cap_quit) {
+		if (RK_MPI_VENC_GetStream(DVR_VENC, &st, 200) != RK_SUCCESS)
+			continue;
+		RK_U32 npack = st.u32PackCount < MAX_PACKS ? st.u32PackCount : MAX_PACKS;
+		for (RK_U32 i = 0; i < npack; i++) {
+			VENC_PACK_S *p = &st.pstPack[i];
+			uint8_t *data = (uint8_t *)RK_MPI_MB_Handle2VirAddr(p->pMbBlk);
+			size_t len = p->u32Len;
+			if (!data || len == 0 || len > c->max_len)
+				continue;
+			dvr_push(c->dvr, data, len, p->u64PTS, p->bFrameEnd);
+			g_dvr_bytes += len;
+			if (p->bFrameEnd)
+				g_dvr_frames++;
+		}
+		RK_MPI_VENC_ReleaseStream(DVR_VENC, &st);
+		if (dvr_want_idr(c->dvr))
+			RK_MPI_VENC_RequestIDR(DVR_VENC, RK_TRUE);
+	}
+	free(st.pstPack);
+	return NULL;
 }
 
 /* ---- main -------------------------------------------------------------- */
@@ -307,6 +514,8 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGHUP, &sa, NULL);
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	struct sigaction sv;
 	memset(&sv, 0, sizeof(sv));
@@ -323,13 +532,28 @@ int main(int argc, char **argv)
 	rtp.pt = (uint8_t)cfg.pt;
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
+	int dvr_vi_up = 0, dvr_venc_up = 0, dvr_bound = 0, dual = 0, cap_started = 0;
+	pthread_t cap_thr;
+	struct dvr_cap cap;
+	dvr_t *dvr = NULL;
+	const char *dvr_off = "off";
+	/* dvr = 0: no DVR at all, nothing allocated (no second encoder, no
+	 * ring buffer, no muxer). Memory on the 64 MB board is too tight to
+	 * keep it around "just in case". */
+	int dvr_card = cfg.dvr ? is_mountpoint(cfg.dvr_dir) : 0;
+	enc_params_t lp = link_params(&cfg), dp = dvr_params(&cfg);
 	MPP_CHN_S src = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = cfg.vi_chn };
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
+	MPP_CHN_S dsrc = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = DVR_VI_CHN };
+	MPP_CHN_S ddst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = DVR_VENC };
 
 	if (cfg.iq_dir[0]) {
-		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip))
+		int isp_rc = isp_start_safe(&cfg);
+		write_isp_status(cfg.iq_dir);
+		if (isp_rc)
 			goto out;
 		isp_up = 1;
+		isp_apply(&cfg.isp);
 	} else {
 		fprintf(stderr, "warning: iq_dir empty, AIQ not started (colors will be off)\n");
 	}
@@ -338,10 +562,47 @@ int main(int argc, char **argv)
 		fprintf(stderr, "RK_MPI_SYS_Init failed\n");
 		goto out;
 	}
-	if (vi_dev_init() || vi_chn_init(&cfg))
+	if (vi_dev_init())
+		goto out;
+
+	/* DVR pipeline first: it takes the ISP main path. Any failure here
+	 * (e.g. not enough CMA) falls back to recording the link stream. */
+	if (dvr_card && cfg.dvr_width > 0) {
+		if (vi_chn_init(DVR_VI_CHN, dp.width, dp.height) == 0) {
+			dvr_vi_up = 1;
+			if (venc_init(DVR_VENC, &dp) == 0) {
+				dvr_venc_up = 1;
+				if (RK_MPI_SYS_Bind(&dsrc, &ddst) == RK_SUCCESS) {
+					dvr_bound = 1;
+					dual = 1;
+				}
+			}
+		}
+		if (!dual) {
+			fprintf(stderr, "dvr: %dx%d stream failed, recording the link stream instead\n",
+				dp.width, dp.height);
+			if (dvr_venc_up) {
+				RK_MPI_VENC_StopRecvFrame(DVR_VENC);
+				RK_MPI_VENC_DestroyChn(DVR_VENC);
+				dvr_venc_up = 0;
+			}
+			if (dvr_vi_up) {
+				RK_MPI_VI_DisableChn(VI_PIPE, DVR_VI_CHN);
+				dvr_vi_up = 0;
+			}
+		} else
+			fprintf(stderr, "dvr: own stream %dx%d %s %d kbps (VI %d -> VENC %d)\n",
+				dp.width, dp.height, dp.rc == RC_CBR ? "cbr" : "vbr",
+				dp.bitrate_kbps, DVR_VI_CHN, DVR_VENC);
+	}
+
+	/* link stream: ISP self path when the DVR has the main path */
+	int link_vi = dual ? LINK_VI_CHN_DUAL : cfg.vi_chn;
+	src.s32ChnId = link_vi;
+	if (vi_chn_init(link_vi, lp.width, lp.height))
 		goto out;
 	vi_up = 1;
-	if (venc_init(&cfg))
+	if (venc_init(VENC_CHN, &lp))
 		goto out;
 	venc_up = 1;
 	if (RK_MPI_SYS_Bind(&src, &dst) != RK_SUCCESS) {
@@ -352,14 +613,48 @@ int main(int argc, char **argv)
 
 	VENC_STREAM_S st;
 	memset(&st, 0, sizeof(st));
-	/* room for several packs even though rockit hands out one per frame */
-#define MAX_PACKS 8
-	st.pstPack = calloc(MAX_PACKS, sizeof(VENC_PACK_S));
+		st.pstPack = calloc(MAX_PACKS, sizeof(VENC_PACK_S));
 	if (!st.pstPack)
 		goto out;
 
+	if (!cfg.dvr) {
+		dvr_off = "disabled";
+		fprintf(stderr, "dvr: disabled (dvr = 0)\n");
+	} else if (!dvr_card) {
+		dvr_off = "no-card";
+		fprintf(stderr, "dvr: %s is not a mounted partition, recording disabled\n", cfg.dvr_dir);
+	} else {
+		dvr_config dc;
+		memset(&dc, 0, sizeof dc);
+		snprintf(dc.dir, sizeof dc.dir, "%s", cfg.dvr_dir);
+		dc.segment_s = cfg.dvr_segment;
+		dc.min_free_mb = cfg.dvr_min_free;
+		dc.overwrite = cfg.dvr_overwrite;
+		dc.ts = cfg.dvr_ts;
+		dc.ring_bytes = (size_t)cfg.dvr_buffer_kb * 1024;
+		const enc_params_t *rec = dual ? &dp : &lp;
+		dc.stream = (dvr_stream_info){ rec->width, rec->height, rec->fps, rec->bitrate_kbps, cfg.dvr_ts };
+		dvr = dvr_create(&dc, &dvr_rkmuxer, 1);
+		if (!dvr)
+			fprintf(stderr, "dvr: cannot start (out of memory?)\n");
+		else {
+			if (cfg.dvr)
+				dvr_start(dvr);
+			if (dual) {
+				cap.dvr = dvr;
+				cap.max_len = (size_t)dp.width * dp.height * 2;
+				if (pthread_create(&cap_thr, NULL, dvr_capture, &cap) == 0)
+					cap_started = 1;
+				else
+					fprintf(stderr, "dvr: cannot start the capture thread\n");
+			}
+		}
+	}
+	write_dvr_status(dvr, dvr_off);
+	uint64_t t_dvr_status = now_us();
+
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
-	uint64_t pkts0 = 0, t_start = t0;
+	uint64_t pkts0 = 0, t_start = t0, dvr_f0 = 0, dvr_b0 = 0;
 	int got_first = 0;
 	fprintf(stderr, "rkfpv: pipeline up, waiting for frames\n");
 
@@ -372,13 +667,39 @@ int main(int argc, char **argv)
 				    n.fps != cfg.fps || n.dst_port != cfg.dst_port ||
 				    strcmp(n.dst_ip, cfg.dst_ip) || n.pkt_size != cfg.pkt_size)
 					fprintf(stderr, "reload: size/fps/dst/pkt_size need a restart\n");
-				venc_apply_rc(&n);
+				lp = link_params(&n);
+				lp.width = cfg.width;   /* size changes need a restart */
+				lp.height = cfg.height;
+				venc_apply_rc(VENC_CHN, &lp);
+				if (dual && (n.dvr_bitrate_kbps != cfg.dvr_bitrate_kbps ||
+					     n.dvr_gop != cfg.dvr_gop || n.dvr_rc != cfg.dvr_rc)) {
+					cfg.dvr_bitrate_kbps = n.dvr_bitrate_kbps;
+					cfg.dvr_gop = n.dvr_gop;
+					cfg.dvr_rc = n.dvr_rc;
+					dp = dvr_params(&cfg);
+					venc_apply_rc(DVR_VENC, &dp);
+				}
+				if (n.iq_dir[0] && strcmp(n.iq_dir, cfg.iq_dir))
+					fprintf(stderr, "reload: iq_dir needs a restart\n");
+				isp_apply(&n.isp);
+				cfg.isp = n.isp;
 				cfg.rc = n.rc;
 				cfg.bitrate_kbps = n.bitrate_kbps;
 				cfg.max_bitrate_kbps = n.max_bitrate_kbps;
 				cfg.gop = n.gop;
 				cfg.stat_time = n.stat_time;
+				dvr_reconfig(dvr, n.dvr_segment, n.dvr_min_free, n.dvr_overwrite, n.dvr_ts);
 			}
+		}
+		if (g_dvr_cmd) {
+			int c = g_dvr_cmd;
+			g_dvr_cmd = 0;
+			if (!dvr)
+				fprintf(stderr, "dvr: %s requested, but DVR is %s\n", c == 1 ? "start" : "stop", dvr_off);
+			else if (c == 1)
+				dvr_start(dvr);
+			else
+				dvr_stop(dvr);
 		}
 
 		g_stage = 1;
@@ -411,6 +732,8 @@ int main(int argc, char **argv)
 			}
 
 			rtp_h265_send(&rtp, data, len, ts, p->bFrameEnd);
+			if (!dual)
+				dvr_push(dvr, data, len, p->u64PTS, p->bFrameEnd);
 
 			bytes += len;
 			cur_frame += len;
@@ -425,8 +748,18 @@ int main(int argc, char **argv)
 		g_stage = 3;
 		RK_MPI_VENC_ReleaseStream(VENC_CHN, &st);
 
+		if (!dual && dvr_want_idr(dvr))
+			RK_MPI_VENC_RequestIDR(VENC_CHN, RK_TRUE);
+		if (now_us() - t_dvr_status >= 1000000u) {
+			write_dvr_status(dvr, dvr_off);
+			t_dvr_status = now_us();
+		}
+
 		if (!got_first) {
 			got_first = 1;
+			/* the custom IQ got the pipeline running: not a bad file */
+			if (!g_iq_fallback && strcmp(cfg.iq_dir, IQ_STOCK))
+				iq_tries_write(cfg.iq_dir, 0);
 			fprintf(stderr, "rkfpv: first frame after %llu ms (%llu B)\n",
 				(unsigned long long)((now_us() - t_start) / 1000),
 				(unsigned long long)bytes);
@@ -435,11 +768,24 @@ int main(int argc, char **argv)
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
+			char ds[300];
+			if (dvr)
+				dvr_status(dvr, ds, sizeof ds);
+			else
+				snprintf(ds, sizeof ds, "state=%s", dvr_off);
+			char dr[64] = "";
+			if (dual) {
+				unsigned long long df = g_dvr_frames, db = g_dvr_bytes;
+				snprintf(dr, sizeof dr, " %.1f fps %.0f kbps", (df - dvr_f0) / s,
+					 (db - dvr_b0) * 8 / s / 1000);
+				dvr_f0 = df;
+				dvr_b0 = db;
+			}
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu\n",
+				"%.0f pkt/s, send errors %llu | dvr%s %s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors);
+				(unsigned long long)rtp.send_errors, dr, ds);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
@@ -451,18 +797,35 @@ int main(int argc, char **argv)
 
 out:
 	/* each step is logged so a crash during teardown shows where it was */
+	if (cap_started) {
+		g_cap_quit = 1;
+		pthread_join(cap_thr, NULL);
+	}
+	if (dvr) {
+		fprintf(stderr, "rkfpv: dvr close\n");
+		dvr_destroy(dvr);       /* finishes the current file */
+		write_dvr_status(NULL, "off");
+	}
 	if (bound) {
 		fprintf(stderr, "rkfpv: unbind\n");
 		RK_MPI_SYS_UnBind(&src, &dst);
 	}
+	if (dvr_bound)
+		RK_MPI_SYS_UnBind(&dsrc, &ddst);
 	if (vi_up) {
 		fprintf(stderr, "rkfpv: vi chn off\n");
-		RK_MPI_VI_DisableChn(VI_PIPE, cfg.vi_chn);
+		RK_MPI_VI_DisableChn(VI_PIPE, src.s32ChnId);
 	}
+	if (dvr_vi_up)
+		RK_MPI_VI_DisableChn(VI_PIPE, DVR_VI_CHN);
 	if (venc_up) {
 		fprintf(stderr, "rkfpv: venc off\n");
 		RK_MPI_VENC_StopRecvFrame(VENC_CHN);
 		RK_MPI_VENC_DestroyChn(VENC_CHN);
+	}
+	if (dvr_venc_up) {
+		RK_MPI_VENC_StopRecvFrame(DVR_VENC);
+		RK_MPI_VENC_DestroyChn(DVR_VENC);
 	}
 	if (vi_up) {
 		fprintf(stderr, "rkfpv: vi dev off\n");

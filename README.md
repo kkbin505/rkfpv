@@ -155,6 +155,65 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
+## 画质（ISP）和 IQ 文件
+
+rkfpv 直接调用 rkaiq 的运行时接口改画质。majestic 在 Rockchip 上并没有调用这些接口。和其他设置一样，每一项都是 `fpv` 参数表里的一行，可以用 `fpv set` 修改，FPV 运行时立即生效：
+
+| 设置 | 作用 |
+|---|---|
+| `isp_exp_max` | 最长曝光（毫秒），对运动模糊影响最大；IQ 文件里是 30 ms，FPV 常用 2～8 ms。低于 10 ms 时自动关闭防闪烁 |
+| `isp_nr_temporal` / `isp_nr_spatial` | 时域 / 空域降噪，**默认关闭**：快速运动时不拖影，代价是低照度下噪点更多 |
+| `isp_gain_max` | 最大增益（IQ 文件里是 512×） |
+| `isp_ae_delay` / `isp_ae_damp` | 自动曝光的反应延迟和阻尼（从亮到暗） |
+| `isp_blc` / `isp_hlc` | 逆光补偿 / 强光抑制 |
+| `isp_brightness` `contrast` `saturation` `hue` `sharpness` `wb` `dehaze` `antiflicker` | 颜色、锐度、白平衡等 |
+
+设成 `iq` 的项用 IQ 文件里的值。rkfpv 启动时会读出 IQ 文件的原值，所以把某项改回 `iq` 能立即恢复。
+
+**IQ 文件**：出厂文件（`/oem/usr/share/iqfiles`）永远只读。修改的是 `/userdata/iq` 里的副本：
+```sh
+fpv iq status                      # 当前用的是哪个、是否回退
+fpv iq copy-stock                  # 复制出厂文件作为修改起点（不会覆盖已改过的文件）
+fpv set iq_dir /userdata/iq        # 使用修改版（需要 fpv restart video）
+fpv iq history / rollback <文件> [版本]
+```
+配置工具的 **Image** 页可以下载、上传 IQ 文件。上传会先检查：JSON 格式、rkaiq 必需的段、文件名和出厂文件一致；然后按原样逐字节写入（保留 CRLF），在板子上校验 md5，没问题才替换，旧版本自动保留最近 5 个。修改版启动失败时，或者连续两次没有出图时，rkfpv 自动改用出厂 IQ，保证一定有图像。
+
+## DVR：录像到 TF 卡
+
+> **默认关闭（`dvr = 0`）。** 在板子上实测：64 MB 内存里 24 MB 是视频专用的 CMA，内核占约 8 MB，FPV 跑起来以后普通内存只剩约 2 MB。开着 1080p 第二路编码，板子会因为内存耗尽卡死。`dvr = 0` 时 rkfpv 不创建任何录像相关的东西（第二路编码器、缓冲区、复用器都不分配）。打开时（`fpv set dvr 1`，重启 FPV 生效）默认 `dvr_size = link`，只录图传那一路，不额外编码。
+
+ISP 有两个硬件缩放输出：主通路（main path）可以出 1080p，用单独的编码器、更高码率录到 TF 卡；副通路（self path）出 720p，给图传用。`dvr_size = 1920x1080` 时就是下面这样，**需要的内存比现在板子上空出来的多，目前不能用**：
+
+```
+sensor → ISP ─ 主通路 VI 0 (1920x1080) → VENC 1 (H.265 VBR 8 Mbit/s, GOP 1 s) → DVR
+            └─ 副通路 VI 1 (1280x720)  → VENC 0 (H.265 CBR 3.5 Mbit/s)       → RTP → wfb-ng
+```
+
+设置项：`dvr_size`、`dvr_bitrate`、`dvr_rc`、`dvr_gop`。设成 `dvr_size = link` 时，直接录图传那路码流，不额外编码。第二路创建失败（比如 CMA 不够）时，会自动退回录图传那路。
+
+**内存**：高码率录像容易把 64MB 的板子撑爆（majestic 上就遇到过）。这里录像占用的内存基本固定在 2～3 MB，不随码率增长：
+- fMP4 每个分段会在内存里攒一个 GOP，所以录像码流单独设 1 秒 GOP，8 Mbit/s 时约 1 MB。TS 格式不攒分段，内存最省。
+- 每秒执行一次 `syncfs`，并把已经写完的数据从页缓存里清掉。`S99fpv` 还把内核允许的待写数据上限降到 4 MB（默认是内存的 20%）。
+- 编码器和摄像头的缓冲区在 24 MB 的 CMA 预留区里，和普通内存分开（单路 720p 实测用掉约 11 MB CMA）。但普通内存才是瓶颈，见上面。
+- `fpv dvr status` 和配置工具的 DVR 页会显示剩余内存。
+
+- **分区**：`luckfox/mkoverlay.sh` 把分区表改成 `…,256M(userdata),512M(rootfs),-(dvr)`，卡上剩余空间全部给 DVR。首次开机 `S99fpv` 会把它格式化成 ext4，并挂载到 `/mnt/dvr`。只会格式化内核报告名字为 `dvr` 的分区。**改了分区表，需要重新烧卡。**
+- **格式**：默认 fMP4（分段 MP4），断电后文件仍能播放，最多丢最后 1～2 秒；也可以选 TS。复用 SDK 的 `librkmuxer`，rkipc 录像用的也是它。
+- **切文件**：默认每 10 分钟一个文件，到时间后在下一个关键帧切换。文件名是 `rec_会话_序号.mp4`，例如 `rec_0003_01.mp4`。板子没有实时时钟，所以每次开始录像算一个新会话，会话号递增。
+- **空间**：卡上剩余空间少于 `dvr_min_free` 时，自动删除最旧的录像（`dvr_overwrite = 1`），或者停止录像（`= 0`）。
+- **控制**：`dvr = 1` 时开机自动录像；`fpv dvr start|stop`，或者配置工具 DVR 页的按钮，随时开始或停止。
+- **取文件不用拔卡**：板子接电脑开机进入调试模式，DVR 分区同样会挂载。在配置工具的 DVR 页点 **Download**，或者手动执行 `adb pull /mnt/dvr/rec_0003_01.mp4`。
+
+```sh
+fpv dvr status            # 状态、当前文件、剩余空间
+fpv dvr list              # 卡上的录像
+fpv dvr delete rec_0003_01.mp4
+fpv dvr delete-all        # 正在录的那个文件不会删
+```
+
+H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEVC 视频扩展"。
+
 ## 致谢
 
 这个项目站在很多开源项目的肩膀上，感谢：
