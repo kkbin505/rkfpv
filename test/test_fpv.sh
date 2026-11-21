@@ -119,6 +119,11 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
 check "schema has every key" 26 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+for doc in settings.en.md settings.zh.md; do
+	missing=$(fpv schema --json | python3 -c 'import json,sys; print(" ".join(p["key"] for p in json.load(sys.stdin)["params"]))' |
+		tr ' ' '\n' | while read -r k; do grep -q "^| \`$k\` |" "$HERE/docs/$doc" || printf '%s ' "$k"; done)
+	check "docs/$doc lists every key" "" "$missing"
+done
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
