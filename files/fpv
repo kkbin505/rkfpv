@@ -14,7 +14,7 @@
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
-#   fpv hotspot status               hotspot switch, mode, SSID, password, clients
+#   fpv hotspot status               BOOT button, mode, SSID, password, clients
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -100,7 +100,7 @@ isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise red
 isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
 isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)
 iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
-hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generated as rkfpv-XXXX on first boot); used next time the switch turns the hotspot on
+hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generated as rkfpv-XXXX on first boot); used next time the hotspot turns on (hold BOOT 2 s)
 hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 characters (random on first boot)
 hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz (fast), 1/6/11 = 2.4 GHz (if 5 GHz does not start)
 hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
@@ -802,7 +802,7 @@ hotspot_cmd() {
 			printf '{"ok":true,"switch":"%s","mode":"%s","ssid":"%s","pass":"%s","channel":"%s","clients":%s,"address":"192.168.73.1"}\n' \
 				"${sw:-none}" "${mode:-fpv}" "$(jesc "$ssid")" "$(jesc "$pass")" "$(get_value hotspot_channel)" "${clients:-0}"
 		else
-			echo "switch:   ${sw:-none} (closed = hotspot)"
+			echo "button:   ${sw:-none} (hold BOOT 2 s to turn the hotspot on / off)"
 			echo "mode:     ${mode:-fpv}"
 			echo "ssid:     $ssid"
 			echo "password: $pass"

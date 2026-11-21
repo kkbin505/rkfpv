@@ -22,21 +22,21 @@
  * retried `restart` or `set` is not executed twice.
  *
  *   fpvd [-p 7000] [-b 0.0.0.0] [-f /usr/bin/fpv] [-v]
- *        [-k hotspot-switch] [-c 238] [-x /etc/init.d/S99fpv]
- *   fpvd -q            print the hotspot switch: closed (exit 0), open (1), none (2)
+ *        [-a <adc file>] [-H 2000] [-m /tmp/mode.status] [-x /etc/init.d/S99fpv]
  *
- * Hotspot switch: a GPIO to GND, as a gpio-keys input device (DTS, key
- * KEY_WLAN). Closed = hotspot mode. fpvd watches it; once a new position has
- * held for 1 s it runs "<script> hotspot-on" or "hotspot-off" in the
- * background. The position at start is not acted on: S99fpv already chose
- * the boot mode with "fpvd -q". State: /tmp/switch.status.
+ * Hotspot button: the board's BOOT button, which pulls SARADC channel 0 to
+ * GND (1023 released, ~10 pressed). fpvd reads it every BUTTON_POLL_MS;
+ * held for 2 s it runs "<script> hotspot-off" if the mode file says
+ * "hotspot", else "<script> hotspot-on", in the background. One action per
+ * press: the button must be released before it counts again. Ignored while
+ * the mode is not set yet or "switching" (boot still running, or a change in
+ * progress). BOOT held at power-up enters maskrom, so there is no boot-time
+ * decision. State: /tmp/switch.status.
  */
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/input.h>
-#include <sys/ioctl.h>
 #include <getopt.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -320,47 +320,42 @@ static void handle(int fd, char *req, size_t n, const struct sockaddr_in *peer)
 	cache_put(id, peer, out, len);
 }
 
-/* ---- hotspot switch ---------------------------------------------------- */
+/* ---- hotspot button (BOOT, on the ADC) --------------------------------- */
 
-#define SWITCH_HOLD_MS 1000
+#define BUTTON_ADC "/sys/bus/iio/devices/iio:device0/in_voltage0_raw"
+#define BUTTON_PRESSED_BELOW 300      /* 10-bit ADC: ~1023 released, ~10 pressed */
+#define BUTTON_POLL_MS 200
 #define SWITCH_STATUS "/tmp/switch.status"
 
-static int g_key = KEY_WLAN;
-
-/* the gpio-keys device with this name; -1 if none */
-static int switch_open(const char *name)
+/* 1 pressed, 0 released, -1 unreadable */
+static int button_read(int fd)
 {
-	char path[64], got[64];
-	for (int i = 0; i < 16; i++) {
-		snprintf(path, sizeof path, "/dev/input/event%d", i);
-		int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-		if (fd < 0)
-			continue;
-		memset(got, 0, sizeof got);
-		if (ioctl(fd, EVIOCGNAME(sizeof got - 1), got) >= 0 && !strcmp(got, name))
-			return fd;
-		close(fd);
-	}
-	return -1;
-}
-
-/* 1 closed (key down), 0 open, -1 unknown */
-static int switch_read(int fd)
-{
-	unsigned char bits[KEY_MAX / 8 + 1];
-	memset(bits, 0, sizeof bits);
-	if (ioctl(fd, EVIOCGKEY(sizeof bits), bits) < 0)
+	char b[16];
+	ssize_t n = pread(fd, b, sizeof b - 1, 0);
+	if (n <= 0)
 		return -1;
-	return (bits[g_key / 8] >> (g_key % 8)) & 1;
+	b[n] = 0;
+	return atoi(b) < BUTTON_PRESSED_BELOW;
 }
 
-static void switch_status(int raw, int acted, int busy)
+/* first word of the mode file, "" if missing */
+static void read_mode(const char *path, char out[16])
+{
+	out[0] = 0;
+	FILE *f = fopen(path, "r");
+	if (!f)
+		return;
+	if (fscanf(f, "%15s", out) != 1)
+		out[0] = 0;
+	fclose(f);
+}
+
+static void switch_status(int pressed, int busy)
 {
 	FILE *f = fopen(SWITCH_STATUS ".tmp", "w");
 	if (!f)
 		return;
-	fprintf(f, "switch=%s mode_request=%s%s\n", raw ? "closed" : "open",
-		acted ? "hotspot" : "fpv", busy ? " switching=1" : "");
+	fprintf(f, "switch=%s%s\n", pressed ? "pressed" : "released", busy ? " switching=1" : "");
 	fclose(f);
 	rename(SWITCH_STATUS ".tmp", SWITCH_STATUS);
 }
@@ -369,50 +364,44 @@ static uint64_t mono_ms(void) { return now_ms(); }
 
 int main(int argc, char **argv)
 {
-	int port = 7000, query = 0;
+	int port = 7000;
 	const char *bind_ip = "0.0.0.0";
-	const char *sw_name = "hotspot-switch", *sw_script = "/etc/init.d/S99fpv";
-	const char *sw_events = NULL;   /* tests: read input_event structs from this file */
-	int sw_initial = -1;            /* tests: initial position */
+	const char *sw_adc = BUTTON_ADC, *sw_script = "/etc/init.d/S99fpv";
+	const char *sw_mode = "/tmp/mode.status";
+	int hold_ms = 2000;
 	int c;
-	while ((c = getopt(argc, argv, "p:b:f:vk:c:x:E:S:qh")) != -1) {
+	while ((c = getopt(argc, argv, "p:b:f:va:H:m:x:h")) != -1) {
 		switch (c) {
 		case 'p': port = atoi(optarg); break;
 		case 'b': bind_ip = optarg; break;
 		case 'f': g_fpv = optarg; break;
 		case 'v': g_verbose = 1; break;
-		case 'k': sw_name = optarg; break;
-		case 'c': g_key = atoi(optarg); break;
+		case 'a': sw_adc = optarg; break;
+		case 'H': hold_ms = atoi(optarg); break;
+		case 'm': sw_mode = optarg; break;
 		case 'x': sw_script = optarg; break;
-		case 'E': sw_events = optarg; break;
-		case 'S': sw_initial = atoi(optarg); break;
-		case 'q': query = 1; break;
 		default:
 			fprintf(stderr, "usage: fpvd [-p 7000] [-b 0.0.0.0] [-f /usr/bin/fpv] [-v]\n"
-				"            [-k hotspot-switch] [-c keycode] [-x /etc/init.d/S99fpv]\n"
-				"       fpvd -q   (hotspot switch: closed=0 open=1 none=2)\n");
+				"            [-a adc_file] [-H hold_ms] [-m mode_file] [-x /etc/init.d/S99fpv]\n");
 			return c == 'h' ? 0 : 1;
 		}
 	}
-	if (g_key < 0 || g_key > KEY_MAX)
-		g_key = KEY_WLAN;
 
-	/* hotspot switch */
-	int swfd = sw_events ? open(sw_events, O_RDONLY | O_NONBLOCK) : switch_open(sw_name);
-	int sw_raw = swfd >= 0 ? (sw_events ? (sw_initial > 0) : switch_read(swfd)) : -1;
-	if (query) {
-		printf("%s\n", sw_raw < 0 ? "none" : sw_raw ? "closed" : "open");
-		return sw_raw < 0 ? 2 : sw_raw ? 0 : 1;
+	/* hotspot button */
+	int swfd = open(sw_adc, O_RDONLY | O_CLOEXEC);
+	int sw_down = swfd >= 0 ? button_read(swfd) : -1;
+	if (sw_down < 0 && swfd >= 0) {
+		close(swfd);
+		swfd = -1;
 	}
-	if (sw_raw < 0 && swfd >= 0)
-		sw_raw = 0;
-	int sw_acted = sw_raw > 0;      /* boot mode already follows this position */
-	uint64_t sw_changed = 0;
+	int sw_used = sw_down > 0;      /* held since start: wait for a release first */
+	uint64_t sw_since = mono_ms();
 	pid_t sw_child = 0;
 	if (swfd >= 0) {
-		fprintf(stderr, "fpvd: hotspot switch '%s' %s\n", sw_events ? sw_events : sw_name,
-			sw_raw ? "closed" : "open");
-		switch_status(sw_raw, sw_acted, 0);
+		fprintf(stderr, "fpvd: hotspot button on %s\n", sw_adc);
+		switch_status(sw_down, 0);
+	} else {
+		fprintf(stderr, "fpvd: no hotspot button (%s)\n", sw_adc);
 	}
 
 	int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -441,12 +430,10 @@ int main(int argc, char **argv)
 
 	char buf[MAX_REQ + 1];
 	while (!g_quit) {
-		struct pollfd pf[2] = { { .fd = fd, .events = POLLIN }, { .fd = swfd, .events = POLLIN } };
-		int pending = swfd >= 0 && (sw_raw != sw_acted || sw_child);
-		int nfds = swfd >= 0 ? 2 : 1;
-		poll(pf, (nfds_t)nfds, pending ? 100 : 1000);
+		struct pollfd pf = { .fd = fd, .events = POLLIN };
+		poll(&pf, 1, swfd >= 0 ? BUTTON_POLL_MS : 1000);
 
-		if (pf[0].revents & POLLIN) {
+		if (pf.revents & POLLIN) {
 			struct sockaddr_in peer;
 			socklen_t pl = sizeof peer;
 			ssize_t n = recvfrom(fd, buf, MAX_REQ, 0, (struct sockaddr *)&peer, &pl);
@@ -456,38 +443,39 @@ int main(int argc, char **argv)
 		if (swfd < 0)
 			continue;
 
-		/* switch events (kernel-debounced); a file in tests */
-		struct input_event ev;
-		while (read(swfd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
-			if (ev.type == EV_KEY && ev.code == g_key && ev.value != 2) {
-				int v = ev.value != 0;
-				if (v != sw_raw) {
-					sw_raw = v;
-					sw_changed = mono_ms();
-					fprintf(stderr, "fpvd: hotspot switch %s\n", v ? "closed" : "open");
-					switch_status(sw_raw, sw_acted, sw_child != 0);
-				}
-			}
-		}
 		if (sw_child && waitpid(sw_child, NULL, WNOHANG) == sw_child) {
 			sw_child = 0;
-			switch_status(sw_raw, sw_acted, 0);
+			switch_status(sw_down, 0);
 		}
-		/* act once a new position has held for SWITCH_HOLD_MS, one change at a time */
-		if (!sw_child && sw_raw != sw_acted && mono_ms() - sw_changed >= SWITCH_HOLD_MS) {
-			sw_acted = sw_raw;
-			const char *arg = sw_acted ? "hotspot-on" : "hotspot-off";
-			fprintf(stderr, "fpvd: switch held %s: %s %s\n", sw_acted ? "closed" : "open",
-				sw_script, arg);
-			pid_t pid = fork();
-			if (pid == 0) {
-				close(fd);
-				execl(sw_script, sw_script, arg, (char *)NULL);
-				_exit(127);
-			}
-			sw_child = pid > 0 ? pid : 0;
-			switch_status(sw_raw, sw_acted, sw_child != 0);
+		int v = button_read(swfd);
+		if (v < 0)
+			continue;
+		if (v != sw_down) {
+			sw_down = v;
+			sw_since = mono_ms();
+			if (!v)
+				sw_used = 0;
+			switch_status(sw_down, sw_child != 0);
 		}
+		if (!sw_down || sw_used || sw_child || mono_ms() - sw_since < (uint64_t)hold_ms)
+			continue;
+		sw_used = 1;
+		char mode[16];
+		read_mode(sw_mode, mode);
+		if (!mode[0] || !strcmp(mode, "switching")) {
+			fprintf(stderr, "fpvd: hotspot button ignored (mode '%s')\n", mode);
+			continue;
+		}
+		const char *arg = strcmp(mode, "hotspot") ? "hotspot-on" : "hotspot-off";
+		fprintf(stderr, "fpvd: hotspot button held: %s %s\n", sw_script, arg);
+		pid_t pid = fork();
+		if (pid == 0) {
+			close(fd);
+			execl(sw_script, sw_script, arg, (char *)NULL);
+			_exit(127);
+		}
+		sw_child = pid > 0 ? pid : 0;
+		switch_status(sw_down, sw_child != 0);
 	}
 	for (int i = 0; i < CACHE; i++)
 		free(g_cache[i].out);

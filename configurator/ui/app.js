@@ -407,7 +407,7 @@ async function loadHotspot() {
   b.textContent = r.mode === "hotspot" ? "● hotspot on" : r.mode === "switching" ? "switching…" : "hotspot off";
   const t = document.createElement("span");
   t.className = "sub";
-  t.textContent = `switch ${r.switch} · network ${r.ssid || "(created on first use)"} · password ${r.pass || "-"}` +
+  t.textContent = `BOOT button ${r.switch} (hold 2 s) · network ${r.ssid || "(created on first use)"} · password ${r.pass || "-"}` +
     ` · channel ${r.channel}` + (r.mode === "hotspot" ? ` · ${r.clients} client(s) · http://${r.address}/` : "");
   box.append(b, t);
 }

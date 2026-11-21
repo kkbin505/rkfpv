@@ -134,10 +134,10 @@ limit_dirty_memory() {
 }
 
 # ---- hotspot mode --------------------------------------------------------
-# A switch from GPIO1_C6 to GND (gpio-keys "hotspot-switch") turns the WiFi
-# card into a WPA2 access point: http://192.168.73.1/ for recordings, fpvd
-# on 192.168.73.1:7000 for settings. fpvd watches the switch and calls
-# hotspot-on / hotspot-off; at boot, start() asks `fpvd -q`.
+# Holding the BOOT button for 2 s after boot turns the WiFi card into a WPA2
+# access point: http://192.168.73.1/ for recordings, fpvd on
+# 192.168.73.1:7000 for settings. Hold again for FPV. fpvd reads the button
+# (SARADC channel 0) and calls hotspot-on / hotspot-off.
 HS_ADDR=192.168.73.1
 MODE_STATUS=/tmp/mode.status
 WLAN=wlan0
@@ -158,7 +158,7 @@ hotspot_defaults() {
 
 hotspot_on() {
 	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
-		log "hotspot: switch ignored, USB is on a PC (debug mode)"
+		log "hotspot: button ignored, USB is on a PC (debug mode)"
 		return 0
 	fi
 	set_mode switching
@@ -283,12 +283,6 @@ start() {
 		killall -q adbd
 	else
 		log "no USB role switch found, USB stays as is"
-	fi
-
-	# hotspot switch closed at power-up: straight into hotspot mode
-	if /usr/bin/fpvd -q > /dev/null 2>&1; then
-		log "hotspot switch closed at boot"
-		hotspot_on && return 0
 	fi
 
 	/usr/bin/wfb.sh start
