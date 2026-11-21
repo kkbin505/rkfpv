@@ -39,9 +39,19 @@ rotate_logs() {
 }
 
 start_video() {
-	# -b would send rkfpv's output to /dev/null; keep it in a log instead
+	# -b would send rkfpv's output to /dev/null; keep it in a log instead.
+	# sh opens the log before exec: if it cannot (TF card read-only after a
+	# power cut, ...) rkfpv would never start, so fall back to /tmp.
+	out=$LOGDIR/rkfpv.log
+	if ! ( : >> "$out" ) 2>/dev/null; then
+		out=/tmp/rkfpv.log
+		log "$LOGDIR not writable, rkfpv log in $out"
+	fi
+	# a stale pidfile whose pid now belongs to another busybox process makes
+	# -S think rkfpv is already running
+	rm -f "$PIDFILE"
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $LOGDIR/rkfpv.log 2>&1"
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $out 2>&1"
 }
 
 stop_video() {
@@ -52,11 +62,24 @@ stop_video() {
 	# of black screen to every `fpv restart`)
 	i=0
 	while [ $i -lt 100 ]; do
-		pidof rkfpv > /dev/null || return 0
+		pidof rkfpv > /dev/null || { rm -f "$PIDFILE"; return 0; }
 		usleep 100000
 		i=$((i + 1))
 	done
+	log "rkfpv ignored TERM for 10 s, sending KILL"
 	killall -q -9 rkfpv
+	# a killed process still releases the ISP / encoder on its way out: wait
+	# for it, or the next instance fails to open them (up to 3 s)
+	i=0
+	while [ $i -lt 30 ]; do
+		pidof rkfpv > /dev/null || break
+		usleep 100000
+		i=$((i + 1))
+	done
+	pidof rkfpv > /dev/null && log "rkfpv still alive after KILL (stuck in driver?)"
+	# the pid in it is dead now; left behind, -K could later signal whatever
+	# process reuses that pid
+	rm -f "$PIDFILE"
 }
 
 # Console (115200 serial) only gets errors from here on: printk to the
