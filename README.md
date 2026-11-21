@@ -84,6 +84,8 @@ fpv reset                       # 恢复出厂设置
 
 加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
 
+全部设置项的默认值、取值范围和生效方式见 [docs/settings.zh.md](docs/settings.zh.md)（英文版：[docs/settings.en.md](docs/settings.en.md)）。在参数表里加了新项，也要在这两个文件里各加一行，`make test` 会检查。
+
 **fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
 
 协议很简单，按无线丢包设计：请求 `FPV1 <id> <命令> [参数…]`；回复按 1200 字节分片，每片格式 `FPV1 <id> <序号>/<总数>\n<JSON 片段>`。丢包时客户端用**同一个 id** 重发，fpvd 直接返回缓存的结果，不会重复执行（比如 restart 不会跑两次）。
