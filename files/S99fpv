@@ -255,6 +255,9 @@ start() {
 	limit_dirty_memory
 	dvr_mount
 	start_fpvd
+	# name and password exist before the first switch-on, so they can be
+	# read in debug mode (fpv hotspot) before the hotspot is ever used
+	hotspot_defaults
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
 		set_mode off
