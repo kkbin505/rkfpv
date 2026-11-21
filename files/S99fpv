@@ -156,6 +156,44 @@ hotspot_defaults() {
 	log "hotspot: created network rkfpv-$id"
 }
 
+# hostapd_start <channel> <ssid> <pass> <country>: 0 once it runs as an AP
+hostapd_start() {
+	if [ "$1" -le 14 ]; then
+		hw=g; ht="[SHORT-GI-20]"
+	else
+		hw=a
+		case "$1" in 36|44|149|157) ht="[HT40+][SHORT-GI-20][SHORT-GI-40]" ;;
+			*) ht="[HT40-][SHORT-GI-20][SHORT-GI-40]" ;; esac
+	fi
+	umask 077
+	cat > /tmp/hostapd-fpv.conf <<EOF
+interface=$WLAN
+driver=nl80211
+ssid=$2
+country_code=$4
+ieee80211d=1
+hw_mode=$hw
+channel=$1
+ieee80211n=1
+ht_capab=$ht
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$3
+EOF
+	umask 022
+	rm -f /tmp/hostapd-fpv.log /var/run/hostapd-fpv.pid
+	hostapd -B -f /tmp/hostapd-fpv.log -P /var/run/hostapd-fpv.pid /tmp/hostapd-fpv.conf || return 1
+	sleep 1
+	[ -f /var/run/hostapd-fpv.pid ] && kill -0 "$(cat /var/run/hostapd-fpv.pid)" 2>/dev/null &&
+		iw dev "$WLAN" info | grep -q 'type AP' && return 0
+	[ -f /var/run/hostapd-fpv.pid ] && kill "$(cat /var/run/hostapd-fpv.pid)" 2>/dev/null
+	rm -f /var/run/hostapd-fpv.pid
+	return 1
+}
+
 hotspot_on() {
 	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
 		log "hotspot: button ignored, USB is on a PC (debug mode)"
@@ -185,37 +223,24 @@ hotspot_on() {
 	ip addr flush dev "$WLAN"
 	ip addr add "$HS_ADDR/24" dev "$WLAN"
 
-	if [ "$ch" -le 14 ]; then
-		hw=g; ht="[SHORT-GI-20]"
-	else
-		hw=a
-		case "$ch" in 36|44|149|157) ht="[HT40+][SHORT-GI-20][SHORT-GI-40]" ;;
-			*) ht="[HT40-][SHORT-GI-20][SHORT-GI-40]" ;; esac
-	fi
-	umask 077
-	cat > /tmp/hostapd-fpv.conf <<EOF
-interface=$WLAN
-driver=nl80211
-ssid=$ssid
-country_code=$cc
-ieee80211d=1
-hw_mode=$hw
-channel=$ch
-ieee80211n=1
-ht_capab=$ht
-wmm_enabled=1
-auth_algs=1
-wpa=2
-wpa_key_mgmt=WPA-PSK
-rsn_pairwise=CCMP
-wpa_passphrase=$pass
-EOF
-	umask 022
-	if ! hostapd -B -P /var/run/hostapd-fpv.pid /tmp/hostapd-fpv.conf; then
-		log "hotspot: hostapd failed (channel $ch / country $cc not allowed for an access point?)"
+	# hostapd -B returns before the driver has accepted the channel, so check
+	# that it is still running and the interface is an AP. A 5 GHz channel
+	# the driver refuses (e.g. rtl88x2cu keeps its own regulatory table) falls
+	# back to 2.4 GHz channel 6.
+	tried= ok=
+	for c in "$ch" 6; do
+		case " $tried " in *" $c "*) continue ;; esac
+		tried="$tried $c"
+		if hostapd_start "$c" "$ssid" "$pass" "$cc"; then ok=$c; break; fi
+		log "hotspot: no access point on channel $c: $(tail -n 2 /tmp/hostapd-fpv.log 2>/dev/null | tr '\n' ' ')"
+	done
+	if [ -z "$ok" ]; then
+		log "hotspot: hostapd failed on channel(s)$tried, back to FPV"
 		hotspot_off
 		return 1
 	fi
+	[ "$ok" = "$ch" ] || log "hotspot: channel $ch not allowed by the driver, using $ok (fpv set hotspot_channel $ok to skip the try)"
+	ch=$ok
 	dnsmasq --conf-file=/dev/null --port=0 --interface="$WLAN" --bind-interfaces \
 		--dhcp-range=192.168.73.10,192.168.73.50,255.255.255.0,12h \
 		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
@@ -231,7 +256,7 @@ hotspot_stop_services() {
 		[ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null
 		rm -f "$f"
 	done
-	rm -f /tmp/hostapd-fpv.conf
+	rm -f /tmp/hostapd-fpv.conf /tmp/hostapd-fpv.log
 }
 
 hotspot_off() {
