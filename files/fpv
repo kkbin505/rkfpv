@@ -102,7 +102,7 @@ isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going
 iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
 hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generated as rkfpv-XXXX on first boot); used next time the hotspot turns on (hold BOOT 2 s)
 hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 characters (random on first boot)
-hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz (fast), 1/6/11 = 2.4 GHz (if 5 GHz does not start)
+hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz, 1/6/11 = 2.4 GHz. Pick the band your antenna is made for: transmitting on the wrong band can damage the card
 hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
 osd|rkfpv||bool|0|1|0|video|Video|Experimental OSD burned into the video (flight mode, battery, link quality). Off by default until tested on hardware
 dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on

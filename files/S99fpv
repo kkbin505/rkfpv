@@ -224,23 +224,15 @@ hotspot_on() {
 	ip addr add "$HS_ADDR/24" dev "$WLAN"
 
 	# hostapd -B returns before the driver has accepted the channel, so check
-	# that it is still running and the interface is an AP. A 5 GHz channel
-	# the driver refuses (e.g. rtl88x2cu keeps its own regulatory table) falls
-	# back to 2.4 GHz channel 6.
-	tried= ok=
-	for c in "$ch" 6; do
-		case " $tried " in *" $c "*) continue ;; esac
-		tried="$tried $c"
-		if hostapd_start "$c" "$ssid" "$pass" "$cc"; then ok=$c; break; fi
-		log "hotspot: no access point on channel $c: $(tail -n 2 /tmp/hostapd-fpv.log 2>/dev/null | tr '\n' ' ')"
-	done
-	if [ -z "$ok" ]; then
-		log "hotspot: hostapd failed on channel(s)$tried, back to FPV"
+	# that it is still running and the interface is an AP. Never fall back to
+	# another channel: the antenna may only suit one band, and transmitting
+	# on the wrong band can damage the card's amplifier.
+	if ! hostapd_start "$ch" "$ssid" "$pass" "$cc"; then
+		log "hotspot: no access point on channel $ch: $(tail -n 2 /tmp/hostapd-fpv.log 2>/dev/null | tr '\n' ' ')"
+		log "hotspot: the driver refused channel $ch, back to FPV (see iw list: 'no IR' channels cannot host an access point)"
 		hotspot_off
 		return 1
 	fi
-	[ "$ok" = "$ch" ] || log "hotspot: channel $ch not allowed by the driver, using $ok (fpv set hotspot_channel $ok to skip the try)"
-	ch=$ok
 	dnsmasq --conf-file=/dev/null --port=0 --interface="$WLAN" --bind-interfaces \
 		--dhcp-range=192.168.73.10,192.168.73.50,255.255.255.0,12h \
 		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid

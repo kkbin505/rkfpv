@@ -165,7 +165,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 - **再按住 BOOT 约 2 秒**：回到 FPV（wfb 图传 + 录像）。
 - 每次按住只切换一次，松开后才算下一次。开机过程中按键不起作用；上电时按住 BOOT 会进入烧录（maskrom）模式，不要这样做。板子接在电脑上（调试模式）时按键也不起作用。
 
-`fpv hotspot status` 查看按键状态、热点名称、密码和已连接的设备。`hotspot_ssid` / `hotspot_pass` / `hotspot_channel` / `hotspot_country` 改的是下次开热点时的设置。5 GHz 热点能不能起来取决于国家代码（默认 US）和网卡驱动；不行就改用 1/6/11 信道（2.4 GHz）。
+`fpv hotspot status` 查看按键状态、热点名称、密码和已连接的设备。`hotspot_ssid` / `hotspot_pass` / `hotspot_channel` / `hotspot_country` 改的是下次开热点时的设置。5 GHz 热点能不能起来取决于网卡驱动（8812CU 目前不行，见 issue #16）。**只选天线支持的频段**：天线只适合 5.8 GHz 时不要用 1/6/11 信道（2.4 GHz），频段不对可能损坏网卡。热点起不来时会回到 FPV，不会自动换信道。
 
 录像的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts` 文件，支持断点续传和拖动播放。删除时必须带确认请求头，所以别的网页没法借你的浏览器删卡上的文件。
 
