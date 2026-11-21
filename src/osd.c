@@ -57,8 +57,11 @@ osd_t *osd_create(int handle, int venc_chn, int width, int height)
 	c.unChnAttr.stOverlayChn.u32BgAlpha = 0;
 	c.unChnAttr.stOverlayChn.u32FgAlpha = 255;
 	c.unChnAttr.stOverlayChn.u32Layer = (RK_U32)handle & 7;
-	c.unChnAttr.stOverlayChn.u32ColorLUT[0] = WHITE;
-	c.unChnAttr.stOverlayChn.u32ColorLUT[1] = BLACK;
+	/* 2bpp pixel: bit 1 = opaque, bit 0 = LUT index. So 0 = transparent,
+	 * 2 = LUT[0] (outline), 3 = LUT[1] (glyph). Seen on the board: with the
+	 * two swapped, every stroke showed as a white outline around black. */
+	c.unChnAttr.stOverlayChn.u32ColorLUT[0] = BLACK;
+	c.unChnAttr.stOverlayChn.u32ColorLUT[1] = WHITE;
 	r = RK_MPI_RGN_AttachToChn(handle, &o->chn, &c);
 	if (r != RK_SUCCESS) {
 		fprintf(stderr, "osd: RGN_AttachToChn(%d -> venc %d): %#x\n", handle, venc_chn, r);
