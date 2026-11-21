@@ -254,7 +254,7 @@ static void usage(const char *p)
 {
 	fprintf(stderr,
 		"usage: %s [-c config] [-s key=value]...\n"
-		"keys: size fps vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
+		"keys: size fps sensor(WxH|auto) vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
 		"      gop stat_time slice_bytes intra_refresh dst port pkt_size stats\n"
 		"defaults: size=1280x720 fps=30 rc=cbr bitrate=3500 gop=30 dst=127.0.0.1\n"
 		"          port=5600 pkt_size=1400\n", p);
@@ -327,7 +327,8 @@ int main(int argc, char **argv)
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
 
 	if (cfg.iq_dir[0]) {
-		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip))
+		if (isp_start(cfg.iq_dir, cfg.fps, cfg.mirror, cfg.flip,
+			      cfg.sensor_w, cfg.sensor_h))
 			goto out;
 		isp_up = 1;
 	} else {
@@ -435,11 +436,15 @@ int main(int argc, char **argv)
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
+			char ae[48] = "";
+			float exp_ms, gain;
+			if (isp_up && !isp_exposure(&exp_ms, &gain))
+				snprintf(ae, sizeof(ae), ", exp %.1f ms, gain %.1fx", exp_ms, gain);
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu\n",
+				"%.0f pkt/s, send errors %llu%s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors);
+				(unsigned long long)rtp.send_errors, ae);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
