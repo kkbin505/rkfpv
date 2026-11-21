@@ -115,14 +115,17 @@ int osd_commit(osd_t *o)
 	return 0;
 }
 
-/* 2 bits per pixel, the leftmost pixel in the lowest bits */
+/* 2 bits per pixel, the leftmost pixel in the HIGHEST bits (seen on the
+ * board: lowest-first mirrored every 4 pixels, "NO FC DATA" became noise) */
+#define PX_SHIFT(x) ((3 - ((x) & 3)) * 2)
+
 static inline void put(osd_t *o, int x, int y, unsigned v)
 {
 	if (x < 0 || y < 0 || x >= o->w || y >= o->h)
 		return;
 	uint8_t *p = (uint8_t *)(uintptr_t)o->canvas.u64VirAddr +
 		     ((size_t)y * o->canvas.u32VirWidth + x) / 4;
-	int sh = (x & 3) * 2;
+	int sh = PX_SHIFT(x);
 	*p = (uint8_t)((*p & ~(3u << sh)) | (v << sh));
 }
 
@@ -147,7 +150,7 @@ void osd_text(osd_t *o, int x, int y, const char *s)
 					if (px >= 0 && py >= 0 && px < o->w && py < o->h) {
 						uint8_t *p = (uint8_t *)(uintptr_t)o->canvas.u64VirAddr +
 							     ((size_t)py * o->canvas.u32VirWidth + px) / 4;
-						if (((*p >> ((px & 3) * 2)) & 3) != 3)
+						if (((*p >> PX_SHIFT(px)) & 3) != 3)
 							put(o, px, py, 2);
 					}
 				}

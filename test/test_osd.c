@@ -73,19 +73,19 @@ int main(int argc, char **argv)
 
 	int fails = 0, counts[4] = { 0 };
 	for (int i = 0; i < g_w * g_h; i++)
-		counts[(g_buf[i / 4] >> ((i & 3) * 2)) & 3]++;
+		counts[(g_buf[i / 4] >> ((3 - (i & 3)) * 2)) & 3]++;
 	if (counts[1]) { printf("FAIL: %d pixels with unused code 1 (left from the garbage)\n", counts[1]); fails++; }
 	if (!counts[2] || !counts[3]) { printf("FAIL: nothing drawn\n"); fails++; }
 	if (g_updates != 1) { printf("FAIL: %d canvas updates\n", g_updates); fails++; }
 	/* the canvas must be transparent away from the drawing */
 	int x = g_w / 2 + g_w / 8, y = g_h / 2 + g_h / 8;
-	if ((g_buf[(y * g_w + x) / 4] >> ((x & 3) * 2)) & 3) { printf("FAIL: not cleared\n"); fails++; }
+	if ((g_buf[(y * g_w + x) / 4] >> ((3 - (x & 3)) * 2)) & 3) { printf("FAIL: not cleared\n"); fails++; }
 
 	FILE *f = fopen(argc > 1 ? argv[1] : "osd.pgm", "wb");
 	fprintf(f, "P5 %d %d 255\n", g_w, g_h);
 	static const uint8_t lut[4] = { 110, 255, 0, 255 };
 	for (int i = 0; i < g_w * g_h; i++)
-		fputc(lut[(g_buf[i / 4] >> ((i & 3) * 2)) & 3], f);
+		fputc(lut[(g_buf[i / 4] >> ((3 - (i & 3)) * 2)) & 3], f);
 	fclose(f);
 	osd_destroy(o);
 	printf("%s: transparent %d, outline %d, glyph %d px\n", fails ? "FAIL" : "ok", counts[0], counts[2], counts[3]);
