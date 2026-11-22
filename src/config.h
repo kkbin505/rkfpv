@@ -48,6 +48,7 @@ typedef struct {
 	int dst_port;
 	int pkt_size;           /* max RTP packet size (mlink - 100 in OpenIPC) */
 	int pt;                 /* RTP payload type: 97 = H.265 as majestic sends it */
+	int preview_port;       /* wired preview on 127.0.0.1 (adb forward), 0 = off */
 
 	/* DVR (TF card) */
 	int dvr;                /* record from start */

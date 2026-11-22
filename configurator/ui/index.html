@@ -23,6 +23,7 @@
     <button id="connect" class="primary">Connect</button>
   </div>
   <div class="badges">
+    <button id="previewBtn" class="ghost" title="Show the live video (board on USB)" disabled>▶ Preview</button>
     <span id="modeBadge" class="badge off">disconnected</span>
   </div>
 </header>
@@ -223,6 +224,21 @@
       </div>
     </section>
   </main>
+
+  <aside id="previewDock" hidden>
+    <div class="pvHead">
+      <b>Preview</b> <span id="pvInfo" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="pvSize" class="ghost" title="Larger / smaller">⤢</button>
+      <button id="pvStop" class="ghost" title="Stop the preview">✕</button>
+    </div>
+    <canvas id="pvCanvas" width="1280" height="720"></canvas>
+    <div id="pvMsg" class="sub"></div>
+    <div class="row"><button id="pvFfplay" class="ghost" hidden>Open in ffplay instead</button></div>
+    <p class="sub">The link stream itself over USB: same encoder, resolution, bitrate, GOP and OSD as what goes
+      over the air. Only radio effects (packet loss, MCS) are missing. Live settings (Image tab, bitrate) show
+      at once; settings that restart the video reconnect by themselves.</p>
+  </aside>
 </div>
 
 <footer id="saveBar" hidden>

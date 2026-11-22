@@ -34,7 +34,7 @@ LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
 # uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lrkmuxer -lpthread -lm -lstdc++
 
-SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_layout.c src/telem.c
+SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_layout.c src/telem.c src/preview.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
 all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd
@@ -87,12 +87,16 @@ build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_
 build-host/test_telem: test/test_telem.c src/telem.c src/telem.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_telem.c src/telem.c
 
+build-host/test_preview: test/test_preview.c src/preview.c src/preview.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_preview.c src/preview.c
+
 build-host/fpvd: src/fpvd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_telem
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_telem build-host/test_preview
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
+	./build-host/test_preview 2>/dev/null | tail -1
 	./build-host/test_config files/rkfpv.conf
 	./build-host/test_osd build-host/osd.pgm > /dev/null && echo "osd drawing ok"
 	python3 -I test/test_telem.py build-host/test_telem | tail -1
@@ -101,6 +105,7 @@ test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/f
 	python3 -I test/test_fpvd.py build-host/fpvd files/fpv
 	python3 -I test/test_switch.py build-host/fpvd | tail -1
 	python3 -I test/test_dvrhttpd.py build-host/dvrhttpd | tail -1
+	python3 -I test/test_preview_relay.py | tail -1
 
 clean:
 	rm -rf build build-host

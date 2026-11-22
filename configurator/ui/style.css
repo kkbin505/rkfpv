@@ -166,10 +166,21 @@ footer {
 #toast.ok { border-left-color: var(--ok); }
 #toast button { margin-top: 8px; }
 
+/* wired preview, stays visible while switching tabs */
+#previewDock { width: 480px; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--panel); padding: 10px 12px; overflow: auto; }
+#previewDock.big { width: min(960px, 60vw); }
+#previewDock .pvHead { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+#previewDock .pvHead .spacer { flex: 1; }
+#pvInfo { font-size: 12px; font-variant-numeric: tabular-nums; }
+#pvCanvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; }
+#pvMsg { min-height: 1.4em; margin-top: 6px; }
+#previewBtn.on { border-color: var(--accent); color: var(--accent); }
+
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
   nav { width: auto; display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
   nav a { border-left: 0; border-bottom: 3px solid transparent; white-space: nowrap; }
   nav a.active { border-bottom-color: var(--accent); }
   .param { grid-template-columns: 1fr; }
+  #previewDock, #previewDock.big { width: auto; border-left: 0; border-top: 1px solid var(--line); }
 }
