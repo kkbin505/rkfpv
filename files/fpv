@@ -33,6 +33,8 @@ IQ_CUSTOM=$R/userdata/iq
 ISP_STATUS=$R/tmp/isp.status
 IQ_HISTORY_KEEP=5
 DVR_DIR=$R/mnt/dvr
+# OSD element names, as in rkfpv (src/config.c osd_elem_name)
+OSD_ELEMS="mode|armed|rec|timer|temp|battery|mah|video|uplink|lq|cross"
 DVR_STATUS=$R/tmp/dvr.status
 INIT=$R/etc/init.d/S99fpv
 WFB_CMD_PORT=8000
@@ -48,6 +50,7 @@ WLAN=wlan0
 #         wfb   -> /etc/wfb.yaml under <section>: (key: value)
 # type:   int (min..max) | bool (0/1) | enum (choices in min, comma separated)
 #         str (length min..max, letters digits _ . -)
+#         layout (OSD: name:on:x:y,... length up to max; names in OSD_ELEMS)
 #         a type like int+iq+off also accepts those words besides a number:
 #           auto (wfb keys: written commented out = adapter default)
 #           iq   (keep the IQ file's value)   off
@@ -109,6 +112,7 @@ hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 character
 hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz, 1/6/11 = 2.4 GHz. Pick the band your antenna is made for: transmitting on the wrong band can damage the card
 hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
 osd|rkfpv||bool|0|1|0|video|Video|Experimental OSD burned into the video (flight mode, battery, link quality). Off by default until tested on hardware
+osd_layout|rkfpv||layout|0|400|mode:1:25:44,armed:1:25:81,rec:1:457:44,timer:1:908:44,temp:1:898:81,battery:1:25:919,mah:1:25:883,video:1:833:847,uplink:1:833:883,lq:1:908:919,cross:1:500:500|venc|OSD|Position and on/off of every OSD element (name:on:x:y, x and y in 1/1000 of the picture). Set with the OSD tab
 dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
@@ -247,6 +251,12 @@ EOF
 			fi ;;
 		enum)
 			case ",$min," in *",$2,"*) ;; *) echo "$1: '$2' not one of $min"; return 1 ;; esac ;;
+		layout)
+			case "$2" in *[!a-z0-9:,]*) echo "$1: only name:on:x:y items separated by commas"; return 1 ;; esac
+			[ ${#2} -le "$max" ] || { echo "$1: longer than $max characters"; return 1; }
+			n='([0-9]|[1-9][0-9]|[1-9][0-9][0-9]|1000)'
+			bad=$(echo "$2" | tr ',' '\n' | grep -Ev "^($OSD_ELEMS):[01]:$n:$n\$" | head -1)
+			[ -z "$bad" ] || { echo "$1: bad item '$bad' (name:on:x:y, on 0/1, x y 0..1000, names: $(echo "$OSD_ELEMS" | tr '|' ' '))"; return 1; } ;;
 		str)
 			case "$2" in *[!A-Za-z0-9_.-]*) echo "$1: only letters, digits and _ . - are allowed"; return 1 ;; esac
 			if [ ${#2} -lt "$min" ] || [ ${#2} -gt "$max" ]; then

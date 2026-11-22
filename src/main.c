@@ -774,6 +774,7 @@ int main(int argc, char **argv)
 				cfg.max_bitrate_kbps = n.max_bitrate_kbps;
 				cfg.gop = n.gop;
 				cfg.stat_time = n.stat_time;
+				memcpy(cfg.osd_pos, n.osd_pos, sizeof cfg.osd_pos);   /* next OSD redraw */
 				dvr_reconfig(dvr, n.dvr_segment, n.dvr_min_free, n.dvr_overwrite, n.dvr_ts);
 			}
 		}
@@ -879,7 +880,7 @@ int main(int argc, char **argv)
 				fps_t0 = now_ms;
 			}
 			osd_view_t v = { &telem, rec, 0, 0, 0, now_ms, temp_ok, temp_c,
-					 cfg.width, cfg.height, fps_x10 };
+					 cfg.width, cfg.height, fps_x10, cfg.osd_pos };
 			uint64_t d1 = draw_osd(osd_link, &v, now_us);
 			uint64_t d2 = draw_osd(osd_dvr, &v, now_us);
 			if (d1 + d2 > osd_worst) {

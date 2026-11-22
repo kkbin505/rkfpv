@@ -24,6 +24,25 @@ typedef struct {
 	int wb;                 /* WB_* */
 } isp_settings_t;
 
+/* OSD elements, in the order of their names in osd_layout (config.c) */
+enum { OSD_MODE, OSD_ARMED, OSD_REC, OSD_TIMER, OSD_TEMP, OSD_BATTERY, OSD_MAH,
+       OSD_VIDEO, OSD_UPLINK, OSD_LQ, OSD_CROSS, OSD_N };
+
+/* Where one element goes. x, y: top-left corner of the element's box in
+ * 1/1000 of the picture (the crosshair: its centre). The box is as wide as
+ * the element's longest text (osd_elem_chars); the text is left-aligned,
+ * centred or right-aligned in it when the box is in the left, middle or
+ * right third of the picture. */
+typedef struct { int on, x, y; } osd_pos_t;
+
+extern const char *const osd_elem_name[OSD_N];
+extern const int osd_elem_chars[OSD_N];
+extern const osd_pos_t osd_default_layout[OSD_N];
+
+/* parses "name:on:x:y,..." into pos (starting from the defaults);
+ * 0 = ok, -1 = bad string (pos left unchanged) */
+int osd_layout_parse(const char *s, osd_pos_t pos[OSD_N]);
+
 typedef struct {
 	/* capture */
 	int width;
@@ -70,6 +89,7 @@ typedef struct {
 	isp_settings_t isp;
 
 	int osd;                /* experimental: burn a test OSD into the video */
+	osd_pos_t osd_pos[OSD_N];  /* osd_layout */
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;
