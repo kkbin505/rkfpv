@@ -32,6 +32,7 @@
   <nav id="tabs">
     <a data-tab="status" class="active">Status</a>
     <a data-tab="Video">Video</a>
+    <a data-tab="osd">OSD</a>
     <a data-tab="Camera">Camera</a>
     <a data-tab="image">Image</a>
     <a data-tab="Radio">Radio</a>
@@ -53,6 +54,28 @@
       <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
         FPV boot. Live changes need the SSH link over wfb (not built yet).</p>
     </div>
+
+    <section id="tab-osd" class="tab" hidden>
+      <div id="osdOff" class="box warnbox" hidden>
+        The OSD is off on the board (<code>osd = 0</code>), so the picture has none.
+        <button id="osdOn" class="primary">Turn the OSD on</button>
+      </div>
+      <div class="osdWrap">
+        <div class="box osdList">
+          <h3>Elements</h3>
+          <div id="osdItems"></div>
+          <div class="row">
+            <button id="osdReset" class="ghost">Default layout</button>
+          </div>
+          <p class="sub">Tick to show, drag on the picture to move. Each change is saved on the board at once and shows live in the preview while FPV or the preview runs.</p>
+          <p id="osdInfo" class="sub"></p>
+        </div>
+        <div class="osdStageBox">
+          <div id="osdStage"><div id="osdBoxes"></div></div>
+          <p id="osdBgNote" class="sub"></p>
+        </div>
+      </div>
+    </section>
 
     <section id="tab-status" class="tab" hidden>
       <div class="grid">
