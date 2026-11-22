@@ -29,7 +29,7 @@ def check(name, cond, detail=""):
 
 def req(method, path, headers=None, raw_path=False):
     c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
-    c.putrequest(method, path, skip_accept_encoding=True)
+    c.putrequest(method, path, skip_accept_encoding=True, skip_host="Host" in (headers or {}))
     for k, v in (headers or {}).items():
         c.putheader(k, v)
     c.endheaders()
@@ -88,6 +88,19 @@ def main():
         check("range past the end -> 416", st == 416, st)
         st, h, b = req("GET", "/dvr/rec_0002_01.ts")
         check("ts content type", st == 200 and h["Content-Type"] == "video/mp2t")
+
+        # captive portal: phones' connectivity checks go to the page
+        for host, path in [("connectivitycheck.gstatic.com", "/generate_204"),
+                           ("captive.apple.com", "/hotspot-detect.html"),
+                           ("www.msftconnecttest.com", "/connecttest.txt"),
+                           ("example.com", "/"), ("evil.example", "/api/list")]:
+            st, h, b = req("GET", path, {"Host": host})
+            check(f"portal: {host}{path} -> 302 to the page",
+                  st == 302 and h.get("Location") == f"http://127.0.0.1:{PORT}/", (st, h.get("Location")))
+        st, h, b = req("DELETE", "/dvr/rec_0001_00.mp4", {"Host": "evil.example", "X-FPV-Confirm": "1"})
+        check("portal: foreign Host cannot delete", st == 302 and os.path.exists(f"{d}/rec_0001_00.mp4"), st)
+        st, h, b = req("GET", "/api/list", {"Host": f"127.0.0.1:{PORT}"})
+        check("own address with port is served", st == 200, st)
 
         for bad in ["/dvr/../notes.txt", "/dvr/notes.txt", "/dvr/rec_1.mp4", "/dvr/rec_0001_00.mp4.bak",
                     "/dvr/%2e%2e/notes.txt", "/dvr/rec_0009_00.mp4", "/etc/passwd", "/dvr/"]:

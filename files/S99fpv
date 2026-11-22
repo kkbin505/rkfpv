@@ -233,7 +233,13 @@ hotspot_on() {
 		hotspot_off
 		return 1
 	fi
-	dnsmasq --conf-file=/dev/null --port=0 --interface="$WLAN" --bind-interfaces \
+	# captive portal: every DNS name resolves to the board, so the phone's
+	# connectivity check reaches dvrhttpd, which redirects it to the
+	# recordings page and the phone pops it up (DHCP option 114 = RFC 8910
+	# portal URL for newer phones). No internet here, nothing is forwarded.
+	dnsmasq --conf-file=/dev/null --interface="$WLAN" --bind-interfaces \
+		--no-resolv --no-hosts --address="/#/$HS_ADDR" \
+		--dhcp-option=114,"http://$HS_ADDR/" \
 		--dhcp-range=192.168.73.10,192.168.73.50,255.255.255.0,12h \
 		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
 	start-stop-daemon -S -q -b -m -p /var/run/dvrhttpd.pid -x /usr/bin/dvrhttpd -- \
