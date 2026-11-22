@@ -307,6 +307,31 @@ start() {
 	set_mode fpv
 }
 
+# ---- wired preview ------------------------------------------------------
+# The board is on a PC (debug mode): run rkfpv anyway so the configurator
+# can show the link stream over `adb forward` (rkfpv preview_port). Not
+# kept across a reboot. The radio is not involved (no adapter on USB).
+preview_allowed() {
+	case "$(cat "$MODE_STATUS" 2>/dev/null)" in debug|off) return 0 ;; esac
+	log "preview: only with the board on a PC over USB (debug mode)"
+	return 1
+}
+
+preview_on() {
+	preview_allowed || return 1
+	pidof rkfpv > /dev/null && return 0
+	log "preview: starting rkfpv for the configurator"
+	/usr/bin/wfb.sh osd-telemetry
+	start_video
+}
+
+preview_off() {
+	preview_allowed || return 1
+	log "preview: stopped"
+	stop_video
+	killall -q mavbridge
+}
+
 stop() {
 	hotspot_stop_services
 	stop_video                      # rkfpv closes the current recording
@@ -323,8 +348,16 @@ case "$1" in
 	restart) stop; sleep 1; start ;;
 	hotspot-on) hotspot_on ;;
 	hotspot-off) hotspot_off ;;
+	preview-on) preview_on ;;
+	preview-off) preview_off ;;
 	restart-video) log "restart: video"; stop_video; start_video ;;
-	restart-link) log "restart: link"; /usr/bin/wfb.sh start ;;
-	restart-all) log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video ;;
-	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off}"; exit 1 ;;
+	restart-link|restart-all)
+		# preview on a PC: there is no link, only the video restarts
+		case "$(cat "$MODE_STATUS" 2>/dev/null)" in
+		debug|off) log "restart: video (preview, no link)"; stop_video; start_video ;;
+		*)
+			if [ "$1" = restart-link ]; then log "restart: link"; /usr/bin/wfb.sh start
+			else log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video; fi ;;
+		esac ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off|preview-on|preview-off}"; exit 1 ;;
 esac

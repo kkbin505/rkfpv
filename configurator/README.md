@@ -35,6 +35,17 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 - **restart**：要重启视频才生效，保存后会出现 *Restart* 按钮
 - **link**：信道、带宽、link_id、遥测。**地面站也要改成一样**，否则会断链
 
+## 有线预览（Preview）
+
+板子用 USB 接在电脑上（调试模式）时，点右上角 **▶ Preview**，页面右侧会出现实时画面，切换页面时一直显示，可以边调参边看。
+
+- 画面就是图传那一路码流本身：同一个编码器、分辨率、码率、GOP，OSD 也是烧在码流里的。看到的效果和无线传出去的一样，只是没有无线丢包和 MCS 的影响。
+- Image 页的画质参数、码率这类 **live** 设置改完马上就能看到；**restart** 类设置会重启视频，预览会自动重连。
+- 点 Preview 时，板子执行 `fpv preview on`，在调试模式下启动 rkfpv（有飞控时也会启动 mavbridge，OSD 能显示飞控数据）。点 ✕ 或断开连接时执行 `fpv preview off`。这是临时状态，重启后恢复原样。
+- 只走 ADB：rkfpv 只在板子的 `127.0.0.1:5602` 上提供预览（`rkfpv.conf` 里的 `preview_port`，0 = 关闭），由 `adb forward` 转到电脑上，无线那边看不到这个端口。
+- 解码用浏览器的 WebCodecs（显卡硬件解码 H.265）。要用 **Chrome 或 Edge**，并且显卡支持 H.265 解码。不支持时面板里会提示，可以点 **Open in ffplay instead**，前提是电脑上装了 FFmpeg、`ffplay` 在 PATH 里。
+- 只能有一个观看端：在 ffplay 里打开时，浏览器里的画面会停。
+
 ## DVR 录像下载
 
 下载录像需要 ADB（USB）。文件默认保存在 `~/Videos/rkfpv-dvr`，Windows 上是 `%USERPROFILE%\Videos\rkfpv-dvr`，可以用 `--dvr-dir` 改位置。**Open folder** 会打开这个文件夹。正在录的文件不能下载，也不能删除。
@@ -63,7 +74,7 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 
 ## 限制
 
-调试模式下 USB 口接的是电脑，WiFi 网卡没接，FPV 不运行。这时改的设置会保存，下次以 FPV 模式开机时生效。
+调试模式下 USB 口接的是电脑，WiFi 网卡没接，无线链路不运行。这时改的设置会保存，下次以 FPV 模式开机时生效；画面相关的设置可以用上面的有线预览直接看效果。
 
 要在飞行中实时调参，需要通过 wfb 隧道走 SSH（还没做）。界面已经预留了 SSH 选项，只支持密钥登录。
 

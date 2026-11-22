@@ -24,6 +24,7 @@ void config_defaults(rkfpv_config_t *c)
 
 	snprintf(c->dst_ip, sizeof(c->dst_ip), "127.0.0.1");
 	c->dst_port = 5600;
+	c->preview_port = 5602;
 	c->pkt_size = 1400;
 	/* majestic sends H.264 as 96 and H.265 as 97; PixelPilot and other
 	 * OpenIPC ground stations pick the decoder from it */
@@ -175,6 +176,7 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("port", dst_port, 1, 65535);
 	INT_KEY("pkt_size", pkt_size, 200, 4000);
 	INT_KEY("pt", pt, 96, 127);
+	INT_KEY("preview_port", preview_port, 0, 65535);
 	INT_KEY("stats", stats_interval, 0, 3600);
 	INT_KEY("dvr", dvr, 0, 1);
 	INT_KEY("osd", osd, 0, 1);
@@ -235,14 +237,14 @@ void config_print(const rkfpv_config_t *c)
 	fprintf(stderr,
 		"rkfpv: %dx%d@%d vi_chn=%d iq=%s mirror=%d flip=%d\n"
 		"rkfpv: h265 %s %d kbps (max %d) gop=%d stat=%ds slice=%d ir=%d\n"
-		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d\n"
+		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d preview=%d\n"
 		"rkfpv: dvr=%d %s segment=%ds min_free=%dMB overwrite=%d %s buffer=%dKB\n"
 		"rkfpv: dvr stream %s %dx%d %s %d kbps gop=%d\n",
 		c->width, c->height, c->fps, c->vi_chn,
 		c->iq_dir[0] ? c->iq_dir : "(none)", c->mirror, c->flip,
 		c->rc == RC_CBR ? "cbr" : "vbr", c->bitrate_kbps,
 		c->max_bitrate_kbps, c->gop, c->stat_time, c->slice_bytes,
-		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt,
+		c->intra_refresh, c->dst_ip, c->dst_port, c->pkt_size, c->pt, c->preview_port,
 		c->dvr, c->dvr_dir, c->dvr_segment, c->dvr_min_free, c->dvr_overwrite,
 		c->dvr_ts ? "ts" : "mp4", c->dvr_buffer_kb,
 		c->dvr_width ? "own" : "= link", c->dvr_width, c->dvr_height,

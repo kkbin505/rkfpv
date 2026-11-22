@@ -15,6 +15,8 @@
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   fpv hotspot status               BOOT button, mode, SSID, password, clients
+#   fpv preview on|off|status        board on a PC: run the video for the
+#                                    configurator's wired preview (adb forward)
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -435,7 +437,8 @@ cmd_status() {
 	role=$(cat "$R"/sys/class/usb_role/*/role 2>/dev/null | head -1)
 	pid_rk=$(pidof rkfpv 2>/dev/null)
 	pid_tx=$(pidof wfb_tx 2>/dev/null | tr ' ' ',')
-	if [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
+	if [ -n "$pid_rk" ] && [ -z "$pid_tx" ] && [ "$role" = device ]; then mode=preview
+	elif [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
 	elif [ "$role" = device ]; then mode=debug
 	else mode=idle; fi
 	override=auto
@@ -813,8 +816,38 @@ hotspot_cmd() {
 	esac
 }
 
+# ---------------------------------------------------------------- preview
+
+preview_port() {
+	p=$(sed -n 's/^preview_port *= *\([0-9]*\).*/\1/p' "$R/etc/rkfpv.conf" 2>/dev/null | tail -1)
+	echo "${p:-5602}"
+}
+
+preview_cmd() {
+	sub=${1:-status}
+	mode=$(cat "$R/tmp/mode.status" 2>/dev/null)
+	case "$sub" in
+	on|off)
+		case "$mode" in debug|off) ;;
+		*) die "preview: only when the board is on a PC over USB (mode: ${mode:-unknown})" ;;
+		esac
+		[ "$(preview_port)" != 0 ] || die "preview: preview_port = 0 in rkfpv.conf"
+		"$INIT" "preview-$sub" > /dev/null 2>&1 || die "preview $sub failed (fpv log fpv)" ;;
+	status) ;;
+	*) die "preview: on | off | status" ;;
+	esac
+	running rkfpv && run=true || run=false
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"running":%s,"port":%s,"mode":"%s"}\n' "$run" "$(preview_port)" "${mode:-unknown}"
+	else
+		echo "video:  $([ $run = true ] && echo running || echo stopped)"
+		echo "port:   $(preview_port) on the board (adb forward tcp:$(preview_port) tcp:$(preview_port))"
+		echo "mode:   ${mode:-unknown}"
+	fi
+}
+
 usage() {
-	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --json may appear anywhere
@@ -843,6 +876,7 @@ case "$cmd" in
 	dvr) dvr_cmd "$@" ;;
 	iq) iq_cmd "$@" ;;
 	hotspot) hotspot_cmd "$@" ;;
+	preview) preview_cmd "$@" ;;
 	help|-h|--help) usage ;;
 	*) die "unknown command '$cmd' (fpv help)" ;;
 esac

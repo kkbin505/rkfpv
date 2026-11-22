@@ -376,6 +376,125 @@ def iq_push(t, name, data_b64):
     return r
 
 
+# ---- wired preview: the board's link stream over `adb forward` ----------
+# rkfpv serves the H.265 access units (u32 big-endian length + Annex-B) on
+# 127.0.0.1:<preview_port> on the board. We forward a local port to it and
+# hand the bytes to the browser (WebCodecs decodes them) or to ffplay.
+preview_lock = threading.Lock()
+preview_ports = set()            # local ports we forwarded: the only ones served
+preview_ffplay = None
+
+
+def preview_start(t):
+    if not isinstance(t, Adb):
+        raise TransportError("the preview needs ADB (board on USB)")
+    r = run_fpv(t, ["preview", "on"])
+    if not r.get("ok"):
+        raise TransportError(r.get("error", "fpv preview on failed"))
+    board = int(r.get("port") or 5602)
+    rc, out, err = t._run(t._base() + ["forward", "tcp:0", f"tcp:{board}"], 15)
+    try:
+        local = int(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise TransportError((err or out).strip() or "adb forward failed")
+    with preview_lock:
+        preview_ports.add(local)
+    return {"ok": True, "local_port": local, "board_port": board}
+
+
+def preview_stop(t, local):
+    preview_ffplay_stop()
+    with preview_lock:
+        known = local in preview_ports
+        preview_ports.discard(local)
+    if known and isinstance(t, Adb):
+        t._run(t._base() + ["forward", "--remove", f"tcp:{local}"], 15)
+    r = run_fpv(t, ["preview", "off"])
+    return {"ok": True, "board": r}
+
+
+def preview_records(local, stop=None):
+    """Yields raw bytes from the forwarded port. adb accepts the local
+    connection even while nothing listens on the board (rkfpv still
+    starting) and then closes it at once: retry until data flows."""
+    deadline = time.time() + 20
+    while not (stop and stop.is_set()):
+        try:
+            s = socket.create_connection(("127.0.0.1", local), timeout=3)
+        except OSError:
+            s = None
+        got = False
+        if s:
+            s.settimeout(5)
+            try:
+                while True:
+                    b = s.recv(1 << 16)
+                    if not b:
+                        break
+                    got = True
+                    yield b
+            except OSError:
+                pass
+            finally:
+                s.close()
+        if got or time.time() > deadline:
+            return
+        time.sleep(0.3)
+
+
+def preview_ffplay_start(local):
+    """Fallback when the browser cannot decode H.265: ffplay gets the plain
+    Annex-B stream on stdin (length prefixes removed)."""
+    global preview_ffplay
+    exe = shutil.which("ffplay")
+    if not exe:
+        raise TransportError("ffplay not found on PATH (install FFmpeg)")
+    with preview_lock:
+        if local not in preview_ports:
+            raise TransportError("start the preview first")
+    preview_ffplay_stop()
+    p = subprocess.Popen([exe, "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer",
+                          "-flags", "low_delay", "-framedrop", "-window_title", "rkfpv preview",
+                          "-f", "hevc", "-i", "-"], stdin=subprocess.PIPE)
+    stop = threading.Event()
+
+    def pump():
+        buf = b""
+        try:
+            for b in preview_records(local, stop):
+                buf += b
+                while len(buf) >= 4:
+                    n = int.from_bytes(buf[:4], "big")
+                    if len(buf) < 4 + n:
+                        break
+                    p.stdin.write(buf[4:4 + n])
+                    buf = buf[4 + n:]
+                p.stdin.flush()
+                if p.poll() is not None:
+                    break
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+
+    preview_ffplay = (p, stop)
+    threading.Thread(target=pump, daemon=True).start()
+    return {"ok": True}
+
+
+def preview_ffplay_stop():
+    global preview_ffplay
+    if preview_ffplay:
+        p, stop = preview_ffplay
+        stop.set()
+        if p.poll() is None:
+            p.terminate()
+        preview_ffplay = None
+
+
 def open_folder():
     os.makedirs(dvr_local_dir, exist_ok=True)
     if sys.platform.startswith("win"):
@@ -433,6 +552,10 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/":
             path = "/index.html"
+        if path == "/api/preview/stream":
+            if self.headers.get("X-Token") != TOKEN:
+                return self._json({"ok": False, "error": "bad token"}, 403)
+            return self._preview_stream()
         if path in ("/api/devices", "/api/presets"):
             if self.headers.get("X-Token") != TOKEN:
                 return self._json({"ok": False, "error": "bad token"}, 403)
@@ -449,6 +572,27 @@ class Handler(BaseHTTPRequestHandler):
         if name == "index.html":
             data = data.replace(b"__TOKEN__", TOKEN.encode())
         self._send(200, data, ctype)
+
+    def _preview_stream(self):
+        q = dict(x.split("=", 1) for x in self.path.partition("?")[2].split("&") if "=" in x)
+        try:
+            local = int(q.get("port", ""))
+        except ValueError:
+            local = 0
+        with preview_lock:
+            ok = local in preview_ports
+        if not ok:
+            return self._send(404, "no preview on that port", "text/plain")
+        # HTTP/1.0, no length: the body is the stream until one side closes
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            for b in preview_records(local):
+                self.wfile.write(b)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass                    # the page stopped reading
 
     def do_POST(self):
         if self.headers.get("X-Token") != TOKEN:
@@ -470,6 +614,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(install(t))
             if self.path == "/api/dvr/pull":
                 return self._json(dvr_pull(t, str(req.get("name", ""))))
+            if self.path == "/api/preview/start":
+                return self._json(preview_start(t))
+            if self.path == "/api/preview/stop":
+                return self._json(preview_stop(t, int(req.get("port") or 0)))
+            if self.path == "/api/preview/ffplay":
+                return self._json(preview_ffplay_start(int(req.get("port") or 0)))
             if self.path == "/api/dvr/open":
                 return self._json(open_folder())
             if self.path == "/api/iq/pull":

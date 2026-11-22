@@ -233,5 +233,21 @@ fpv mode auto > /dev/null; [ ! -e "$T/root/userdata/fpv.off" ] && ok "mode auto"
 fpv set bitrate 5000 > /dev/null; fpv reset > /dev/null
 check "reset" "bitrate = 3500" "$(fpv get bitrate)"
 
+# wired preview: only in debug mode, runs S99fpv preview-on/off
+setup
+mkdir -p "$T/root/tmp" "$T/root/etc/init.d"
+printf '#!/bin/sh\necho "$1" >> %s/init.log\n' "$T" > "$T/root/etc/init.d/S99fpv"
+chmod 755 "$T/root/etc/init.d/S99fpv"
+rm -f "$T/init.log"
+echo fpv > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null 2>&1 && bad "preview refused in FPV mode" || ok "preview refused in FPV mode"
+[ ! -e "$T/init.log" ] && ok "refused preview ran nothing" || bad "refused preview ran nothing"
+echo debug > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null && fpv preview off > /dev/null
+check "preview on/off in debug mode" "preview-on|preview-off" "$(tr '\n' '|' < "$T/init.log" | sed 's/|$//')"
+check "preview status json" '{"ok":true,"running":false,"port":5602,"mode":"debug"}' "$(fpv preview status --json)"
+sed -i 's/^preview_port = .*/preview_port = 0/' "$T/root/etc/rkfpv.conf"
+fpv preview on > /dev/null 2>&1 && bad "preview_port 0 refused" || ok "preview_port 0 refused"
+
 echo "$((n - fail))/$n passed"
 [ $fail -eq 0 ]
