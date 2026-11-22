@@ -14,6 +14,14 @@
  * server never answers. The file being recorded (rkfpv's /tmp/dvr.status)
  * is never deleted.
  *
+ * Captive portal: in hotspot mode dnsmasq answers every DNS name with this
+ * board, so a phone's connectivity check (connectivitycheck.gstatic.com/
+ * generate_204, captive.apple.com/hotspot-detect.html, msftconnecttest.com/
+ * connecttest.txt, ...) lands here. Any request whose Host is not this
+ * board's address gets a 302 to the recordings page, and the phone pops up
+ * its sign-in window showing it. Requests to the board's own address are
+ * served as listed above.
+ *
  *   dvrhttpd [-b 192.168.73.1] [-p 80] [-d /mnt/dvr] [-s /tmp/dvr.status]
  */
 #define _GNU_SOURCE
@@ -40,6 +48,8 @@
 
 static const char *g_dir = "/mnt/dvr";
 static const char *g_status = "/tmp/dvr.status";
+static const char *g_host = "192.168.73.1";   /* our address: other Hosts are redirected */
+static int g_port = 80;
 static volatile sig_atomic_t g_quit;
 static void on_signal(int s) { (void)s; g_quit = 1; }
 
@@ -106,6 +116,27 @@ static void reply(int fd, int code, const char *status, const char *ctype, const
 	send_all(fd, h, (size_t)hl);
 	if (n)
 		send_all(fd, body, n);
+}
+
+/* captive portal: send a phone's connectivity check to the recordings page */
+static void redirect_home(int fd)
+{
+	char h[256], port[16] = "";
+	if (g_port != 80)
+		snprintf(port, sizeof port, ":%d", g_port);
+	int hl = snprintf(h, sizeof h,
+			  "HTTP/1.1 302 Found\r\nLocation: http://%s%s/\r\nContent-Length: 0\r\n"
+			  "Cache-Control: no-store\r\nConnection: close\r\n\r\n", g_host, port);
+	send_all(fd, h, (size_t)hl);
+}
+
+/* 1 if the Host header names some other site (port ignored) */
+static int foreign_host(const char *host)
+{
+	size_t n = strlen(g_host);
+	if (!host)
+		return 0;               /* HTTP/1.0 without Host: serve normally */
+	return strncasecmp(host, g_host, n) || (host[n] && host[n] != ':');
 }
 
 static void json_error(int fd, int code, const char *status, const char *msg)
@@ -302,11 +333,13 @@ static const char PAGE[] =
 "td{padding:8px 6px;border-bottom:1px solid #e2ddd3}td.s{color:#77716a;white-space:nowrap}"
 "a,button{font:inherit}button{border:1px solid #e2ddd3;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer}"
 "button.d{color:#d23c2f}a.b{background:#f54700;color:#fff;border-radius:4px;padding:5px 10px;text-decoration:none}"
-"#sp{color:#77716a;margin:8px 0}</style></head><body>"
+"#sp{color:#77716a;margin:8px 0}#tip{font-size:13px;color:#77716a;max-width:720px}</style></head><body>"
 "<h1>rk<b>fpv</b> recordings</h1><div id=sp></div>"
+"<p id=tip>下载没反应？关掉这个弹窗，选“保持连接 / 不使用互联网”，关闭手机流量，再用浏览器打开 "
+"<b>http://<span id=ip></span>/</b></p>"
 "<p><button class=d onclick=delAll()>Delete all</button></p><table id=t></table>"
 "<script>"
-"const H={'X-FPV-Confirm':'1'};"
+"const H={'X-FPV-Confirm':'1'};document.getElementById('ip').textContent=location.host;"
 "function mb(b){return (b/1048576).toFixed(1)+' MB'}"
 "async function load(){const r=await (await fetch('/api/list')).json();"
 "document.getElementById('sp').textContent=(r.free_mb/1024).toFixed(1)+' GB free of '+(r.total_mb/1024).toFixed(1)+' GB';"
@@ -348,9 +381,9 @@ static void handle(int fd)
 		*q = '\0';
 
 	/* headers we care about */
-	const char *range = NULL;
+	const char *range = NULL, *host = NULL;
 	int confirm = 0;
-	char rangebuf[128];
+	char rangebuf[128], hostbuf[128];
 	for (char *line = strstr(req, "\r\n"); line && line[2]; line = strstr(line + 2, "\r\n")) {
 		char *h = line + 2;
 		if (!strncasecmp(h, "Range:", 6)) {
@@ -364,6 +397,17 @@ static void handle(int fd)
 			}
 			rangebuf[i] = '\0';
 			range = rangebuf;
+		} else if (!strncasecmp(h, "Host:", 5)) {
+			h += 5;
+			while (*h == ' ')
+				h++;
+			size_t i = 0;
+			while (h[i] && h[i] != '\r' && h[i] != ' ' && i + 1 < sizeof hostbuf) {
+				hostbuf[i] = h[i];
+				i++;
+			}
+			hostbuf[i] = '\0';
+			host = hostbuf;
 		} else if (!strncasecmp(h, "X-FPV-Confirm:", 14)) {
 			h += 14;
 			while (*h == ' ')
@@ -372,6 +416,8 @@ static void handle(int fd)
 		}
 	}
 
+	if (foreign_host(host))
+		return redirect_home(fd);
 	int get = !strcmp(method, "GET"), head = !strcmp(method, "HEAD");
 	if ((get || head) && !strcmp(path, "/"))
 		return reply(fd, 200, "OK", "text/html; charset=utf-8", head ? NULL : PAGE);
@@ -415,6 +461,8 @@ int main(int argc, char **argv)
 			return c == 'h' ? 0 : 1;
 		}
 	}
+	g_host = bind_ip;
+	g_port = port;
 	int s = socket(AF_INET, SOCK_STREAM, 0);
 	int one = 1;
 	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
