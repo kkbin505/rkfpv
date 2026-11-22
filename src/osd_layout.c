@@ -8,6 +8,7 @@
 /*  MODE            REC          T 03:12
  *  ARMED                         CPU 52C
  *                   +
+ *                           1152x648 60fps
  *  1234 mAh                 UL -48dBm 98%
  *  16.4V 12.3A 78%                LQ 99%      */
 void osd_draw_view(osd_t *o, const osd_view_t *v)
@@ -51,6 +52,14 @@ void osd_draw_view(osd_t *o, const osd_view_t *v)
 			snprintf(s, sizeof s, "%d mAh", t->mah);
 			osd_text(o, m, bot - lh, s);
 		}
+	}
+
+	if (v->vid_w > 0) {
+		if (v->fps_x10 >= 0)
+			snprintf(s, sizeof s, "%dx%d %dfps", v->vid_w, v->vid_h, (v->fps_x10 + 5) / 10);
+		else
+			snprintf(s, sizeof s, "%dx%d --fps", v->vid_w, v->vid_h);
+		osd_text_right(o, w - m, bot - 2 * lh, s);
 	}
 
 	if (v->ul_ok)
