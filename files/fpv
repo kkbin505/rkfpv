@@ -13,6 +13,7 @@
 #   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
+#   fpv dvr device|format --yes      recording card (format: ext4, erases it)
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   fpv hotspot status               BOOT button, mode, SSID, password, clients
 #   fpv preview on|off|status        board on a PC: run the video for the
@@ -464,9 +465,9 @@ cmd_status() {
 	temp=$(cat "$R/sys/class/thermal/thermal_zone0/temp" 2>/dev/null)
 	[ -n "$temp" ] && temp=$((temp / 1000))
 	up=$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null)
-	if running rkfpv && [ -f "$DVR_STATUS" ]; then dvrst=$(dvr_field state); dvrfile=$(dvr_field file)
-	elif dvr_mounted; then dvrst=stopped; dvrfile=-
-	else dvrst=no-card; dvrfile=-; fi
+	dvrst=$(dvr_state); dvrfile=-
+	running rkfpv && [ -f "$DVR_STATUS" ] && dvrfile=$(dvr_field file)
+	board=$(tr -d '\000' < "$R/proc/device-tree/model" 2>/dev/null)
 
 	if [ "$JSON" = 1 ]; then
 		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
@@ -475,8 +476,9 @@ cmd_status() {
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
 		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s",' "$mem" "$temp" "$up"
-		printf '"dvr_state":"%s","dvr_file":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")"
+		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" "$(jesc "$board")"
 	else
+		[ -n "$board" ] && echo "board:     $board"
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
 		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
 		echo "wfb_tx:    ${pid_tx:-not running}  ${radio:+| $radio}${fec:+| $fec}"
@@ -589,6 +591,61 @@ dvr_space() {   # -> "total_mb free_mb"
 	df -k "$DVR_DIR" 2>/dev/null | awk 'END { if (NF >= 5) printf "%d %d", $(NF-4) / 1024, $(NF-2) / 1024 }'
 }
 
+# Where recordings go:
+#   Mini: the TF card's partition named "dvr" (the system boots from that card)
+#   Pro:  the TF card in the slot (the system boots from SPI NAND), its
+#         first partition or the whole card
+# Prints "<dev> part|card"; nothing if there is none. The card the system
+# boots from (root=/dev/mmcblkX...) is never picked as a whole card.
+dvr_device() {
+	for u in "$R"/sys/class/block/mmcblk*p*/uevent; do
+		grep -q '^PARTNAME=dvr$' "$u" 2>/dev/null || continue
+		echo "/dev/$(sed -n 's/^DEVNAME=//p' "$u") part"
+		return 0
+	done
+	rootdisk=$(tr ' ' '\n' < "$R/proc/cmdline" 2>/dev/null | sed -n 's|^root=/dev/\(mmcblk[0-9]*\).*|\1|p')
+	for d in "$R"/sys/class/block/mmcblk[0-9]*; do
+		b=${d##*/}
+		case "$b" in *p*|*boot*|*rpmb*) continue ;; esac
+		[ -e "$d" ] && [ "$b" != "$rootdisk" ] || continue
+		if [ -e "$d/${b}p1" ]; then echo "/dev/${b}p1 card"; else echo "/dev/$b card"; fi
+		return 0
+	done
+}
+
+dvr_is_ext4() {   # <dev>: ext2/3/4 superblock magic 0xef53
+	[ "$(od -An -tx1 -j1080 -N2 "$R$1" 2>/dev/null | tr -d ' \n')" = "53ef" ]
+}
+
+# recording state for status: recording/... from rkfpv, else stopped,
+# unformatted (a card that is not ext4) or no-card
+dvr_state() {
+	if running rkfpv && [ -f "$DVR_STATUS" ]; then dvr_field state
+	elif dvr_mounted; then echo stopped
+	else
+		set -- $(dvr_device)
+		if [ -n "${1:-}" ] && ! dvr_is_ext4 "$1"; then echo unformatted; else echo no-card; fi
+	fi
+}
+
+dvr_format() {
+	[ "${1:-}" = --yes ] || die "fpv dvr format --yes: makes the recording card ext4 and ERASES everything on it"
+	set -- $(dvr_device)
+	dev=${1:-}
+	[ -n "$dev" ] || die "no recording card found (Pro: put the TF card in before power-on)"
+	if running rkfpv && [ "$(dvr_field state)" = recording ]; then
+		die "recording: stop it first (fpv dvr stop)"
+	fi
+	if dvr_mounted; then
+		umount "$DVR_DIR" 2>/dev/null || die "cannot unmount $DVR_DIR (a download in progress?)"
+	fi
+	mkfs.ext4 -F -q -L dvr -m 0 "$R$dev" || die "mkfs.ext4 $dev failed"
+	mkdir -p "$DVR_DIR"
+	mount -t ext4 -o noatime,errors=remount-ro "$R$dev" "$DVR_DIR" || die "formatted, but mount failed"
+	sync
+	[ "$JSON" = 1 ] && printf '{"ok":true,"device":"%s"}\n' "$dev" || echo "dvr: $dev formatted (ext4) and mounted on $DVR_DIR"
+}
+
 valid_rec_name() {
 	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts)$'
 }
@@ -598,13 +655,7 @@ dvr_cmd() {
 	[ $# -gt 0 ] && shift
 	case "$sub" in
 	status)
-		if running rkfpv && [ -f "$DVR_STATUS" ]; then
-			state=$(dvr_field state)
-		elif dvr_mounted; then
-			state=stopped
-		else
-			state=no-card
-		fi
+		state=$(dvr_state)
 		file=$(dvr_field file); bytes=$(dvr_field bytes); drops=$(dvr_field drops); err=$(dvr_field error)
 		running rkfpv || { file=-; bytes=0; drops=0; }
 		set -- $(dvr_space)
@@ -673,7 +724,15 @@ dvr_cmd() {
 		sync
 		[ "$JSON" = 1 ] && printf '{"ok":true,"deleted":%s}\n' "$n" || echo "deleted $n file(s)${cur:+ (kept $cur, being recorded)}"
 		;;
-	*) die "dvr: status | start | stop | list | delete <file> | delete-all" ;;
+	device)
+		set -- $(dvr_device)
+		fmt=; [ -n "${1:-}" ] && { dvr_is_ext4 "$1" && fmt=ext4 || fmt=other; }
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"device":"%s","kind":"%s","fs":"%s"}\n' "${1:-}" "${2:-}" "$fmt"
+		elif [ -n "${1:-}" ]; then echo "$1 $2 $fmt"     # S99fpv reads this
+		fi ;;
+	format) dvr_format "$@" ;;
+	*) die "dvr: status | start | stop | list | delete <file> | delete-all | device | format --yes" ;;
 	esac
 }
 

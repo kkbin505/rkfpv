@@ -1,6 +1,6 @@
 # rkfpv
 
-RV1103 (Luckfox Pico) 上替代 majestic 的推流程序：
+RV1103 / RV1106（Luckfox Pico Mini、Pico Pro）上替代 majestic 的推流程序：
 
 ```
 sensor → AIQ(ISP) → VI → VENC(H.265) → RTP/UDP → wfb_tx -u 5600 → 无线
@@ -16,6 +16,8 @@ make test       # 在电脑上跑 RTP 封包单元测试
 ```
 
 依赖 Luckfox SDK 里预编译好的 rockit / rkaiq / mpp / rga 和 uclibc 工具链，不需要先完整编一遍 SDK。
+
+支持的板子：Pico Mini（RV1103，TF 卡启动，录像在卡上的 dvr 分区）和 Pico Pro（RV1106G2，SPI NAND 启动，录像用插在卡槽里的 TF 卡）。两块板用同一套程序，Pro 的编译和刷机见 `docs/build-steps.md` 第 16 节。
 
 ## 阶段 A：不接网卡，直接推到电脑
 

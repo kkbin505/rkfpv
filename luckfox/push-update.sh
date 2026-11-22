@@ -1,0 +1,40 @@
+#!/bin/sh
+# Updates the rkfpv programs on a running board over ADB, without
+# reflashing. For the Pico Pro (SPI NAND: the image cannot be edited on a
+# PC like the Mini's TF card); works on the Mini too.
+#
+#   make && luckfox/push-update.sh [adb serial]
+#
+# Settings (/etc/rkfpv.conf, /etc/wfb.yaml) and the wfb key are left alone;
+# the shipped defaults for `fpv reset` are updated. Reboot afterwards.
+# On Windows, run the same `adb push` lines by hand.
+set -e
+
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+SDK=${SDK:-$(cd "$HERE/.." && pwd)/luckfox-pico}
+STRIP=${STRIP:-$SDK/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-strip}
+ADB="adb${1:+ -s $1}"
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+for b in rkfpv fpvd mavbridge dvrhttpd; do
+	[ -f "$HERE/build/$b" ] || { echo "missing build/$b: run make first" >&2; exit 1; }
+	"$STRIP" -o "$TMP/$b" "$HERE/build/$b"
+done
+
+$ADB get-state > /dev/null || { echo "no board on adb" >&2; exit 1; }
+$ADB shell 'mount -o remount,rw / 2>/dev/null; mkdir -p /tmp/rkfpv-update'
+for b in rkfpv fpvd mavbridge dvrhttpd; do
+	$ADB push "$TMP/$b" /tmp/rkfpv-update/ > /dev/null
+done
+for f in fpv wfb.sh S99fpv rkfpv.conf; do
+	$ADB push "$HERE/files/$f" /tmp/rkfpv-update/ > /dev/null
+done
+# replace in place only after every file arrived (a half update would not boot FPV)
+$ADB shell 'set -e; cd /tmp/rkfpv-update
+	for b in rkfpv fpvd mavbridge dvrhttpd fpv wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
+	cp S99fpv /etc/init.d/S99fpv.new && chmod 755 /etc/init.d/S99fpv.new && mv /etc/init.d/S99fpv.new /etc/init.d/S99fpv
+	mkdir -p /etc/fpv/defaults && cp rkfpv.conf /etc/fpv/defaults/rkfpv.conf
+	cd /; rm -rf /tmp/rkfpv-update; sync; echo "updated: $(cat /proc/device-tree/model 2>/dev/null | tr -d "\000")"'
+echo "done: reboot the board to use the new programs (adb shell reboot)"
