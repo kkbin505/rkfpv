@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "config.h"
 #include "osd.h"
 #include "telem.h"
 
@@ -13,6 +14,9 @@ typedef struct {
 	int ul_ok, ul_rssi, ul_lq;      /* wfb uplink as received by the air unit */
 	uint64_t now_ms;
 	int temp_ok, temp_c;             /* SoC temperature, degrees C */
+	int vid_w, vid_h;                /* link stream size; 0 = not shown */
+	int fps_x10;                     /* measured link frame rate x10, <0 = not yet */
+	const osd_pos_t *pos;            /* element positions (osd_layout); NULL = defaults */
 } osd_view_t;
 
 /* one full redraw: begin, draw, commit */

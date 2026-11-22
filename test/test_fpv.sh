@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 58 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 59 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -189,6 +189,16 @@ fpvp dvr format --yes > /dev/null && grep -q "^mkfs.ext4 -F -q -L dvr -m 0 $T/ro
 rm -rf "$B/mmcblk0" "$B/mmcblk0p1"
 fpvp dvr format --yes > /dev/null 2>&1 && bad "format without a card accepted" || ok "format refuses with no card"
 check "pro: no card -> no-card" "no-card" "$(rm -rf "$T/root/mnt"; dstate)"
+
+# OSD layout
+setup
+check "osd_layout default" "osd_layout = mode:1:25:44,armed:1:25:81,rec:1:457:44,timer:1:908:44,temp:1:898:81,battery:1:25:919,mah:1:25:883,video:1:833:847,uplink:1:833:883,lq:1:908:919,cross:1:500:500" "$(fpv get osd_layout)"
+fpv set osd_layout "timer:0:10:20,lq:1:0:1000" > /dev/null && ok "osd_layout partial set" || bad "osd_layout partial set"
+check "osd_layout written" "osd_layout = timer:0:10:20,lq:1:0:1000" "$(grep '^osd_layout' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//')"
+for v in "timer:2:1:1" "timer:1:1001:1" "nope:1:1:1" "timer:1:1" "timer:1:1:1;x" "TIMER:1:1:1" "timer:1:01:1x"; do
+	fpv set osd_layout "$v" > /dev/null 2>&1 && bad "osd_layout '$v' accepted" || ok "osd_layout '$v' rejected"
+done
+check "rejects leave the file" "osd_layout = timer:0:10:20,lq:1:0:1000" "$(grep '^osd_layout' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//')"
 
 # ISP settings: words and ranges
 setup

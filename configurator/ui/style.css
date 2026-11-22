@@ -184,3 +184,39 @@ footer {
   .param { grid-template-columns: 1fr; }
   #previewDock, #previewDock.big { width: auto; border-left: 0; border-top: 1px solid var(--line); }
 }
+
+/* OSD tab: element list + drag stage (live preview or a wallpaper behind) */
+.osdWrap { display: flex; gap: 16px; align-items: flex-start; }
+.osdList { width: 240px; flex-shrink: 0; }
+.osdList label { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+.osdList label .smp { margin-left: auto; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
+.osdStageBox { flex: 1; min-width: 0; }
+#osdStage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 4px; overflow: hidden;
+  user-select: none; touch-action: none;
+  /* wallpaper when there is no preview: sky, horizon, field */
+  background:
+    radial-gradient(ellipse at 70% 18%, #fff8 0, #fff0 22%),
+    linear-gradient(to bottom, #4f86c6 0%, #9cc3e6 52%, #c9d9a8 52.5%, #7d9a4c 70%, #4e6a2c 100%);
+}
+#osdStage.live { background: #000; }
+#osdStage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
+#osdBoxes { position: absolute; inset: 0; }
+.osdBox {
+  position: absolute; cursor: grab; white-space: pre; color: #fff;
+  font-family: ui-monospace, Consolas, "DejaVu Sans Mono", monospace; font-weight: 700;
+  text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+  outline: 1px dashed #fff6;
+}
+.osdBox:hover, .osdBox.drag { outline: 2px solid var(--accent); background: #f5470022; }
+.osdBox.drag { cursor: grabbing; z-index: 2; }
+#osdStage.live .osdBox { color: transparent; text-shadow: none; outline: 1px dashed #f54700cc; }
+.osdBox .tag { position: absolute; left: 0; top: -15px; font: 10px system-ui, sans-serif; color: #fff;
+  background: var(--accent); padding: 0 4px; border-radius: 2px; text-shadow: none; display: none; }
+.osdBox:hover .tag, .osdBox.drag .tag { display: block; }
+.osdCross::before, .osdCross::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 0 1px #000; }
+.osdCross::before { left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; }
+.osdCross::after { top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; }
+#osdStage.live .osdCross::before, #osdStage.live .osdCross::after { display: none; }
+.warnbox { border-left: 4px solid var(--warn); margin-bottom: 12px; display: flex; align-items: center; gap: 12px; }
+@media (max-width: 900px) { .osdWrap { flex-direction: column; } .osdList { width: auto; } .osdStageBox { width: 100%; } }

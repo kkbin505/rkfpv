@@ -16,7 +16,7 @@ const state = {
   txpowerKey: "",    // txpower_<card> of the adapter in use (from status)
 };
 
-const NON_FORM_TABS = ["status", "image", "dvr", "presets", "logs", "cli"];
+const NON_FORM_TABS = ["status", "osd", "image", "dvr", "presets", "logs", "cli"];
 const IMAGE_GROUPS = [["Picture", "#imgPicture"], ["Exposure", "#imgExposure"], ["Noise & detail", "#imgNoise"]];
 
 const APPLY_TAG = {
@@ -79,8 +79,10 @@ function showTab(tab) {
   $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
   $("#notConnected").hidden = state.connected;
   $$(".tab").forEach((s) => (s.hidden = true));
+  osdBg();                                   // preview canvas back to the dock unless on the OSD tab
   if (!state.connected) return;
   if (tab === "status") { $("#tab-status").hidden = false; refreshStatus(); renderForm("Hotspot", $("#hsSettings")); loadHotspot(); }
+  else if (tab === "osd") { $("#tab-osd").hidden = false; renderOsd(); }
   else if (tab === "logs") { $("#tab-logs").hidden = false; loadLog(); }
   else if (tab === "cli") { $("#tab-cli").hidden = false; $("#cliIn").focus(); }
   else if (tab === "presets") { $("#tab-presets").hidden = false; loadPresets(); }
@@ -521,6 +523,203 @@ async function iqUpload(file) {
   loadIq();
 }
 
+// ---------------------------------------------------------------- OSD layout
+// Betaflight-style editor for osd_layout ("name:on:x:y,...", x/y in 1/1000
+// of the picture). Box sizes and the alignment rule mirror rkfpv
+// (src/osd_layout.c, osd_elem_chars in src/config.c): the box is as wide as
+// the element's longest text; text is left / centred / right in the box by
+// the third of the picture the box is in.
+
+const OSD_ELEMS = [
+  // name, label, longest text (sets the box width), sample shown on the wallpaper
+  ["mode", "Flight mode", "NO FC DATA", "ACRO"],
+  ["armed", "Armed / disarmed", "DISARMED", "ARMED"],
+  ["rec", "Recording", "CARD FULL", "REC"],
+  ["timer", "Flight timer", "T 00:00", "T 03:12"],
+  ["temp", "CPU temperature", "CPU 100C", "CPU 52C"],
+  ["battery", "Battery V / A / %", "16.4V 12.3A 78%", "16.4V 12.3A 78%"],
+  ["mah", "Used capacity", "12345 mAh", "1234 mAh"],
+  ["video", "Resolution / fps", "2304x1296 60fps", "1152x648 60fps"],
+  ["uplink", "Uplink RSSI / LQ", "UL -100dBm 100%", "UL -48dBm 98%"],
+  ["lq", "RC link quality", "LQ 100%", "LQ 99%"],
+  ["cross", "Crosshair", "+", "+"],
+];
+const osd = { pos: {}, drag: null };
+
+function osdParse(s) {
+  const pos = {};
+  for (const it of String(s || "").split(",")) {
+    const m = /^([a-z]+):([01]):(\d+):(\d+)$/.exec(it);
+    if (m) pos[m[1]] = { on: m[2] === "1", x: +m[3], y: +m[4] };
+  }
+  return pos;
+}
+
+function osdDefault() {
+  const p = state.schema.find((x) => x.key === "osd_layout");
+  return osdParse(p ? p.default : "");
+}
+
+function osdString() {
+  return OSD_ELEMS.map(([n]) => { const p = osd.pos[n]; return `${n}:${p.on ? 1 : 0}:${p.x}:${p.y}`; }).join(",");
+}
+
+// picture size and font metrics as rkfpv uses them (osd.c: 30 px font from 1000 lines)
+function osdGeom() {
+  const [w, h] = String(state.values.size || "1280x720").split("x").map(Number);
+  const big = h >= 1000;
+  return { w, h, adv: big ? 18 : 12, lh: big ? 38 : 26 };
+}
+
+// the preview canvas lives in the dock; on the OSD tab it is the stage background
+function osdBg() {
+  const cv = $("#pvCanvas"), stage = $("#osdStage");
+  const here = state.tab === "osd" && state.connected && pv.on;
+  if (here && cv.parentElement !== stage) {
+    stage.insertBefore(cv, $("#osdBoxes"));
+    $("#previewDock").hidden = true;
+  } else if (!here && cv.parentElement === stage) {
+    $("#previewDock").insertBefore(cv, $("#pvMsg"));
+    if (pv.on) $("#previewDock").hidden = false;
+  }
+  stage.classList.toggle("live", here);
+  $("#osdBgNote").textContent = here
+    ? "Live preview: the OSD you see is the one the board draws; the outlines are what you drag."
+    : "No preview: wallpaper with sample values. Press ▶ Preview (board on USB) to see the real picture here.";
+}
+
+function renderOsd() {
+  osd.pos = { ...osdDefault(), ...osdParse(state.values.osd_layout) };
+  $("#osdOff").hidden = state.values.osd === "1";
+  const list = $("#osdItems");
+  list.innerHTML = "";
+  for (const [n, label] of OSD_ELEMS) {
+    const l = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = osd.pos[n].on;
+    cb.onchange = () => { osd.pos[n].on = cb.checked; osdDraw(); osdApply(); };
+    const t = document.createElement("span");
+    t.textContent = label;
+    l.append(cb, t);
+    list.appendChild(l);
+  }
+  osdBg();
+  osdDraw();
+}
+
+function osdDraw() {
+  const g = osdGeom(), stage = $("#osdStage"), boxes = $("#osdBoxes");
+  const sw = stage.clientWidth, s = sw / g.w;
+  if (!sw) return;
+  boxes.innerHTML = "";
+  for (const [n, label, longest, sample] of OSD_ELEMS) {
+    const p = osd.pos[n];
+    if (!p.on) continue;
+    const b = document.createElement("div");
+    b.className = "osdBox";
+    b.dataset.name = n;
+    if (n === "cross") {
+      const size = Math.round(g.h / 40) * 2 + 1;
+      b.classList.add("osdCross");
+      Object.assign(b.style, { left: `${(p.x * g.w / 1000 - size / 2) * s}px`, top: `${(p.y * g.h / 1000 - size / 2) * s}px`,
+        width: `${size * s}px`, height: `${size * s}px` });
+    } else {
+      const bw = longest.length * g.adv + 2;
+      let x = Math.floor(p.x * g.w / 1000), y = Math.floor(p.y * g.h / 1000);
+      x = Math.max(0, Math.min(x, g.w - bw));
+      y = Math.max(0, Math.min(y, g.h - g.lh));
+      const mid = x + bw / 2;
+      Object.assign(b.style, {
+        left: `${x * s}px`, top: `${y * s}px`, width: `${bw * s}px`, height: `${g.lh * s}px`,
+        lineHeight: `${g.lh * s}px`, fontSize: `${g.adv * s / 0.6}px`,
+        textAlign: mid > 2 * g.w / 3 ? "right" : mid >= g.w / 3 ? "center" : "left",
+      });
+      b.textContent = sample;
+    }
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = label;
+    b.appendChild(tag);
+    b.onpointerdown = (e) => osdDragStart(e, n);
+    boxes.appendChild(b);
+  }
+}
+
+// drag: the boxes are redrawn while moving, so the stage holds the pointer
+function osdDragStart(e, n) {
+  e.preventDefault();
+  const stage = $("#osdStage");
+  stage.setPointerCapture(e.pointerId);
+  const p = osd.pos[n];
+  osd.drag = { n, sx: e.clientX, sy: e.clientY, x0: p.x, y0: p.y, moved: false };
+  osdMark();
+}
+
+function osdMark() {
+  const d = osd.drag;
+  $$("#osdBoxes .osdBox").forEach((b) => b.classList.toggle("drag", !!d && b.dataset.name === d.n));
+}
+
+function osdDragMove(e) {
+  const d = osd.drag;
+  if (!d) return;
+  const g = osdGeom(), s = $("#osdStage").clientWidth / g.w;
+  // move in picture pixels, snapped to the character grid like Betaflight
+  let px = d.x0 * g.w / 1000 + (e.clientX - d.sx) / s;
+  let py = d.y0 * g.h / 1000 + (e.clientY - d.sy) / s;
+  if (d.n !== "cross") {
+    px = Math.round(px / g.adv) * g.adv;
+    py = Math.round(py / (g.lh / 2)) * (g.lh / 2);
+  }
+  const x = Math.max(0, Math.min(1000, Math.round(px * 1000 / g.w)));
+  const y = Math.max(0, Math.min(1000, Math.round(py * 1000 / g.h)));
+  if (x === osd.pos[d.n].x && y === osd.pos[d.n].y) return;
+  osd.pos[d.n].x = x;
+  osd.pos[d.n].y = y;
+  d.moved = true;
+  osdDraw();
+  osdMark();
+}
+
+function osdDragEnd() {
+  const d = osd.drag;
+  osd.drag = null;
+  osdMark();
+  if (d && d.moved) osdApply();
+}
+
+let osdBusy = false, osdAgain = false;
+async function osdApply() {
+  if (osdBusy) { osdAgain = true; return; }   // one fpv call at a time, the last state wins
+  osdBusy = true;
+  const v = osdString();
+  const r = await fpv("set", "osd_layout", v);
+  osdBusy = false;
+  if (!r.ok) { toast(r.error, "err"); return; }
+  state.values.osd_layout = v;
+  state.schema.forEach((p) => { if (p.key === "osd_layout") p.value = v; });
+  $("#osdInfo").textContent = r.fpv_running || pv.on
+    ? "Saved and applied: the board redraws the OSD within a second."
+    : "Saved. FPV is not running: used when it starts.";
+  if (osdAgain) { osdAgain = false; osdApply(); }
+}
+
+$("#osdStage").onpointermove = osdDragMove;
+$("#osdStage").onpointerup = $("#osdStage").onpointercancel = osdDragEnd;
+$("#osdReset").onclick = () => {
+  if (!confirm("Put every OSD element back to its default place and turn them all on?")) return;
+  osd.pos = osdDefault();
+  state.values.osd_layout = osdString();
+  renderOsd();
+  osdApply();
+};
+$("#osdOn").onclick = async () => {
+  const r = await applyValues({ osd: "1" });
+  if (r && r.ok) { $("#osdOff").hidden = true; if (pv.on) restartVideo(); }
+};
+window.addEventListener("resize", () => { if (state.tab === "osd") osdDraw(); });
+
 // ---------------------------------------------------------------- DVR
 
 const fmtMB = (b) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB";
@@ -930,6 +1129,7 @@ async function previewStart() {
   pv.timer = setInterval(pvStats, 1000);
   if (pv.codec) pvRead();
   if (state.connected) refreshStatus();   // mode badge: preview
+  osdBg();
 }
 
 async function previewStop(hide = true) {
@@ -943,6 +1143,7 @@ async function previewStop(hide = true) {
   $("#previewBtn").classList.remove("on");
   if (hide) $("#previewDock").hidden = true;
   $("#pvInfo").textContent = "";
+  osdBg();
   if (port) {
     const r = await post("/api/preview/stop", { port });
     if (!r.ok) toast(r.error, "err");

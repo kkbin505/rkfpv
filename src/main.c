@@ -466,13 +466,12 @@ static int read_uplink(int *rssi, int *lq)
 }
 
 /* one OSD redraw, timed */
-static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
-			 int temp_ok, int temp_c, uint64_t (*clock_us)(void))
+static uint64_t draw_osd(osd_t *o, const osd_view_t *base, uint64_t (*clock_us)(void))
 {
 	if (!o)
 		return 0;
 	uint64_t t0 = clock_us();
-	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c };
+	osd_view_t v = *base;
 	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
 	osd_draw_view(o, &v);
 	return clock_us() - t0;
@@ -731,7 +730,9 @@ int main(int argc, char **argv)
 			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
 	}
 	uint64_t t_osd = now_us(), osd_worst = 0, temp_ms = 0;
-	int temp_ok = 0, temp_c = 0;
+	int temp_ok = 0, temp_c = 0, fps_x10 = -1;
+	unsigned long fps_n0 = 0;
+	uint64_t fps_t0 = 0;
 	telem_t telem;
 	telem_init(&telem);
 	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
@@ -773,6 +774,7 @@ int main(int argc, char **argv)
 				cfg.max_bitrate_kbps = n.max_bitrate_kbps;
 				cfg.gop = n.gop;
 				cfg.stat_time = n.stat_time;
+				memcpy(cfg.osd_pos, n.osd_pos, sizeof cfg.osd_pos);   /* next OSD redraw */
 				dvr_reconfig(dvr, n.dvr_segment, n.dvr_min_free, n.dvr_overwrite, n.dvr_ts);
 			}
 		}
@@ -870,9 +872,17 @@ int main(int argc, char **argv)
 			if (now_ms - temp_ms >= 1000) {
 				temp_ok = read_soc_temp(&temp_c);
 				temp_ms = now_ms;
+				/* link frame rate over the last second */
+				unsigned long n = g_nframes;
+				if (fps_t0 && now_ms > fps_t0)
+					fps_x10 = (int)((n - fps_n0) * 10000ULL / (now_ms - fps_t0));
+				fps_n0 = n;
+				fps_t0 = now_ms;
 			}
-			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c, now_us);
-			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c, now_us);
+			osd_view_t v = { &telem, rec, 0, 0, 0, now_ms, temp_ok, temp_c,
+					 cfg.width, cfg.height, fps_x10, cfg.osd_pos };
+			uint64_t d1 = draw_osd(osd_link, &v, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &v, now_us);
 			if (d1 + d2 > osd_worst) {
 				osd_worst = d1 + d2;
 				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",

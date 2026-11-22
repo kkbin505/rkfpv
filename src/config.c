@@ -5,6 +5,73 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* --------------------------------------------------------------- OSD layout */
+
+const char *const osd_elem_name[OSD_N] = {
+	"mode", "armed", "rec", "timer", "temp", "battery", "mah",
+	"video", "uplink", "lq", "cross",
+};
+
+/* longest text of each element, in characters (keep in sync with the
+ * configurator's OSD tab) */
+const int osd_elem_chars[OSD_N] = {
+	10,     /* NO FC DATA / flight mode */
+	8,      /* DISARMED */
+	9,      /* CARD FULL */
+	7,      /* T 00:00 */
+	8,      /* CPU 100C */
+	15,     /* 16.4V 12.3A 78% */
+	9,      /* 12345 mAh */
+	15,     /* 2304x1296 60fps */
+	15,     /* UL -100dBm 100% */
+	7,      /* LQ 100% */
+	1,      /* crosshair */
+};
+
+/* the layout before it could be moved (1280x720, 20 px font) */
+const osd_pos_t osd_default_layout[OSD_N] = {
+	{ 1, 25, 44 },   /* mode       top left */
+	{ 1, 25, 81 },   /* armed      below it */
+	{ 1, 457, 44 },  /* rec        top centre */
+	{ 1, 908, 44 },  /* timer      top right */
+	{ 1, 898, 81 },  /* temp       below it */
+	{ 1, 25, 919 },  /* battery    bottom left */
+	{ 1, 25, 883 },  /* mah        above it */
+	{ 1, 833, 847 }, /* video      bottom right, 3rd line */
+	{ 1, 833, 883 }, /* uplink     2nd line */
+	{ 1, 908, 919 }, /* lq         bottom line */
+	{ 1, 500, 500 }, /* cross      centre */
+};
+
+int osd_layout_parse(const char *s, osd_pos_t pos[OSD_N])
+{
+	osd_pos_t p[OSD_N];
+	memcpy(p, osd_default_layout, sizeof p);
+	while (*s) {
+		char name[16];
+		int on, x, y, n = 0;
+		if (sscanf(s, "%15[a-z]:%d:%d:%d%n", name, &on, &x, &y, &n) != 4 || n == 0)
+			return -1;
+		if (on < 0 || on > 1 || x < 0 || x > 1000 || y < 0 || y > 1000)
+			return -1;
+		int i;
+		for (i = 0; i < OSD_N && strcmp(name, osd_elem_name[i]); i++)
+			;
+		if (i < OSD_N) {        /* unknown names: from a newer version, skip */
+			p[i].on = on;
+			p[i].x = x;
+			p[i].y = y;
+		}
+		s += n;
+		if (*s == ',')
+			s++;
+		else if (*s)
+			return -1;
+	}
+	memcpy(pos, p, sizeof p);
+	return 0;
+}
+
 void config_defaults(rkfpv_config_t *c)
 {
 	memset(c, 0, sizeof(*c));
@@ -59,6 +126,7 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.wb = WB_AUTO;
 
 	c->osd = 0;             /* experimental, off until tested on hardware */
+	memcpy(c->osd_pos, osd_default_layout, sizeof c->osd_pos);
 
 	c->stats_interval = 5;
 }
@@ -108,6 +176,12 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 {
 	if (!strcmp(key, "size"))
 		return parse_size(val, &c->width, &c->height);
+	if (!strcmp(key, "osd_layout")) {
+		/* never fatal: a bad layout must not stop the video */
+		if (osd_layout_parse(val, c->osd_pos))
+			fprintf(stderr, "config: bad osd_layout, using the default layout\n");
+		return 0;
+	}
 	if (!strcmp(key, "sensor")) {
 		if (!strcmp(val, "auto")) { c->sensor_w = c->sensor_h = 0; return 0; }
 		return parse_size(val, &c->sensor_w, &c->sensor_h);

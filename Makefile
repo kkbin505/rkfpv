@@ -81,8 +81,8 @@ build-host/dvrhttpd: src/dvrhttpd.c | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
 # OSD drawing with the RGN calls stubbed (SDK headers only, no SDK libs)
-build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_layout.c src/telem.c | build-host
-	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c src/osd_layout.c src/telem.c
+build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_layout.c src/telem.c src/config.c src/config.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c src/osd_layout.c src/telem.c src/config.c
 
 build-host/test_telem: test/test_telem.c src/telem.c src/telem.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_telem.c src/telem.c
@@ -99,6 +99,7 @@ test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/f
 	./build-host/test_preview 2>/dev/null | tail -1
 	./build-host/test_config files/rkfpv.conf
 	./build-host/test_osd build-host/osd.pgm > /dev/null && echo "osd drawing ok"
+	test/check_osd_default.sh build-host/test_osd files/fpv
 	python3 -I test/test_telem.py build-host/test_telem | tail -1
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh
