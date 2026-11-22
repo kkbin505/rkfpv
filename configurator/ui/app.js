@@ -532,15 +532,19 @@ async function refreshDvr() {
   dvrState = r.state;
   const badge = $("#dvrBadge"), btn = $("#dvrToggle");
   const label = { recording: "● REC", waiting: "● waiting for keyframe", stopped: "stopped",
-                  full: "card full", error: "error", "no-card": "no DVR partition", off: "off" }[r.state] || r.state;
+                  full: "card full", error: "error", "no-card": "no recording card", off: "off",
+                  unformatted: "card not ext4" }[r.state] || r.state;
   badge.textContent = label;
   badge.className = "recbadge" + (r.state === "recording" || r.state === "waiting" ? " rec"
-    : ["full", "error", "no-card"].includes(r.state) ? " warn" : "");
+    : ["full", "error", "no-card", "unformatted"].includes(r.state) ? " warn" : "");
+  $("#dvrFormat").hidden = r.state !== "unformatted";
   const rec = r.state === "recording" || r.state === "waiting";
   btn.textContent = rec ? "Stop recording" : "Start recording";
-  btn.disabled = !r.fpv_running || r.state === "no-card";
+  btn.disabled = !r.fpv_running || r.state === "no-card" || r.state === "unformatted";
   $("#dvrFile").textContent = rec && r.file !== "-" ? r.file : "";
-  $("#dvrSub").textContent = !r.fpv_running
+  $("#dvrSub").textContent = r.state === "unformatted"
+    ? "The TF card is not ext4 (a new card is usually FAT32). Format card makes it ext4 for recordings."
+    : !r.fpv_running
     ? "FPV is off (debug mode): recording happens in FPV mode. Start/Stop needs fpvd over the air (issue #1) or the serial console."
     : rec ? `${fmtMB(+r.bytes)} written${+r.drops ? ` · ${r.drops} frames dropped (card too slow?)` : ""}` +
       (r.mem_avail_kb ? ` · RAM free ${(r.mem_avail_kb / 1024).toFixed(1)} MB` : "")
@@ -1005,6 +1009,12 @@ $("#dvrDelAll").onclick = async () => {
   if (!confirm("Delete ALL recordings from the card (except one being recorded)?")) return;
   const r = await fpv("dvr", "delete-all");
   r.ok ? (toast(`Deleted ${r.deleted} file(s)`, "ok"), loadDvrFiles()) : toast(r.error, "err");
+};
+$("#dvrFormat").onclick = async () => {
+  if (!confirm("Format the TF card as ext4? EVERYTHING on the card is erased.")) return;
+  if (!confirm("Really erase the TF card?")) return;
+  const r = await fpv("dvr", "format", "--yes");
+  r.ok ? (toast(`Card formatted (${r.device})`, "ok"), refreshDvr(), loadDvrFiles()) : toast(r.error, "err");
 };
 $("#backup").onclick = backup;
 $("#restore").onclick = () => $("#restoreFile").click();

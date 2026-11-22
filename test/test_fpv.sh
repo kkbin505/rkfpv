@@ -155,6 +155,41 @@ fpv set dvr_segment 5 > /dev/null 2>&1 && bad "dvr_segment 5 accepted" || ok "dv
 rm -rf "$T/root/mnt" "$T/root/tmp"
 check "no partition -> no-card" "no-card" "$(fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
 
+# DVR card discovery and format (fake sysfs, fake mkfs/mount in PATH)
+setup
+B="$T/root/sys/class/block"
+dstate() { fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])'; }
+# Mini: boot card mmcblk1, partition named dvr
+mkdir -p "$B/mmcblk1/mmcblk1p6" "$B/mmcblk1/mmcblk1p7" "$B/mmcblk1p6" "$B/mmcblk1p7" "$T/root/proc"
+printf 'DEVNAME=mmcblk1p6\nPARTNAME=rootfs\n' > "$B/mmcblk1p6/uevent"
+printf 'DEVNAME=mmcblk1p7\nPARTNAME=dvr\n' > "$B/mmcblk1p7/uevent"
+echo "console=ttyFIQ0 root=/dev/mmcblk1p6 rootwait" > "$T/root/proc/cmdline"
+check "mini: dvr partition" "/dev/mmcblk1p7 part other" "$(fpv dvr device)"
+rm -rf "$B/mmcblk1p7" "$B/mmcblk1/mmcblk1p7"
+check "mini without dvr partition: boot card never picked" "" "$(fpv dvr device)"
+# Pro: NAND boot (ubi), TF card mmcblk0 with one partition
+rm -rf "$B"; mkdir -p "$B/mmcblk0/mmcblk0p1" "$B/mmcblk0p1" "$B/mtdblock3" "$T/root/dev"
+echo "console=ttyFIQ0 ubi.mtd=5 root=ubi0:rootfs rootfstype=ubifs" > "$T/root/proc/cmdline"
+printf 'Luckfox Pico Pro Max\000' > "$T/root/proc/device-tree/model" 2>/dev/null || { mkdir -p "$T/root/proc/device-tree"; printf 'Luckfox Pico Pro Max\000' > "$T/root/proc/device-tree/model"; }
+check "pro: TF card first partition" "/dev/mmcblk0p1 card other" "$(fpv dvr device)"
+head -c 4096 /dev/zero > "$T/root/dev/mmcblk0p1"          # FAT or blank: not ext4
+check "pro: new card is unformatted" "unformatted" "$(dstate)"
+check "status board + unformatted" "Luckfox Pico Pro Max unformatted" \
+	"$(fpv status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["board"], d["dvr_state"])')"
+mkdir -p "$T/bin"
+for c in mkfs.ext4 mount umount; do
+	printf '#!/bin/sh\necho "%s $*" >> "%s/cmds"\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"
+done
+fpvp() { PATH=$T/bin:$PATH fpv "$@"; }
+fpvp dvr format > /dev/null 2>&1 && bad "format without --yes accepted" || ok "format needs --yes"
+[ ! -e "$T/cmds" ] && ok "nothing run without --yes" || bad "commands ran without --yes"
+fpvp dvr format --yes > /dev/null && grep -q "^mkfs.ext4 -F -q -L dvr -m 0 $T/root/dev/mmcblk0p1\$" "$T/cmds" \
+	&& grep -q "^mount -t ext4 .* $T/root/dev/mmcblk0p1 $T/root/mnt/dvr\$" "$T/cmds" \
+	&& ok "format: mkfs + mount on the TF card" || bad "format: $(cat "$T/cmds" 2>/dev/null)"
+rm -rf "$B/mmcblk0" "$B/mmcblk0p1"
+fpvp dvr format --yes > /dev/null 2>&1 && bad "format without a card accepted" || ok "format refuses with no card"
+check "pro: no card -> no-card" "no-card" "$(rm -rf "$T/root/mnt"; dstate)"
+
 # ISP settings: words and ranges
 setup
 fpv set isp_exp_max 4 isp_nr_temporal iq isp_blc off isp_antiflicker 60 isp_wb shade > /dev/null
