@@ -802,7 +802,7 @@ hotspot_cmd() {
 		[ "$mode" = hotspot ] && clients=$(iw dev "$WLAN" station dump 2>/dev/null | grep -c '^Station')
 		ssid=$(get_value hotspot_ssid); pass=$(get_value hotspot_pass)
 		if [ "$JSON" = 1 ]; then
-			printf '{"ok":true,"switch":"%s","mode":"%s","ssid":"%s","pass":"%s","channel":"%s","clients":%s,"address":"192.168.73.1"}\n' \
+			printf '{"ok":true,"switch":"%s","mode":"%s","ssid":"%s","pass":"%s","channel":"%s","clients":%s,"address":"10.0.0.1"}\n' \
 				"${sw:-none}" "${mode:-fpv}" "$(jesc "$ssid")" "$(jesc "$pass")" "$(get_value hotspot_channel)" "${clients:-0}"
 		else
 			echo "button:   ${sw:-none} (hold BOOT 2 s to turn the hotspot on / off)"
@@ -810,7 +810,7 @@ hotspot_cmd() {
 			echo "ssid:     $ssid"
 			echo "password: $pass"
 			echo "channel:  $(get_value hotspot_channel)"
-			[ "$mode" = hotspot ] && echo "clients:  $clients   (http://192.168.73.1/ for recordings)"
+			[ "$mode" = hotspot ] && echo "clients:  $clients   (http://10.0.0.1/ for recordings)"
 		fi ;;
 	*) die "hotspot: status" ;;
 	esac

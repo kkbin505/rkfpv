@@ -135,10 +135,10 @@ limit_dirty_memory() {
 
 # ---- hotspot mode --------------------------------------------------------
 # Holding the BOOT button for 2 s after boot turns the WiFi card into a WPA2
-# access point: http://192.168.73.1/ for recordings, fpvd on
-# 192.168.73.1:7000 for settings. Hold again for FPV. fpvd reads the button
+# access point: http://10.0.0.1/ for recordings, fpvd on
+# 10.0.0.1:7000 for settings. Hold again for FPV. fpvd reads the button
 # (SARADC channel 0) and calls hotspot-on / hotspot-off.
-HS_ADDR=192.168.73.1
+HS_ADDR=10.0.0.1
 MODE_STATUS=/tmp/mode.status
 WLAN=wlan0
 
@@ -240,7 +240,7 @@ hotspot_on() {
 	dnsmasq --conf-file=/dev/null --interface="$WLAN" --bind-interfaces \
 		--no-resolv --no-hosts --address="/#/$HS_ADDR" \
 		--dhcp-option=114,"http://$HS_ADDR/" \
-		--dhcp-range=192.168.73.10,192.168.73.50,255.255.255.0,12h \
+		--dhcp-range=10.0.0.10,10.0.0.50,255.255.255.0,12h \
 		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
 	start-stop-daemon -S -q -b -m -p /var/run/dvrhttpd.pid -x /usr/bin/dvrhttpd -- \
 		-b "$HS_ADDR" -p 80 -d "$DVR_DIR"

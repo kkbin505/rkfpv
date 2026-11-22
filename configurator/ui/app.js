@@ -955,7 +955,7 @@ async function previewFfplay() {
   r.ok ? pvMsg("Playing in the ffplay window. Close this panel (✕) to stop.") : pvMsg(r.error, true);
 }
 
-const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "192.168.73.1" };
+const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "10.0.0.1" };
 $("#transport").onchange = () => {
   const t = $("#transport").value;
   const net = t !== "adb";
