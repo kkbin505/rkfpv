@@ -196,7 +196,7 @@ def transport_for(req):
     if kind == "fpvd":
         return Fpvd(req.get("host") or "172.32.0.93")
     if kind == "hotspot":
-        return Fpvd(req.get("host") or "192.168.73.1")
+        return Fpvd(req.get("host") or "10.0.0.1")
     raise TransportError(f"unknown transport {kind}")
 
 

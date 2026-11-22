@@ -22,7 +22,7 @@
  * its sign-in window showing it. Requests to the board's own address are
  * served as listed above.
  *
- *   dvrhttpd [-b 192.168.73.1] [-p 80] [-d /mnt/dvr] [-s /tmp/dvr.status]
+ *   dvrhttpd [-b 10.0.0.1] [-p 80] [-d /mnt/dvr] [-s /tmp/dvr.status]
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -48,7 +48,7 @@
 
 static const char *g_dir = "/mnt/dvr";
 static const char *g_status = "/tmp/dvr.status";
-static const char *g_host = "192.168.73.1";   /* our address: other Hosts are redirected */
+static const char *g_host = "10.0.0.1";   /* our address: other Hosts are redirected */
 static int g_port = 80;
 static volatile sig_atomic_t g_quit;
 static void on_signal(int s) { (void)s; g_quit = 1; }
@@ -448,7 +448,7 @@ static void handle(int fd)
 
 int main(int argc, char **argv)
 {
-	const char *bind_ip = "192.168.73.1";
+	const char *bind_ip = "10.0.0.1";
 	int port = 80, c;
 	while ((c = getopt(argc, argv, "b:p:d:s:h")) != -1) {
 		switch (c) {

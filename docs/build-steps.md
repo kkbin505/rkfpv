@@ -178,9 +178,9 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 - hotspot-on:
   - stop rkfpv and wfb
   - `wfb.sh adapter`
-  - wlan0 managed, 192.168.73.1/24
+  - wlan0 managed, 10.0.0.1/24
   - hostapd (WPA2, settings from `wfb.yaml` `hotspot:`)
-  - dnsmasq DHCP .10–.50
+  - dnsmasq DHCP 10.0.0.10–.50
   - `dvrhttpd` on port 80
 - hotspot-off restarts wfb and rkfpv.
 - Tests: `test_switch.py` (fake ADC file), `test_dvrhttpd.py`, fpv str-type cases.
