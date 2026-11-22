@@ -1,5 +1,5 @@
 diff --git a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
-index bea465d80..24431abfc 100644
+index bea465d80..b26ba536c 100644
 --- a/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 +++ b/sysdrv/source/kernel/drivers/media/i2c/sc3336.c
 @@ -38,6 +38,7 @@
@@ -40,9 +40,9 @@ index bea465d80..24431abfc 100644
 +	{0x320a, 0x02},
 +	{0x320b, 0x88},
 +	{0x320c, 0x05},
-+	{0x320d, 0xa0},
++	{0x320d, 0x00},	/* line 1280, frame 664 as in sc3336p.c: 51 MHz / (1280 x 664) = 60.0 fps */
 +	{0x320e, 0x02},
-+	{0x320f, 0x96},
++	{0x320f, 0x98},
 +	{0x3210, 0x00},
 +	{0x3211, 0x02},
 +	{0x3212, 0x00},
@@ -211,8 +211,8 @@ index bea465d80..24431abfc 100644
 +			.denominator = 600000,
 +		},
 +		.exp_def = 0x0080,
-+		.hts_def = 0x05a0,
-+		.vts_def = 0x0296,
++		.hts_def = 0x0500,
++		.vts_def = 0x0298,
 +		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 +		.reg_list = sc3336_linear_10_1152x648_57fps_regs,
 +		.hdr_mode = NO_HDR,
