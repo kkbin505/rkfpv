@@ -29,6 +29,8 @@ typedef struct {
 	int width;
 	int height;
 	int fps;
+	int sensor_w;           /* sensor mode to ask for; 0 = the driver's default */
+	int sensor_h;
 	int vi_chn;             /* 0: rkisp_mainpath */
 	char iq_dir[128];       /* empty: skip AIQ (colors will be wrong) */
 	int mirror;

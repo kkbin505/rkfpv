@@ -108,6 +108,10 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 {
 	if (!strcmp(key, "size"))
 		return parse_size(val, &c->width, &c->height);
+	if (!strcmp(key, "sensor")) {
+		if (!strcmp(val, "auto")) { c->sensor_w = c->sensor_h = 0; return 0; }
+		return parse_size(val, &c->sensor_w, &c->sensor_h);
+	}
 	if (!strcmp(key, "rc")) {
 		if (!strcmp(val, "cbr")) { c->rc = RC_CBR; return 0; }
 		if (!strcmp(val, "vbr")) { c->rc = RC_VBR; return 0; }
@@ -235,12 +239,12 @@ int config_load_file(rkfpv_config_t *c, const char *path)
 void config_print(const rkfpv_config_t *c)
 {
 	fprintf(stderr,
-		"rkfpv: %dx%d@%d vi_chn=%d iq=%s mirror=%d flip=%d\n"
+		"rkfpv: %dx%d@%d sensor=%dx%d vi_chn=%d iq=%s mirror=%d flip=%d\n"
 		"rkfpv: h265 %s %d kbps (max %d) gop=%d stat=%ds slice=%d ir=%d\n"
 		"rkfpv: rtp -> %s:%d pkt_size=%d pt=%d preview=%d\n"
 		"rkfpv: dvr=%d %s segment=%ds min_free=%dMB overwrite=%d %s buffer=%dKB\n"
 		"rkfpv: dvr stream %s %dx%d %s %d kbps gop=%d\n",
-		c->width, c->height, c->fps, c->vi_chn,
+		c->width, c->height, c->fps, c->sensor_w, c->sensor_h, c->vi_chn,
 		c->iq_dir[0] ? c->iq_dir : "(none)", c->mirror, c->flip,
 		c->rc == RC_CBR ? "cbr" : "vbr", c->bitrate_kbps,
 		c->max_bitrate_kbps, c->gop, c->stat_time, c->slice_bytes,

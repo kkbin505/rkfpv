@@ -60,7 +60,8 @@ WLAN=wlan0
 #         boot    next boot
 params() {
 	cat <<'EOF'
-size|rkfpv||enum|1280x720,1920x1080,2304x1296||1280x720|video|Video|Capture resolution
+size|rkfpv||enum|1152x648,1280x720,1920x1080,2304x1296||1280x720|video|Video|Capture resolution (1152x648 with sensor = 1152x648 for 60 fps)
+sensor|rkfpv||enum|auto,1152x648||auto|video|Video|Sensor mode. auto = 2304x1296 up to 30 fps; 1152x648 = 2x2 binning up to 60 fps (experimental: needs the patched sc3336.ko and the IQ file with 1152x648 LSC)
 fps|rkfpv||int|1|60|30|video|Video|Frame rate
 rc|rkfpv||enum|cbr,vbr||cbr|venc|Video|Rate control: cbr = constant, vbr = variable
 bitrate|rkfpv||int|100|50000|3500|venc|Video|Target bitrate, kbit/s
