@@ -16,6 +16,7 @@
  * If the DVR pipeline cannot be created, the link stream is recorded.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <pthread.h>
 #include <signal.h>
@@ -423,6 +424,26 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 #define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
 #define UPLINK_STATUS "/tmp/wfb_uplink.status"
 #define OSD_PERIOD_US 250000            /* 4 redraws per second */
+#define SOC_TEMP "/sys/class/thermal/thermal_zone0/temp"   /* RV1103 tsadc, m°C */
+
+/* SoC temperature in whole degrees C; 0 if there is no sensor. Kept open
+ * and re-read with pread: one syscall, no process, once per second. */
+static int read_soc_temp(int *c)
+{
+	static int fd = -2;
+	if (fd == -2)
+		fd = open(SOC_TEMP, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;
+	char b[16];
+	ssize_t n = pread(fd, b, sizeof b - 1, 0);
+	if (n <= 0)
+		return 0;
+	b[n] = 0;
+	long mc = strtol(b, NULL, 10);
+	*c = (int)((mc + (mc < 0 ? -500 : 500)) / 1000);
+	return mc > -40000 && mc < 150000;
+}
 
 /* air-side wfb_rx (uplink from the ground station), see wfb.sh */
 static int read_uplink(int *rssi, int *lq)
@@ -446,12 +467,12 @@ static int read_uplink(int *rssi, int *lq)
 
 /* one OSD redraw, timed */
 static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
-			 uint64_t (*clock_us)(void))
+			 int temp_ok, int temp_c, uint64_t (*clock_us)(void))
 {
 	if (!o)
 		return 0;
 	uint64_t t0 = clock_us();
-	osd_view_t v = { t, rec, 0, 0, 0, now_ms };
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c };
 	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
 	osd_draw_view(o, &v);
 	return clock_us() - t0;
@@ -709,7 +730,8 @@ int main(int argc, char **argv)
 		if (dual)
 			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
 	}
-	uint64_t t_osd = now_us(), osd_worst = 0;
+	uint64_t t_osd = now_us(), osd_worst = 0, temp_ms = 0;
+	int temp_ok = 0, temp_c = 0;
 	telem_t telem;
 	telem_init(&telem);
 	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
@@ -845,8 +867,12 @@ int main(int argc, char **argv)
 					snprintf(rec, sizeof rec, "CARD FULL");
 			}
 			uint64_t now_ms = now_us() / 1000;
-			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, now_us);
-			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, now_us);
+			if (now_ms - temp_ms >= 1000) {
+				temp_ok = read_soc_temp(&temp_c);
+				temp_ms = now_ms;
+			}
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c, now_us);
 			if (d1 + d2 > osd_worst) {
 				osd_worst = d1 + d2;
 				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",

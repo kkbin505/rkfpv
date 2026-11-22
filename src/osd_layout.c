@@ -6,7 +6,7 @@
 #define STALE_MS 3000
 
 /*  MODE            REC          T 03:12
- *  ARMED
+ *  ARMED                         CPU 52C
  *                   +
  *  1234 mAh                 UL -48dBm 98%
  *  16.4V 12.3A 78%                LQ 99%      */
@@ -34,6 +34,11 @@ void osd_draw_view(osd_t *o, const osd_view_t *v)
 	uint64_t fl = telem_flight_ms(t, v->now_ms) / 1000;
 	snprintf(s, sizeof s, "T %02llu:%02llu", (unsigned long long)(fl / 60), (unsigned long long)(fl % 60));
 	osd_text_right(o, w - m, top, s);
+
+	if (v->temp_ok) {
+		snprintf(s, sizeof s, "CPU %dC", v->temp_c);
+		osd_text_right(o, w - m, top + lh, s);
+	}
 
 	if (fc && t->have_sys) {
 		int n = snprintf(s, sizeof s, "%.1fV", t->volts);
