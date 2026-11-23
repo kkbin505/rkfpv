@@ -14,6 +14,7 @@ import time
 
 BIN = sys.argv[1]
 PORT = 28000 + os.getpid() % 1000
+ORIGIN = "https://web.example"
 passed = failed = 0
 
 
@@ -27,12 +28,14 @@ def check(name, cond, detail=""):
         print("FAIL", name, detail)
 
 
-def req(method, path, headers=None, raw_path=False):
+def req(method, path, headers=None, raw_path=False, body=None):
     c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
     c.putrequest(method, path, skip_accept_encoding=True, skip_host="Host" in (headers or {}))
     for k, v in (headers or {}).items():
         c.putheader(k, v)
-    c.endheaders()
+    if body is not None:
+        c.putheader("Content-Length", str(len(body)))
+    c.endheaders(body)
     r = c.getresponse()
     body = r.read()
     c.close()
@@ -59,7 +62,19 @@ def main():
         with open(status, "w") as f:
             f.write("state=recording file=rec_0003_00.mp4 bytes=9 drops=0 free_mb=100\n")
 
-        p = subprocess.Popen([BIN, "-b", "127.0.0.1", "-p", str(PORT), "-d", d, "-s", status],
+        # fake fpv: echoes its arguments as JSON
+        fake_fpv = f"{outside}/fpv"
+        with open(fake_fpv, "w") as f:
+            f.write('#!/bin/sh\nprintf \'{"ok":true,"args":"%s"}\\n\' "$*"\n')
+        os.chmod(fake_fpv, 0o755)
+        import socket
+        pv = socket.socket()
+        pv.bind(("127.0.0.1", 0))
+        pv.listen(1)
+        pv_port = pv.getsockname()[1]
+
+        p = subprocess.Popen([BIN, "-b", "127.0.0.1", "-p", str(PORT), "-d", d, "-s", status,
+                              "-o", ORIGIN, "-f", fake_fpv, "-P", str(pv_port)],
                              stderr=subprocess.PIPE)
         time.sleep(0.4)
 
@@ -129,11 +144,68 @@ def main():
               st == 200 and json.loads(b)["deleted"] == 1 and
               left == ["dvr.status", "notes.txt", "rec_0003_00.mp4", "rec_0009_00.mp4"], left)
 
+        # ---- web configurator: CORS for one origin, /api/fpv, /live
+        pre = {"Origin": ORIGIN, "Access-Control-Request-Method": "POST",
+               "Access-Control-Request-Headers": "x-fpv-confirm",
+               "Access-Control-Request-Private-Network": "true"}
+        st, h, b = req("OPTIONS", "/api/fpv", pre)
+        check("preflight: configured origin allowed",
+              st == 204 and h.get("Access-Control-Allow-Origin") == ORIGIN and
+              "X-FPV-Confirm" in h.get("Access-Control-Allow-Headers", "") and
+              h.get("Access-Control-Allow-Private-Network") == "true", (st, h))
+        st, h, b = req("OPTIONS", "/api/fpv", dict(pre, Origin="https://evil.example"))
+        check("preflight: other origin refused", st == 403 and "Access-Control-Allow-Origin" not in h, (st, h))
+        st, h, b = req("GET", "/api/list", {"Origin": ORIGIN})
+        check("list: CORS header for the origin", h.get("Access-Control-Allow-Origin") == ORIGIN, h)
+        st, h, b = req("GET", "/api/list", {"Origin": "https://evil.example"})
+        check("list: no CORS header for others", "Access-Control-Allow-Origin" not in h, h)
+
+        st, h, b = req("POST", "/api/fpv", {"Origin": ORIGIN}, body=b"status")
+        check("fpv: needs the confirm header", st == 403, st)
+        st, h, b = req("GET", "/api/fpv", {"X-FPV-Confirm": "1"})
+        check("fpv: needs POST", st == 405, st)
+        H = {"X-FPV-Confirm": "1", "Origin": ORIGIN, "Content-Type": "text/plain"}
+        st, h, b = req("POST", "/api/fpv", H, body=b"status")
+        check("fpv: runs fpv status --json",
+              st == 200 and json.loads(b) == {"ok": True, "args": "status --json"} and
+              h.get("Access-Control-Allow-Origin") == ORIGIN, (st, b))
+        st, h, b = req("POST", "/api/fpv", H, body=b"set bitrate 4000\n")
+        check("fpv: set with arguments", json.loads(b).get("args") == "set bitrate 4000 --json", b)
+        for body, why in [(b"reboot", "not allowed"), (b"get ;reboot", "invalid characters"),
+                          (b"set ssid $(reboot)", "invalid characters"), (b"", "no command")]:
+            st, h, b = req("POST", "/api/fpv", H, body=body)
+            check(f"fpv: {body!r} refused", json.loads(b).get("ok") is False and why in json.loads(b)["error"], b)
+        st, h, b = req("POST", "/api/fpv", H, body=b"get " + b"a " * 3000)
+        check("fpv: body too large -> 413", st == 413, st)
+        st, h, b = req("POST", "/api/fpv", H, body=b"get" + b" bitrate" * 40)
+        check("fpv: too many arguments refused", json.loads(b).get("ok") is False, b)
+
+        st, h, b = req("GET", "/dvr/rec_0001_00.mp4?dl=1")
+        check("?dl=1 -> attachment", st == 200 and h.get("Content-Disposition", "").startswith("attachment"), h)
+
+        # /live relays the preview server's bytes; nothing listening -> 503
+        import threading
+        frames = os.urandom(200000)
+
+        def serve_preview():
+            c, _ = pv.accept()
+            c.sendall(frames)
+            c.close()
+        t = threading.Thread(target=serve_preview, daemon=True)
+        t.start()
+        st, h, b = req("GET", "/live", {"Origin": ORIGIN})
+        check("live: relays the stream",
+              st == 200 and b == frames and h.get("Content-Type") == "application/octet-stream" and
+              h.get("Access-Control-Allow-Origin") == ORIGIN, (st, len(b)))
+        t.join(5)
+        pv.close()
+        st, h, b = req("GET", "/live")
+        check("live: no preview -> 503", st == 503, st)
+
         # several downloads at once: one long transfer must not block the list
         big = f"{d}/rec_0004_00.mp4"
         with open(big, "wb") as f:
             f.write(os.urandom(8 << 20))
-        import socket
         slow = socket.create_connection(("127.0.0.1", PORT))
         slow.sendall(b"GET /dvr/rec_0004_00.mp4 HTTP/1.1\r\nHost: x\r\n\r\n")   # read nothing yet
         t0 = time.time()

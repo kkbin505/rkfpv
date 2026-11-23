@@ -49,11 +49,11 @@ build/rkfpv: $(OBJS)
 build/mavbridge: src/mavbridge.c | build
 	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
 
-build/dvrhttpd: src/dvrhttpd.c | build
-	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
+build/dvrhttpd: src/dvrhttpd.c src/fpvcmd.c src/fpvcmd.h | build
+	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ src/dvrhttpd.c src/fpvcmd.c
 
-build/fpvd: src/fpvd.c | build
-	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
+build/fpvd: src/fpvd.c src/fpvcmd.c src/fpvcmd.h | build
+	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ src/fpvd.c src/fpvcmd.c
 
 build:
 	mkdir -p build
@@ -77,8 +77,8 @@ build-host/test_dvr: test/test_dvr.c src/dvr.c src/dvr.h | build-host
 build-host/test_config: test/test_config.c src/config.c src/config.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -Isrc -o $@ test/test_config.c src/config.c
 
-build-host/dvrhttpd: src/dvrhttpd.c | build-host
-	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
+build-host/dvrhttpd: src/dvrhttpd.c src/fpvcmd.c src/fpvcmd.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/dvrhttpd.c src/fpvcmd.c
 
 # OSD drawing with the RGN calls stubbed (SDK headers only, no SDK libs)
 build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_layout.c src/telem.c | build-host
@@ -90,8 +90,8 @@ build-host/test_telem: test/test_telem.c src/telem.c src/telem.h | build-host
 build-host/test_preview: test/test_preview.c src/preview.c src/preview.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_preview.c src/preview.c
 
-build-host/fpvd: src/fpvd.c | build-host
-	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
+build-host/fpvd: src/fpvd.c src/fpvcmd.c src/fpvcmd.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/fpvd.c src/fpvcmd.c
 
 test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_telem build-host/test_preview
 	./build-host/test_rtp

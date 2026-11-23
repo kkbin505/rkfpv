@@ -281,6 +281,12 @@ echo debug > "$T/root/tmp/mode.status"
 fpv preview on > /dev/null && fpv preview off > /dev/null
 check "preview on/off in debug mode" "preview-on|preview-off" "$(tr '\n' '|' < "$T/init.log" | sed 's/|$//')"
 check "preview status json" '{"ok":true,"running":false,"port":5602,"mode":"debug"}' "$(fpv preview status --json)"
+# hotspot mode: live view for the web configurator
+rm -f "$T/init.log"
+echo hotspot > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null && fpv preview off > /dev/null
+check "preview on/off in hotspot mode" "preview-on|preview-off" "$(tr '\n' '|' < "$T/init.log" | sed 's/|$//')"
+check "status mode in hotspot mode" "hotspot" "$(fpv status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')"
 sed -i 's/^preview_port = .*/preview_port = 0/' "$T/root/etc/rkfpv.conf"
 fpv preview on > /dev/null 2>&1 && bad "preview_port 0 refused" || ok "preview_port 0 refused"
 

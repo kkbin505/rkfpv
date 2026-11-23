@@ -154,7 +154,7 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 
 - Board: `fpv get | set k v … | schema | status | log | restart | mode | reset` (add `--json`). The parameter table in `files/fpv` is the single list of settings.
 - Logs now persist in `/userdata/log` (`rkfpv.log`, `rkfpv.prev.log`, `fpv.log`) so they survive the reboot into ADB mode.
-- PC: `python3 configurator/fpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
+- PC: `python3 configurator/rkfpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
 - Before reflashing: `adb push files/fpv /usr/bin/` (or the UI's *Install / update on board*).
 - Tests: `test/test_fpv.sh` (dash + busybox sh), part of `make test`.
 

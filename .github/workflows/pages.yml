@@ -1,0 +1,57 @@
+# Publishes web/ (the configurator UI) to GitHub Pages:
+#   https://<owner>.github.io/<repo>/
+# The board's dvrhttpd answers CORS for https://<owner>.github.io only
+# (WEB_ORIGIN in files/S99fpv; a fork sets its own in /etc/fpv/web_origin).
+# Repo settings → Pages → Source: "GitHub Actions".
+name: Web configurator
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "configurator/presets/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build site
+        run: |
+          mkdir -p _site
+          cp -r web/. _site/
+          # presets: the same list the PC configurator serves at /api/presets
+          python3 - <<'EOF'
+          import json, os
+          d = "configurator/presets"
+          out = []
+          for f in sorted(os.listdir(d)):
+              if f.endswith(".json"):
+                  p = json.load(open(os.path.join(d, f), encoding="utf-8"))
+                  out.append({"file": f, "name": str(p["name"]),
+                              "description": str(p.get("description", "")),
+                              "values": {str(k): str(v) for k, v in p["values"].items()}})
+          json.dump({"ok": True, "presets": out}, open("_site/presets.json", "w"), indent=1)
+          EOF
+          # new offline cache for every deploy
+          sed -i "s/__VERSION__/${GITHUB_SHA::12}/" _site/sw.js
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

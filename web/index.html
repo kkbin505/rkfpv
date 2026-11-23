@@ -2,9 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f54700">
 <title>rkfpv Configurator</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
+<!-- rkfpvconf.py fills in the token; with the placeholder left in, this is the hosted (hotspot) page -->
 <script>window.FPV_TOKEN = "__TOKEN__";</script>
 </head>
 <body>
@@ -23,35 +28,72 @@
     <button id="connect" class="primary">Connect</button>
   </div>
   <div class="badges">
-    <button id="previewBtn" class="ghost" title="Show the live video (board on USB)" disabled>▶ Preview</button>
+    <button id="previewBtn" class="ghost" title="Show the live video" disabled>▶ Preview</button>
     <span id="modeBadge" class="badge off">disconnected</span>
   </div>
 </header>
+<div id="browserNote" class="banner" hidden>
+  This browser cannot reach the board from this page. Use <b>Chrome</b>, <b>Edge</b> or <b>Samsung Internet</b>
+  (they allow a web page to talk to devices on the local network after asking you).
+</div>
 
 <div class="layout">
   <nav id="tabs">
     <a data-tab="status" class="active">Status</a>
+    <a data-tab="live">Live</a>
     <a data-tab="Video">Video</a>
     <a data-tab="Camera">Camera</a>
     <a data-tab="image">Image</a>
     <a data-tab="Radio">Radio</a>
     <a data-tab="Telemetry">Telemetry</a>
     <a data-tab="dvr">DVR</a>
-    <a data-tab="presets">Presets &amp; Backup</a>
+    <a data-tab="presets">Presets</a>
     <a data-tab="logs">Logs</a>
     <a data-tab="cli">CLI</a>
   </nav>
 
+  <!-- wide screens: on the right, stays while switching tabs; portrait: at the top -->
+  <aside id="previewDock" hidden>
+    <div class="pvHead">
+      <b>Preview</b> <span id="pvInfo" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="pvSize" class="ghost" title="Larger / smaller">⤢</button>
+      <button id="pvStop" class="ghost" title="Stop the preview">✕</button>
+    </div>
+    <div id="pvSlot"><canvas id="pvCanvas" width="1280" height="720"></canvas></div>
+    <div id="pvMsg" class="sub"></div>
+    <div class="row"><button id="pvFfplay" class="ghost" hidden>Open in ffplay instead</button></div>
+    <p class="sub pvNote">The link stream itself: same encoder, resolution, bitrate, GOP and OSD as what goes
+      over the air. Only radio effects (packet loss, MCS) are missing. Live settings (Image tab, bitrate) show
+      at once; settings that restart the video reconnect by themselves.</p>
+  </aside>
+
   <main>
     <div id="notConnected" class="empty">
-      <h2>Connect to the board</h2>
-      <ol>
-        <li>Plug the board's USB into this PC <em>without</em> the WiFi adapter and power it up.
-          It boots into debug mode and ADB appears after ~15&nbsp;s.</li>
-        <li>Pick the device above and press <b>Connect</b>.</li>
-      </ol>
-      <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
-        FPV boot. Live changes need the SSH link over wfb (not built yet).</p>
+      <div id="ncLocal">
+        <h2>Connect to the board</h2>
+        <ol>
+          <li>Plug the board's USB into this PC <em>without</em> the WiFi adapter and power it up.
+            It boots into debug mode and ADB appears after ~15&nbsp;s.</li>
+          <li>Pick the device above and press <b>Connect</b>.</li>
+        </ol>
+        <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
+          FPV boot. Or use the board's WiFi hotspot (hold BOOT 2 s) and pick <b>WiFi hotspot</b> above.</p>
+      </div>
+      <div id="ncHotspot" hidden>
+        <h2>Connect over the board's WiFi</h2>
+        <ol>
+          <li>Power the air unit with its WiFi card. After boot, <b>hold the BOOT button for about 2&nbsp;s</b>:
+            the card becomes a WiFi hotspot named <b>rkfpv-XXXX</b>.</li>
+          <li>Join that WiFi on this device. If the phone says it has no internet, choose
+            <b>stay connected</b> (or turn mobile data off).</li>
+          <li>Come back here and press <b>Connect</b>. Chrome asks to allow access to devices on the
+            <b>local network</b>: allow it.</li>
+        </ol>
+        <p class="muted">Settings, the live picture and recordings all work over the hotspot. Hold BOOT again to go
+          back to FPV. Install this page (browser menu → <b>Install app</b> / <b>Add to Home screen</b>) while you
+          have internet; it then opens without internet on the hotspot.</p>
+      </div>
     </div>
 
     <section id="tab-status" class="tab" hidden>
@@ -74,17 +116,28 @@
       <div class="box">
         <h3>WiFi hotspot</h3>
         <p class="muted">Hold the board's <b>BOOT</b> button for about 2 s (after boot has finished) and the WiFi card
-          becomes an access point: join it from this PC, pick <b>WiFi hotspot</b> above, then download recordings
-          (DVR tab) and change settings without USB. Hold BOOT again to go back to FPV.</p>
+          becomes an access point: join it, then change settings, watch the live picture and download recordings
+          without USB. Hold BOOT again to go back to FPV.</p>
         <div class="row" id="hsState"></div>
         <div id="hsSettings"></div>
       </div>
-      <div class="box">
+      <div class="box" id="installBox">
         <h3>Board scripts</h3>
         <p class="muted">Copy <code>fpv</code>, <code>S99fpv</code> and <code>wfb.sh</code> from this repo to the board
           (until the next image is flashed).</p>
         <button id="install">Install / update on board</button>
       </div>
+    </section>
+
+    <section id="tab-live" class="tab" hidden>
+      <div class="liveStage" id="liveStage"></div>
+      <div class="row liveBar">
+        <span id="liveInfo" class="sub"></span>
+        <span class="spacer"></span>
+        <button id="liveFull" class="ghost">⛶ Full screen</button>
+      </div>
+      <div id="liveMsg" class="sub"></div>
+      <div id="liveControls"></div>
     </section>
 
     <section id="tab-form" class="tab" hidden>
@@ -94,7 +147,7 @@
     <section id="tab-image" class="tab" hidden>
       <div class="box note">
         <h3>Image (ISP)</h3>
-        Changes apply live while FPV runs. <b>iq</b> keeps the value from the IQ file. For FPV, the settings
+        Changes apply live while the video runs. <b>iq</b> keeps the value from the IQ file. For FPV, the settings
         that matter most are, in order: the <b>longest exposure</b> (motion blur), <b>temporal noise
         reduction</b> (ghosting on fast moves), the <b>gain cap</b> (noise at night), and the AE delay
         (bright to dark). Change one setting at a time and compare.
@@ -164,10 +217,10 @@
     <section id="tab-presets" class="tab" hidden>
       <div class="box">
         <h3>Backup &amp; restore</h3>
-        <p class="muted">Save every setting to a file on this PC, or load one back. Restoring shows what
+        <p class="muted">Save every setting to a file on this device, or load one back. Restoring shows what
           would change first; nothing is written until you apply.</p>
         <div class="row">
-          <button id="backup" class="primary">Save backup to PC</button>
+          <button id="backup" class="primary">Save backup</button>
           <button id="restore">Restore from file…</button>
           <input type="file" id="restoreFile" accept=".json,application/json" hidden>
         </div>
@@ -218,27 +271,13 @@
         <pre id="cliOut" class="log"></pre>
         <form id="cliForm" class="row">
           <span class="prompt">#</span>
-          <input id="cliIn" autocomplete="off" spellcheck="false"
-                 placeholder="fpv help · fpv get · fpv set bitrate 4000 · any shell command">
+          <input id="cliIn" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="fpv help · fpv get · fpv set bitrate 4000">
           <button class="primary">Send</button>
         </form>
       </div>
     </section>
   </main>
-
-  <aside id="previewDock" hidden>
-    <div class="pvHead">
-      <b>Preview</b> <span id="pvInfo" class="muted"></span>
-      <span class="spacer"></span>
-      <button id="pvSize" class="ghost" title="Larger / smaller">⤢</button>
-      <button id="pvStop" class="ghost" title="Stop the preview">✕</button>
-    </div>
-    <canvas id="pvCanvas" width="1280" height="720"></canvas>
-    <div id="pvMsg" class="sub"></div>
-    <div class="row"><button id="pvFfplay" class="ghost" hidden>Open in ffplay instead</button></div>
-    <!-- one line: .sub keeps line breaks (white-space: pre-line) -->
-    <p class="sub">The link stream itself over USB: same encoder, resolution, bitrate, GOP and OSD as what goes over the air. Only radio effects (packet loss, MCS) are missing. Live settings (Image tab, bitrate) show at once; settings that restart the video reconnect by themselves.</p>
-  </aside>
 </div>
 
 <footer id="saveBar" hidden>
@@ -249,6 +288,6 @@
 </footer>
 
 <div id="toast" hidden></div>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -86,17 +86,19 @@ fpv reset                       # 恢复出厂设置
 
 加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
 
-**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
+**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset/dvr/preview/hotspot/iq，列表在 `src/fpvcmd.c`，和 dvrhttpd 共用），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
 
 协议很简单，按无线丢包设计：请求 `FPV1 <id> <命令> [参数…]`；回复按 1200 字节分片，每片格式 `FPV1 <id> <序号>/<总数>\n<JSON 片段>`。丢包时客户端用**同一个 id** 重发，fpvd 直接返回缓存的结果，不会重复执行（比如 restart 不会跑两次）。
 
 **电脑上的配置工具**（类似 Betaflight Configurator）：板子接电脑开机进入调试模式后，运行
 
 ```sh
-python3 configurator/fpvconf.py
+python3 configurator/rkfpvconf.py
 ```
 
 浏览器里会打开界面，详见 `configurator/README.md`。
+
+**网页版（手机不用装 App）**：同一套界面发布在 https://kkbin505.github.io/rkfpv/ 。手机连上板子的 WiFi 热点（见下面），用 Chrome 打开就能改设置、看实时画面、下载录像，竖屏布局。详见 `configurator/README.md` 的“网页版”。
 
 直接改文件也可以：
 
@@ -162,14 +164,15 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 用板子上的 **BOOT 按键**，不用另外接开关。开机完成后：
 
 - **按住 BOOT 约 2 秒**：视频和 wfb 停止，WiFi 网卡变成 WPA2 热点（`rkfpv-XXXX`，开机时自动生成名称和随机密码，调试模式下用 `fpv hotspot` 就能看到），板子地址是 10.0.0.1。
-  - 电脑连上热点后，在配置工具里选 **WiFi hotspot**：所有设置都能改，DVR 页可以下载、删除录像。
-  - 手机或浏览器直接打开 `http://10.0.0.1/`，也能下载、删除录像。
+  - 手机或电脑连上热点后，用 Chrome 打开网页版配置工具（https://kkbin505.github.io/rkfpv/ ，先在有网时安装到主屏幕）：所有设置都能改，Live 页有实时画面（预览这次不录像），DVR 页可以下载、删除录像。
+  - 电脑上的 `rkfpvconf.py` 选 **WiFi hotspot** 也一样能改设置、下载录像。
+  - 浏览器直接打开 `http://10.0.0.1/`，是简单的录像下载页。
 - **再按住 BOOT 约 2 秒**：回到 FPV（wfb 图传 + 录像）。
 - 每次按住只切换一次，松开后才算下一次。开机过程中按键不起作用；上电时按住 BOOT 会进入烧录（maskrom）模式，不要这样做。板子接在电脑上（调试模式）时按键也不起作用。
 
 `fpv hotspot status` 查看按键状态、热点名称、密码和已连接的设备。`hotspot_ssid` / `hotspot_pass` / `hotspot_channel` / `hotspot_country` 改的是下次开热点时的设置。5 GHz 热点能不能起来取决于网卡驱动（8812CU 目前不行，见 issue #16）。**只选天线支持的频段**：天线只适合 5.8 GHz 时不要用 1/6/11 信道（2.4 GHz），频段不对可能损坏网卡。热点起不来时会回到 FPV，不会自动换信道。
 
-录像的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts` 文件，支持断点续传和拖动播放。删除时必须带确认请求头，所以别的网页没法借你的浏览器删卡上的文件。
+热点上的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts` 文件（支持断点续传和拖动播放）、给网页版用的 `/api/fpv`（只执行白名单里的 `fpv` 子命令，不经过 shell）和 `/live`（实时画面）。改东西的请求必须带确认请求头，而且只对网页版的来源回应 CORS，所以别的网页没法借你的浏览器改设置或删卡上的文件。
 
 需要的 SDK 改动（见 docs/build-steps.md）：buildroot 加 `hostapd` 和 `dnsmasq`。BOOT 按键接在 SARADC 通道 0 上，原厂 DTS 已经打开 ADC，不用改。
 

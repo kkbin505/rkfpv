@@ -39,9 +39,13 @@ rotate_logs() {
 }
 
 start_video() {
+	# hotspot mode (live view for the web configurator): never record,
+	# also after a `fpv restart video`
+	extra=
+	[ "$(cat /tmp/mode.status 2>/dev/null)" = hotspot ] && extra="-s dvr=0"
 	# -b would send rkfpv's output to /dev/null; keep it in a log instead
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $LOGDIR/rkfpv.log 2>&1"
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf $extra >> $LOGDIR/rkfpv.log 2>&1"
 }
 
 stop_video() {
@@ -140,7 +144,13 @@ limit_dirty_memory() {
 # access point: http://10.0.0.1/ for recordings, fpvd on
 # 10.0.0.1:7000 for settings. Hold again for FPV. fpvd reads the button
 # (SARADC channel 0) and calls hotspot-on / hotspot-off.
+# The web configurator (hosted HTTPS page) talks to dvrhttpd: /api/fpv for
+# settings, /live for the picture (`fpv preview on`). dvrhttpd answers CORS
+# for this one origin only; a fork hosting its own page puts its origin in
+# /etc/fpv/web_origin (one line, e.g. https://someone.github.io).
 HS_ADDR=10.0.0.1
+WEB_ORIGIN=https://kkbin505.github.io
+[ -s /etc/fpv/web_origin ] && WEB_ORIGIN=$(head -n 1 /etc/fpv/web_origin | tr -d ' \r')
 MODE_STATUS=/tmp/mode.status
 WLAN=wlan0
 
@@ -245,7 +255,7 @@ hotspot_on() {
 		--dhcp-range=10.0.0.10,10.0.0.50,255.255.255.0,12h \
 		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
 	start-stop-daemon -S -q -b -m -p /var/run/dvrhttpd.pid -x /usr/bin/dvrhttpd -- \
-		-b "$HS_ADDR" -p 80 -d "$DVR_DIR"
+		-b "$HS_ADDR" -p 80 -d "$DVR_DIR" -o "$WEB_ORIGIN"
 	set_mode hotspot
 	log "hotspot: '$ssid' channel $ch, http://$HS_ADDR/ for recordings"
 }
@@ -265,6 +275,8 @@ hotspot_off() {
 	fi
 	set_mode switching
 	log "hotspot: off, back to FPV"
+	# live view of the web configurator: stop it, FPV starts its own rkfpv
+	stop_video
 	hotspot_stop_services
 	sleep 1
 	ip addr flush dev "$WLAN" 2>/dev/null
@@ -320,8 +332,8 @@ start() {
 # can show the link stream over `adb forward` (rkfpv preview_port). Not
 # kept across a reboot. The radio is not involved (no adapter on USB).
 preview_allowed() {
-	case "$(cat "$MODE_STATUS" 2>/dev/null)" in debug|off) return 0 ;; esac
-	log "preview: only with the board on a PC over USB (debug mode)"
+	case "$(cat "$MODE_STATUS" 2>/dev/null)" in debug|off|hotspot) return 0 ;; esac
+	log "preview: only in debug mode (PC on USB) or hotspot mode"
 	return 1
 }
 
@@ -329,7 +341,8 @@ preview_on() {
 	preview_allowed || return 1
 	pidof rkfpv > /dev/null && return 0
 	log "preview: starting rkfpv for the configurator"
-	/usr/bin/wfb.sh osd-telemetry
+	# in hotspot mode the WiFi card is the access point: no telemetry setup
+	[ "$(cat "$MODE_STATUS" 2>/dev/null)" = hotspot ] || /usr/bin/wfb.sh osd-telemetry
 	start_video
 }
 
@@ -360,9 +373,10 @@ case "$1" in
 	preview-off) preview_off ;;
 	restart-video) log "restart: video"; stop_video; start_video ;;
 	restart-link|restart-all)
-		# preview on a PC: there is no link, only the video restarts
+		# preview on a PC or over the hotspot: no link (in hotspot mode the
+		# card is the access point), only the video restarts
 		case "$(cat "$MODE_STATUS" 2>/dev/null)" in
-		debug|off) log "restart: video (preview, no link)"; stop_video; start_video ;;
+		debug|off|hotspot) log "restart: video (preview, no link)"; stop_video; start_video ;;
 		*)
 			if [ "$1" = restart-link ]; then log "restart: link"; /usr/bin/wfb.sh start
 			else log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video; fi ;;

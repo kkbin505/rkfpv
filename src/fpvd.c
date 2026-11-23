@@ -12,7 +12,8 @@
  *   reply:    FPV1 <id> <seq>/<total>\n<chunk>      (one or more datagrams)
  *
  *   <id>     1-16 chars [A-Za-z0-9_-], chosen by the client, new per request
- *   <cmd>    get set schema status log restart mode reset dvr, or ping
+ *   <cmd>    get set schema status log restart mode reset dvr preview hotspot
+ *            iq (the list is in fpvcmd.c, shared with dvrhttpd), or ping
  *   payload  the JSON that `fpv <cmd> [arg ...] --json` prints, split into
  *            chunks of at most CHUNK bytes; seq counts from 1
  *
@@ -49,12 +50,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "fpvcmd.h"
+
 #define MAGIC       "FPV1"
 #define MAX_REQ     1024
-#define MAX_ARGS    32
+#define MAX_ARGS    FPVCMD_MAX_ARGS
 #define MAX_ID      16
 #define CHUNK       1200          /* fits a wfb-ng packet with room for headers */
-#define MAX_OUT     (256 * 1024)
 #define CACHE       8
 #define EXEC_TIMEOUT_MS 20000
 
@@ -63,10 +65,6 @@ static void on_signal(int s) { (void)s; g_quit = 1; }
 
 static int g_verbose;
 static const char *g_fpv = "/usr/bin/fpv";
-
-static const char *const ALLOWED[] = {
-	"get", "set", "schema", "status", "log", "restart", "mode", "reset", "dvr", NULL
-};
 
 struct entry {
 	char id[MAX_ID + 1];
@@ -95,127 +93,6 @@ static int valid_id(const char *s)
 		      (*s >= '0' && *s <= '9') || *s == '_' || *s == '-'))
 			return 0;
 	return 1;
-}
-
-/* values are numbers, key names, 1280x720, true/false, auto: nothing a
- * shell or fpv's own parsing could misread */
-static int valid_arg(const char *s)
-{
-	if (!*s || strlen(s) > 64)
-		return 0;
-	for (; *s; s++)
-		if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
-		      (*s >= '0' && *s <= '9') || strchr("_.,:-", *s)))
-			return 0;
-	return 1;
-}
-
-static int allowed(const char *cmd)
-{
-	for (int i = 0; ALLOWED[i]; i++)
-		if (!strcmp(cmd, ALLOWED[i]))
-			return 1;
-	return 0;
-}
-
-static char *dup_error(const char *msg, size_t *len)
-{
-	char *b = malloc(64 + strlen(msg));
-	if (!b)
-		return NULL;
-	*len = (size_t)sprintf(b, "{\"ok\":false,\"error\":\"%s\"}", msg);
-	return b;
-}
-
-/* run `fpv argv... --json`, return its stdout (malloc'd) */
-static char *run_fpv(char **args, int nargs, size_t *len)
-{
-	char *argv[MAX_ARGS + 3];
-	argv[0] = "fpv";
-	for (int i = 0; i < nargs; i++)
-		argv[i + 1] = args[i];
-	argv[nargs + 1] = "--json";
-	argv[nargs + 2] = NULL;
-
-	int p[2];
-	if (pipe(p) < 0)
-		return dup_error("pipe failed", len);
-	pid_t pid = fork();
-	if (pid < 0) {
-		close(p[0]);
-		close(p[1]);
-		return dup_error("fork failed", len);
-	}
-	if (pid == 0) {
-		int null = open("/dev/null", O_RDWR);
-		dup2(null, 0);
-		dup2(p[1], 1);
-		dup2(null, 2);
-		close(p[0]);
-		close(p[1]);
-		execv(g_fpv, argv);
-		_exit(127);
-	}
-	close(p[1]);
-
-	size_t cap = 8192, n = 0;
-	char *out = malloc(cap);
-	uint64_t deadline = now_ms() + EXEC_TIMEOUT_MS;
-	int timed_out = 0;
-	while (out) {
-		int left = (int)(deadline - now_ms());
-		if (left <= 0) {
-			timed_out = 1;
-			break;
-		}
-		struct pollfd pf = { .fd = p[0], .events = POLLIN };
-		if (poll(&pf, 1, left) <= 0) {
-			if (errno == EINTR && !g_quit)
-				continue;
-			timed_out = 1;
-			break;
-		}
-		if (n == cap) {
-			if (cap >= MAX_OUT)
-				break;          /* keep what we have, drop the rest */
-			char *b = realloc(out, cap * 2);
-			if (!b)
-				break;
-			out = b;
-			cap *= 2;
-		}
-		ssize_t r = read(p[0], out + n, cap - n);
-		if (r < 0 && errno == EINTR)
-			continue;
-		if (r <= 0)
-			break;
-		n += (size_t)r;
-	}
-	close(p[0]);
-	if (timed_out)
-		kill(pid, SIGKILL);
-	int st = 0;
-	while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
-		;
-
-	if (!out)
-		return dup_error("out of memory", len);
-	while (n && (out[n - 1] == '\n' || out[n - 1] == '\r'))
-		n--;
-	if (timed_out) {
-		free(out);
-		return dup_error("fpv timed out", len);
-	}
-	if (WIFEXITED(st) && WEXITSTATUS(st) == 127 && n == 0) {
-		free(out);
-		return dup_error("cannot run fpv", len);
-	}
-	if (n == 0) {
-		free(out);
-		return dup_error("fpv produced no output", len);
-	}
-	*len = n;
-	return out;
 }
 
 static void send_reply(int fd, const struct sockaddr_in *peer, const char *id,
@@ -289,30 +166,21 @@ static void handle(int fd, char *req, size_t n, const struct sockaddr_in *peer)
 	size_t len = 0;
 	char *out;
 	if (nt < 0)
-		out = dup_error("too many arguments", &len);
+		out = fpvcmd_error("too many arguments", &len);
 	else if (nt < 3)
-		out = dup_error("no command", &len);
+		out = fpvcmd_error("no command", &len);
 	else if (!strcmp(tok[2], "ping")) {
 		out = strdup("{\"ok\":true,\"pong\":true}");
 		len = out ? strlen(out) : 0;
-	} else if (!allowed(tok[2]))
-		out = dup_error("command not allowed", &len);
-	else {
-		int bad = 0;
-		for (int i = 2; i < nt; i++)
-			if (!valid_arg(tok[i]))
-				bad = 1;
-		if (bad)
-			out = dup_error("invalid characters in arguments", &len);
-		else {
-			if (g_verbose) {
-				fprintf(stderr, "fpvd: %s from %s:", id, inet_ntoa(peer->sin_addr));
-				for (int i = 2; i < nt; i++)
-					fprintf(stderr, " %s", tok[i]);
-				fputc('\n', stderr);
-			}
-			out = run_fpv(tok + 2, nt - 2, &len);
+	} else {
+		if (g_verbose) {
+			fprintf(stderr, "fpvd: %s from %s:", id, inet_ntoa(peer->sin_addr));
+			for (int i = 2; i < nt; i++)
+				fprintf(stderr, " %s", tok[i]);
+			fputc('\n', stderr);
 		}
+		/* whitelist and argument check are in fpvcmd_run */
+		out = fpvcmd_run(g_fpv, tok + 2, nt - 2, EXEC_TIMEOUT_MS, &len);
 	}
 	if (!out)
 		return;

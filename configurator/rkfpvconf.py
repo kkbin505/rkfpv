@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rkfpv configurator: a local web UI that drives the board's `fpv` command.
 
-    python3 fpvconf.py [--port 8765] [--no-browser]
+    python3 rkfpvconf.py [--port 8765] [--no-browser]
 
 Talks to the board over ADB (board booted with the PC on its USB port) or,
 once the wfb tunnel exists, over SSH. Every action is an `fpv ... --json`
@@ -30,13 +30,14 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-UI_DIR = os.path.join(HERE, "ui")
+REPO = os.path.dirname(HERE)
+# the same UI as the hosted web configurator (web/), with this server as backend
+UI_DIR = os.path.join(REPO, "web")
 PRESET_DIR = os.path.join(HERE, "presets")
 DVR_BOARD_DIR = "/mnt/dvr"
 DVR_NAME = re.compile(r"^rec_[0-9]+_[0-9]+\.(mp4|ts)$")
 # where downloaded recordings go; --dvr-dir changes it
 dvr_local_dir = os.path.join(os.path.expanduser("~"), "Videos", "rkfpv-dvr")
-REPO = os.path.dirname(HERE)
 TIMEOUT = 20
 # a page from another site could POST to localhost; it cannot read this token
 TOKEN = secrets.token_hex(16)
@@ -565,7 +566,8 @@ class Handler(BaseHTTPRequestHandler):
         if name.startswith("..") or not os.path.isfile(full):
             return self._send(404, "not found", "text/plain")
         ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
-                 ".css": "text/css", ".svg": "image/svg+xml"}.get(
+                 ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png",
+                 ".json": "application/json", ".webmanifest": "application/manifest+json"}.get(
             os.path.splitext(full)[1], "application/octet-stream")
         with open(full, "rb") as f:
             data = f.read()

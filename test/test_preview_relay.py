@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests the configurator's preview relay (configurator/fpvconf.py) against a
+"""Tests the configurator's preview relay (configurator/rkfpvconf.py) against a
 fake board port that behaves like `adb forward`: the first connections are
 accepted and closed at once (rkfpv not listening yet), then records flow.
 
@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configurator"))
-import fpvconf  # noqa: E402
+import rkfpvconf as fpvconf  # noqa: E402
 
 passed = failed = 0
 
