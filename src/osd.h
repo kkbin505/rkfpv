@@ -22,6 +22,9 @@ int osd_begin(osd_t *o);                /* get a cleared canvas; 0 = ok */
 void osd_text(osd_t *o, int x, int y, const char *s);   /* top-left pixel */
 void osd_text_right(osd_t *o, int right_x, int y, const char *s);
 void osd_cross(osd_t *o, int cx, int cy, int size);
+/* outline rectangle, top-left x y, outer size w x h: 2 px white between
+ * 1 px black edges, like the font */
+void osd_box(osd_t *o, int x, int y, int w, int h);
 int osd_commit(osd_t *o);               /* show what was drawn; 0 = ok */
 
 int osd_width(const osd_t *o);

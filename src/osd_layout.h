@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "osd.h"
+#include "osd_ext.h"
 #include "telem.h"
 
 typedef struct {
@@ -13,6 +14,8 @@ typedef struct {
 	int ul_ok, ul_rssi, ul_lq;      /* wfb uplink as received by the air unit */
 	uint64_t now_ms;
 	int temp_ok, temp_c;             /* SoC temperature, degrees C */
+	const osd_ext_t *ext;           /* shapes from other programs, or NULL */
+	int ext_ttl_ms;
 } osd_view_t;
 
 /* one full redraw: begin, draw, commit */

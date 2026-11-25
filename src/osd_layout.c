@@ -66,5 +66,6 @@ void osd_draw_view(osd_t *o, const osd_view_t *v)
 	osd_text_right(o, w - m, bot, s);
 
 	osd_cross(o, w / 2, h / 2, h / 40);
+	osd_ext_draw(o, v->ext, v->now_ms, v->ext_ttl_ms);     /* on top */
 	osd_commit(o);
 }

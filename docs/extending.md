@@ -104,3 +104,39 @@ fpv set mav_local_port 14570     # 生效：fpv restart link
   ```
 
 - 发控制命令之前要想清楚飞控在什么模式、遥控器能不能随时接管。`mavbridge` 只是转发，不检查内容。
+
+## OSD：在画面上画框和文字
+
+`osd_ext_port` 让板子上的程序往 rkfpv 的 OSD 里画东西，比如识别到的目标框、AprilTag 编号和距离（只监听 127.0.0.1）。需要先打开 OSD：
+
+```sh
+fpv set osd 1 osd_ext_port 14580     # 生效：fpv restart video
+```
+
+协议是纯文本 UDP，**一个数据报就是当前要显示的全部图形**，替换上一个。每行一条命令：
+
+| 命令 | 画什么 |
+|---|---|
+| `box X Y W H` | 空心框，左上角 X Y，宽 W 高 H |
+| `text X Y 文字` | 文字，左上角 X Y，行尾之前都是文字（最多 47 字节，只显示 ASCII） |
+| `cross X Y SIZE` | 十字，中心 X Y |
+| `clear` | 清空（发一个空数据报也一样） |
+
+- 坐标是 0–1000 的网格（横竖各 1000，SIZE 按高度算），rkfpv 按画布大小缩放，所以图传和录像分辨率不同也能对上。可以略微超出 0–1000，超出画面的部分会被裁掉。
+- 一个数据报最多 64 个图形，写错的行跳过。
+- `osd_ext_ttl_ms`（默认 500）内没收到新数据，图形就消失：发送程序崩了也不会在画面上留下旧框。要一直显示就定时重发。
+- 收到新数据后最快 40 ms 内重画（平时每 250 ms 重画一次）。图形画在图传上；录像有自己的 OSD 时（`dvr_osd = 1`）也画在录像上。
+
+试一下：
+
+```sh
+printf 'box 400 300 200 300\ntext 400 260 TAG 7  1.2m\n' | nc -u -w1 127.0.0.1 14580
+```
+
+Python：
+
+```python
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b"box 400 300 200 300\ntext 400 260 TAG 7", ("127.0.0.1", 14580))
+```

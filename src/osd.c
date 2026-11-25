@@ -164,6 +164,48 @@ void osd_text_right(osd_t *o, int right_x, int y, const char *s)
 	osd_text(o, right_x - n * (o->font->w - 2) - 2, y, s);
 }
 
+/* black edge pixel that never covers white (crossing lines, corners) */
+static inline void put_edge(osd_t *o, int x, int y)
+{
+	if (x < 0 || y < 0 || x >= o->w || y >= o->h)
+		return;
+	const uint8_t *p = (const uint8_t *)(uintptr_t)o->canvas.u64VirAddr +
+			   ((size_t)y * o->canvas.u32VirWidth + x) / 4;
+	if (((*p >> PX_SHIFT(x)) & 3) != 3)
+		put(o, x, y, 2);
+}
+
+void osd_box(osd_t *o, int x, int y, int w, int h)
+{
+	if (!o->drawing || w < 8 || h < 8)
+		return;
+	/* clip to the canvas first: a huge box costs no more than a full one */
+	int x1 = x + w - 1, y1 = y + h - 1;
+	int cx0 = x < 0 ? 0 : x, cy0 = y < 0 ? 0 : y;
+	int cx1 = x1 >= o->w ? o->w - 1 : x1, cy1 = y1 >= o->h ? o->h - 1 : y1;
+	if (cx0 > cx1 || cy0 > cy1)
+		return;
+	/* white core (layers 1-2), then the black edges (layers 0 and 3) */
+	for (int pass = 0; pass < 2; pass++)
+		for (int l = 0; l < 4; l++) {
+			int white = l == 1 || l == 2;
+			if (white != (pass == 0))
+				continue;
+			for (int i = cx0; i <= cx1; i++) {
+				if (i < x + l || i > x1 - l)
+					continue;
+				if (white) { put(o, i, y + l, 3); put(o, i, y1 - l, 3); }
+				else { put_edge(o, i, y + l); put_edge(o, i, y1 - l); }
+			}
+			for (int j = cy0; j <= cy1; j++) {
+				if (j < y + l || j > y1 - l)
+					continue;
+				if (white) { put(o, x + l, j, 3); put(o, x1 - l, j, 3); }
+				else { put_edge(o, x + l, j); put_edge(o, x1 - l, j); }
+			}
+		}
+}
+
 void osd_cross(osd_t *o, int cx, int cy, int size)
 {
 	if (!o->drawing)

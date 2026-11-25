@@ -71,6 +71,8 @@ typedef struct {
 	isp_settings_t isp;
 
 	int osd;                /* experimental: burn a test OSD into the video */
+	int osd_ext_port;       /* UDP on 127.0.0.1 for shapes from other programs, 0 = off */
+	int osd_ext_ttl_ms;     /* their shapes vanish after this long without news */
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;
