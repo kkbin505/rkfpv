@@ -48,6 +48,19 @@ start_video() {
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
 		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf $extra >> $LOGDIR/rkfpv.log 2>&1"
 	[ -n "$extra" ] || start_blackbox
+	start_plugins
+}
+
+# Add-on programs in /etc/fpv/plugins.d (see fpv-plugins): started after the
+# video, stopped before it. rkfpv may still be starting when they start.
+start_plugins() {
+	[ -x /usr/bin/fpv-plugins ] || return 0
+	/usr/bin/fpv-plugins start
+}
+
+stop_plugins() {
+	[ -x /usr/bin/fpv-plugins ] || return 0
+	/usr/bin/fpv-plugins stop
 }
 
 # Betaflight serial blackbox -> rec_SSSS_NN.bbl next to the recording
@@ -76,6 +89,7 @@ stop_blackbox() {
 }
 
 stop_video() {
+	stop_plugins
 	stop_blackbox                   # closes the current .bbl cleanly
 	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
 	killall -q rkfpv

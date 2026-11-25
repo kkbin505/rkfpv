@@ -86,7 +86,7 @@ fpv reset                       # 恢复出厂设置
 
 加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
 
-**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset/dvr/preview/hotspot/iq/blackbox，列表在 `src/fpvcmd.c`，和 dvrhttpd 共用），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
+**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset/dvr/preview/hotspot/iq/blackbox/plugins，列表在 `src/fpvcmd.c`，和 dvrhttpd 共用），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
 
 协议很简单，按无线丢包设计：请求 `FPV1 <id> <命令> [参数…]`；回复按 1200 字节分片，每片格式 `FPV1 <id> <序号>/<总数>\n<JSON 片段>`。丢包时客户端用**同一个 id** 重发，fpvd 直接返回缓存的结果，不会重复执行（比如 restart 不会跑两次）。
 
@@ -156,6 +156,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `src/mavbridge.c` | 串口 ↔ UDP 的 MAVLink 转发，按帧打包，不依赖其他库 |
 | `src/fpvd.c` | UDP 命令服务，只执行 `fpv` 子命令 |
 | `files/fpv` | 板子上的设置命令（get / set / status …） |
+| `files/fpv-plugins` | 跟着视频启停 `/etc/fpv/plugins.d/` 里的扩展程序 |
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
@@ -240,6 +241,12 @@ H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEV
 飞控的 blackbox 设成串口输出（`blackbox_device = SERIAL`），TX 接板子的 UART4 RX。`bblog` 把每次解锁的日志存成和录像同名的 `rec_SSSS_NN.bbl`，和录像一起下载、一起按旧到新清理。`dvr_osd = 0` 让录像不烧 OSD。
 
 不接飞控也能先验证串口：把 UART4 的 TX 和 RX 短接（Mini 排针 10–11，Pro 排针 6–7），运行 `fpv blackbox selftest`。接线和 BF 设置见 [docs/blackbox.md](docs/blackbox.md)。
+
+## 扩展接口
+
+自己的程序（识别、控制、第三方 OSD 等）不用改 rkfpv 的代码，作为单独的进程跑，通过下面的接口接进来。全部默认关闭，详见 [docs/extending.md](docs/extending.md)。
+
+- **插件目录**：`/etc/fpv/plugins.d/S<NN>名字`，和 init.d 脚本一样收 `start` / `stop` / `status`，跟着视频一起启停。`fpv plugins` 查看状态。
 
 ## 致谢
 

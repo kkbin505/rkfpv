@@ -1,0 +1,92 @@
+#!/bin/sh
+# fpv-plugins: start / stop add-on programs together with the video.
+#
+#   fpv-plugins start|stop|status [dir]     (default dir /etc/fpv/plugins.d)
+#
+# A plugin is an executable S<NN><name> script in the plugin directory, in
+# the style of /etc/init.d: called with start / stop / status. start runs
+# them in name order, stop in reverse. S99fpv calls start after the video
+# is up and stop before the video goes down (also on `fpv restart video`
+# and the wired / hotspot preview).
+#
+# Plugins get FPV_MODE (fpv, debug, hotspot, ...) in the environment and run
+# with oom_score_adj 500: when RAM runs out the kernel kills them, not the
+# link (S99fpv and the link run at -900). A plugin that does not return
+# within FPV_PLUGIN_TIMEOUT seconds (default 5) is killed and skipped; a
+# failing plugin is logged and never stops the others or the video.
+# Long-running programs: start them in the background
+# (start-stop-daemon -S -b ...) and return.
+
+DIR=${2:-${FPV_PLUGIN_DIR:-/etc/fpv/plugins.d}}
+TIMEOUT=${FPV_PLUGIN_TIMEOUT:-5}
+STATUS=${FPV_PLUGIN_STATUS:-/tmp/plugins.status}
+FPV_MODE=${FPV_MODE:-$(cat /tmp/mode.status 2>/dev/null)}
+export FPV_MODE
+
+LOG=${FPV_PLUGIN_LOG:-/userdata/log/fpv.log}
+
+# stderr, syslog, and fpv.log next to S99fpv's own lines (`fpv log fpv`)
+log() {
+	echo "plugins: $1" >&2
+	logger -t fpv "plugins: $1" 2>/dev/null
+	[ -d "${LOG%/*}" ] && echo "$(date '+%F %T') plugins: $1" >> "$LOG" 2>/dev/null
+}
+
+list() {
+	for f in "$DIR"/S*; do
+		[ -f "$f" ] && [ -x "$f" ] && echo "$f"
+	done
+}
+
+# run one plugin with a time limit (busybox here has no `timeout`)
+run() {
+	"$1" "$2" &
+	pid=$!
+	t=0
+	while kill -0 "$pid" 2>/dev/null; do
+		if [ "$t" -ge $((TIMEOUT * 10)) ]; then
+			kill -9 "$pid" 2>/dev/null
+			wait "$pid" 2>/dev/null
+			log "$(basename "$1") $2: no answer after ${TIMEOUT}s, killed"
+			return 124
+		fi
+		sleep 0.1 2>/dev/null || usleep 100000
+		t=$((t + 1))
+	done
+	wait "$pid"
+	rc=$?
+	[ "$rc" = 0 ] || log "$(basename "$1") $2: exit $rc"
+	return "$rc"
+}
+
+# the kernel's OOM killer picks these before the link; children inherit it
+echo 500 > /proc/$$/oom_score_adj 2>/dev/null
+
+case "$1" in
+start)
+	n=0 ok=0
+	for f in $(list); do
+		n=$((n + 1))
+		run "$f" start && ok=$((ok + 1))
+	done
+	echo "plugins=$n started=$ok" > "$STATUS"
+	[ "$n" = 0 ] || log "$ok of $n started ($DIR)"
+	;;
+stop)
+	for f in $(list | sort -r); do
+		run "$f" stop
+	done
+	rm -f "$STATUS"
+	;;
+status)
+	for f in $(list); do
+		s=$(run "$f" status 2>&1 | head -1)
+		echo "$(basename "$f"): ${s:-?}"
+	done
+	;;
+*)
+	echo "usage: fpv-plugins start|stop|status [dir]" >&2
+	exit 1
+	;;
+esac
+exit 0

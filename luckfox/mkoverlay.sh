@@ -46,10 +46,10 @@ need "$WFB/wfb_rx"
 need "$KO"
 
 rm -rf "$OV"
-install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/oem/usr/ko" "$OV/mnt/dvr"
+install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/etc/fpv/plugins.d" "$OV/oem/usr/ko" "$OV/mnt/dvr"
 
 install -m 755 "$HERE/build/rkfpv" "$HERE/build/mavbridge" "$HERE/build/fpvd" "$HERE/build/dvrhttpd" "$HERE/build/bblog" "$HERE/build/bbsend" "$OV/usr/bin/"
-install -m 755 "$HERE/files/wfb.sh" "$HERE/files/fpv" "$OV/usr/bin/"
+install -m 755 "$HERE/files/wfb.sh" "$HERE/files/fpv" "$HERE/files/fpv-plugins" "$OV/usr/bin/"
 install -m 755 "$WFB/wfb_tx" "$WFB/wfb_rx" "$OV/usr/bin/"
 [ -e "$WFB/wfb_tx_cmd" ] && install -m 755 "$WFB/wfb_tx_cmd" "$OV/usr/bin/"
 install -m 755 "$HERE/files/S21appinit" "$HERE/files/S99fpv" "$OV/etc/init.d/"
