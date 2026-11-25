@@ -21,3 +21,8 @@ telemetry:
   telemetry_enabled: true
   serial: ttyS3
   baud: 115200
+hotspot:
+  # WiFi access point when the hotspot switch (GPIO to GND) is closed.
+  # ssid / pass are generated on first boot; change them with fpv set.
+  hotspot_channel: 36
+  hotspot_country: US

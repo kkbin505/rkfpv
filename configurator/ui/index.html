@@ -13,6 +13,7 @@
   <div class="conn">
     <select id="transport" title="How to reach the board">
       <option value="adb">ADB (USB)</option>
+      <option value="hotspot">WiFi hotspot</option>
       <option value="fpvd">fpvd (UDP)</option>
       <option value="ssh">SSH (wfb tunnel)</option>
     </select>
@@ -68,6 +69,14 @@
           <button data-mode="debug">Always debug</button>
           <button data-mode="fpv">Always FPV</button>
         </div>
+      </div>
+      <div class="box">
+        <h3>WiFi hotspot</h3>
+        <p class="muted">Hold the board's <b>BOOT</b> button for about 2 s (after boot has finished) and the WiFi card
+          becomes an access point: join it from this PC, pick <b>WiFi hotspot</b> above, then download recordings
+          (DVR tab) and change settings without USB. Hold BOOT again to go back to FPV.</p>
+        <div class="row" id="hsState"></div>
+        <div id="hsSettings"></div>
       </div>
       <div class="box">
         <h3>Board scripts</h3>

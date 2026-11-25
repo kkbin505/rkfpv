@@ -169,3 +169,18 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 
 - `isp_*` settings call rkaiq at runtime (exposure cap, gain cap, AE delay/damping, NR, BLC/HLC, colour, sharpness, WB, dehaze, anti-flicker). `iq` = the IQ file's value; spatial and temporal NR default to **off**.
 - IQ files: stock `/oem/usr/share/iqfiles` is read-only; edits live in `/userdata/iq` (`fpv iq copy-stock|install|history|rollback`, `iq_dir`). Uploads are validated, md5-checked and swapped atomically; the last 5 versions are kept. A custom IQ that fails, or two starts in a row without a frame, falls back to stock.
+
+## 15. Hotspot mode (wireless-settings branch)
+
+- Button: the board's BOOT button. It pulls SARADC channel 0 to GND (`in_voltage0_raw` 1023 released, ~10 pressed); the stock DTS already enables the ADC, no DTS change. (BOOT held at power-up = maskrom, so it is only read after boot.)
+- SDK edit: buildroot defconfig `BR2_PACKAGE_HOSTAPD=y`, `BR2_PACKAGE_DNSMASQ=y`.
+- fpvd reads the ADC every 200 ms; held 2 s it toggles: `S99fpv hotspot-off` if `/tmp/mode.status` is `hotspot`, else `hotspot-on`. One action per press; ignored while the mode is unset or `switching`.
+- hotspot-on:
+  - stop rkfpv and wfb
+  - `wfb.sh adapter`
+  - wlan0 managed, 192.168.73.1/24
+  - hostapd (WPA2, settings from `wfb.yaml` `hotspot:`)
+  - dnsmasq DHCP .10–.50
+  - `dvrhttpd` on port 80
+- hotspot-off restarts wfb and rkfpv.
+- Tests: `test_switch.py` (fake ADC file), `test_dvrhttpd.py`, fpv str-type cases.

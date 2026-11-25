@@ -35,6 +35,9 @@
 #include "config.h"
 #include "dvr.h"
 #include "isp.h"
+#include "osd.h"
+#include "osd_layout.h"
+#include "telem.h"
 #include "rtp_h265.h"
 
 #define VENC_CHN 0              /* link stream -> RTP */
@@ -411,6 +414,48 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 		c->bitrate_kbps, c->gop);
 }
 
+/* ---- OSD (experiment) --------------------------------------------------- */
+
+#define OSD_LINK_HANDLE 0
+#define OSD_DVR_HANDLE 1
+
+#define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
+#define UPLINK_STATUS "/tmp/wfb_uplink.status"
+#define OSD_PERIOD_US 250000            /* 4 redraws per second */
+
+/* air-side wfb_rx (uplink from the ground station), see wfb.sh */
+static int read_uplink(int *rssi, int *lq)
+{
+	struct stat st;
+	if (stat(UPLINK_STATUS, &st) || time(NULL) - st.st_mtime > 3)
+		return 0;
+	FILE *f = fopen(UPLINK_STATUS, "r");
+	if (!f)
+		return 0;
+	char r[16] = "";
+	int uniq = 0, lost = 0;
+	int n = fscanf(f, "rssi=%15s uniq=%d lost=%d", r, &uniq, &lost);
+	fclose(f);
+	if (n != 3 || uniq + lost == 0 || !strcmp(r, "none"))
+		return 0;
+	*rssi = atoi(r);
+	*lq = uniq * 100 / (uniq + lost);
+	return 1;
+}
+
+/* one OSD redraw, timed */
+static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
+			 uint64_t (*clock_us)(void))
+{
+	if (!o)
+		return 0;
+	uint64_t t0 = clock_us();
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms };
+	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
+	osd_draw_view(o, &v);
+	return clock_us() - t0;
+}
+
 /* ---- DVR stream capture (dual mode) ------------------------------------ */
 
 static volatile int g_cap_quit;
@@ -532,6 +577,8 @@ int main(int argc, char **argv)
 	rtp.pt = (uint8_t)cfg.pt;
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
+	osd_t *osd_link = NULL, *osd_dvr = NULL;
+	int telem_fd = -1;
 	int dvr_vi_up = 0, dvr_venc_up = 0, dvr_bound = 0, dual = 0, cap_started = 0;
 	pthread_t cap_thr;
 	struct dvr_cap cap;
@@ -653,6 +700,18 @@ int main(int argc, char **argv)
 	write_dvr_status(dvr, dvr_off);
 	uint64_t t_dvr_status = now_us();
 
+	if (cfg.osd) {
+		osd_link = osd_create(OSD_LINK_HANDLE, VENC_CHN, cfg.width, cfg.height);
+		if (dual)
+			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
+	}
+	uint64_t t_osd = now_us(), osd_worst = 0;
+	telem_t telem;
+	telem_init(&telem);
+	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
+	if ((osd_link || osd_dvr) && telem_fd < 0)
+		fprintf(stderr, "osd: cannot listen on udp %d for telemetry\n", TELEM_PORT);
+
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
 	uint64_t pkts0 = 0, t_start = t0, dvr_f0 = 0, dvr_b0 = 0;
 	int got_first = 0;
@@ -765,6 +824,29 @@ int main(int argc, char **argv)
 				(unsigned long long)bytes);
 		}
 
+		if (telem_fd >= 0)
+			telem_poll(&telem, telem_fd, now_us() / 1000);
+		if ((osd_link || osd_dvr) && now_us() - t_osd >= OSD_PERIOD_US) {
+			char ds[300] = "", rec[16] = "";
+			if (dvr) {
+				dvr_status(dvr, ds, sizeof ds);
+				if (strstr(ds, "state=recording"))
+					snprintf(rec, sizeof rec, "REC");
+				else if (strstr(ds, "state=full"))
+					snprintf(rec, sizeof rec, "CARD FULL");
+			}
+			uint64_t now_ms = now_us() / 1000;
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, now_us);
+			if (d1 + d2 > osd_worst) {
+				osd_worst = d1 + d2;
+				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",
+					(unsigned long long)(d1 + d2), (unsigned long long)d1,
+					(unsigned long long)d2);
+			}
+			t_osd = now_us();
+		}
+
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
@@ -797,6 +879,10 @@ int main(int argc, char **argv)
 
 out:
 	/* each step is logged so a crash during teardown shows where it was */
+	if (telem_fd >= 0)
+		close(telem_fd);
+	osd_destroy(osd_link);
+	osd_destroy(osd_dvr);
 	if (cap_started) {
 		g_cap_quit = 1;
 		pthread_join(cap_thr, NULL);

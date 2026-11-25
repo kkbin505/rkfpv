@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 52 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 57 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -200,6 +200,24 @@ fpv iq install other.json 0123456789abcdef0123456789abcdef > /dev/null 2>&1 && b
 cmp -s "$T/stock.orig" "$S/sc3336_T.json" && ok "stock file never changed" || bad "stock file changed"
 check "iq status lists both" "sc3336_T.json sc3336_T.json" \
 	"$(fpv iq status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stock"][0]["name"], d["custom"][0]["name"])')"
+
+# hotspot settings (str type)
+setup
+fpv set hotspot_ssid rkfpv-1a2b hotspot_pass Secret_12.ab hotspot_channel 149 > /dev/null
+check "hotspot settings stored" "hotspot_ssid = rkfpv-1a2b|hotspot_pass = Secret_12.ab|hotspot_channel = 149" \
+	"$(fpv get hotspot_ssid hotspot_pass hotspot_channel | tr '\n' '|' | sed 's/|$//')"
+check "stored under hotspot: in wfb.yaml" "hotspot:|  hotspot_pass: Secret_12.ab|  hotspot_ssid: rkfpv-1a2b" \
+	"$(grep -A2 '^hotspot:' "$T/root/etc/wfb.yaml" | tr '\n' '|' | sed 's/|$//')"
+for bad in "has space" 'x;reboot' 'a$b' "q'q" ''; do
+	fpv set hotspot_ssid "$bad" > /dev/null 2>&1 && bad "ssid '$bad' accepted" || ok "ssid '$bad' rejected"
+done
+fpv set hotspot_pass short1 > /dev/null 2>&1 && bad "7-char password accepted" || ok "password under 8 rejected"
+fpv set hotspot_ssid "$(printf 'a%.0s' $(seq 33))" > /dev/null 2>&1 && bad "33-char ssid accepted" || ok "ssid over 32 rejected"
+fpv set hotspot_channel 13 > /dev/null 2>&1 && bad "channel 13 accepted" || ok "channel 13 rejected"
+check "schema str pattern" "str 1 32" "$(fpv schema --json | python3 -c 'import json,sys; p=next(x for x in json.load(sys.stdin)["params"] if x["key"]=="hotspot_ssid"); print(p["type"], p["min"], p["max"])')"
+mkdir -p "$T/root/tmp"; echo "switch=closed mode_request=hotspot" > "$T/root/tmp/switch.status"; echo hotspot > "$T/root/tmp/mode.status"
+check "hotspot status" "closed hotspot rkfpv-1a2b" \
+	"$(fpv hotspot status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["switch"], d["mode"], d["ssid"])')"
 
 # every preset in configurator/presets must be accepted by fpv as a whole
 for f in "$HERE"/configurator/presets/*.json; do

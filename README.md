@@ -155,6 +155,22 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
+## WiFi 热点模式（不插 USB 下载录像、改设置）
+
+用板子上的 **BOOT 按键**，不用另外接开关。开机完成后：
+
+- **按住 BOOT 约 2 秒**：视频和 wfb 停止，WiFi 网卡变成 WPA2 热点（`rkfpv-XXXX`，开机时自动生成名称和随机密码，调试模式下用 `fpv hotspot` 就能看到），板子地址是 192.168.73.1。
+  - 电脑连上热点后，在配置工具里选 **WiFi hotspot**：所有设置都能改，DVR 页可以下载、删除录像。
+  - 手机或浏览器直接打开 `http://192.168.73.1/`，也能下载、删除录像。
+- **再按住 BOOT 约 2 秒**：回到 FPV（wfb 图传 + 录像）。
+- 每次按住只切换一次，松开后才算下一次。开机过程中按键不起作用；上电时按住 BOOT 会进入烧录（maskrom）模式，不要这样做。板子接在电脑上（调试模式）时按键也不起作用。
+
+`fpv hotspot status` 查看按键状态、热点名称、密码和已连接的设备。`hotspot_ssid` / `hotspot_pass` / `hotspot_channel` / `hotspot_country` 改的是下次开热点时的设置。5 GHz 热点能不能起来取决于网卡驱动（8812CU 目前不行，见 issue #16）。**只选天线支持的频段**：天线只适合 5.8 GHz 时不要用 1/6/11 信道（2.4 GHz），频段不对可能损坏网卡。热点起不来时会回到 FPV，不会自动换信道。
+
+录像的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts` 文件，支持断点续传和拖动播放。删除时必须带确认请求头，所以别的网页没法借你的浏览器删卡上的文件。
+
+需要的 SDK 改动（见 docs/build-steps.md）：buildroot 加 `hostapd` 和 `dnsmasq`。BOOT 按键接在 SARADC 通道 0 上，原厂 DTS 已经打开 ADC，不用改。
+
 ## 画质（ISP）和 IQ 文件
 
 rkfpv 直接调用 rkaiq 的运行时接口改画质。majestic 在 Rockchip 上并没有调用这些接口。和其他设置一样，每一项都是 `fpv` 参数表里的一行，可以用 `fpv set` 修改，FPV 运行时立即生效：
