@@ -62,7 +62,7 @@ int main(int argc, char **argv)
 	t.armed_since_ms = now - 192000;
 	t.have_sys = 1; t.volts = 15.4f; t.amps = 12.3f; t.remaining = 78; t.mah = 1234;
 	t.rc_rssi = 251; t.rc_ms = now;
-	osd_view_t v = { &t, "REC", 1, -48, 98, now };
+	osd_view_t v = { &t, "REC", 1, -48, 98, now, 1, 52 };
 	osd_draw_view(o, &v);
 	/* clipping at the edges must not crash */
 	osd_begin(o);
