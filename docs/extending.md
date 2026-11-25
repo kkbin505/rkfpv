@@ -80,3 +80,27 @@ DRONE_KEY=... BOARD=pro KEEP_NPU=1 EXTRA_OVERLAY=/path/my-addon luckfox/mkoverla
 - 模型（`.rknn`）和推理程序用 `EXTRA_OVERLAY` 放进镜像。
 - 内存：NPU 的输入输出缓冲和视频共用 CMA。Mini 只有 64 MB，FPV 模式下可用内存只剩几 MB，基本跑不了模型；Pro（128 MB）可以试，启用后用 `fpv status` 看 `memory`，确认图传帧率不变。
 - 检查驱动是否加载：`ls /dev/rknpu* /sys/kernel/debug/rknpu 2>/dev/null` 或 `dmesg | grep -i rknpu`。
+
+## MAVLink：和飞控对话
+
+`mav_local_port` 打开板子上的本地 MAVLink 端口（只监听 127.0.0.1，外面连不进来），默认 0 关闭：
+
+```sh
+fpv set mav_local_port 14570     # 生效：fpv restart link
+```
+
+用法和 mavlink-router 的 UDP server 一样：
+
+- 往 `127.0.0.1:14570` 发的 MAVLink 消息，`mavbridge` 原样写进飞控串口，和地面站的上行并在一起。两边的消息都是按数据报整块写，不会在中途交错。
+- 谁发过数据，飞控的下行就也发给谁，回到它发送时用的地址和端口。10 秒没再发东西就不再发给它。MAVLink 程序本来就每秒发一次 HEARTBEAT，所以不用另外处理；只想收数据的程序发一个空数据报也算订阅。
+- 地面站的链路不受影响：下行照常走 wfb_tx，rkfpv 的 OSD 照常收它那份。
+- 用 pymavlink 测试：
+
+  ```python
+  from pymavlink import mavutil
+  m = mavutil.mavlink_connection("udpout:127.0.0.1:14570", source_system=1, source_component=191)
+  m.mav.heartbeat_send(18, 8, 0, 0, 0)          # 先发一个，才开始收
+  print(m.recv_match(type="ATTITUDE", blocking=True, timeout=5))
+  ```
+
+- 发控制命令之前要想清楚飞控在什么模式、遥控器能不能随时接管。`mavbridge` 只是转发，不检查内容。

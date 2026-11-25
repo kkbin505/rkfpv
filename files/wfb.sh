@@ -102,10 +102,18 @@ load_interface() {
 # no change: downlink radio port 16 (FC -> GS), uplink radio port 144.
 #   UART3 -> mavbridge -> udp:14551 -> wfb_tx -p 16
 #   wfb_rx -p 144 -> udp:14550 -> mavbridge -> UART3
+# -j: MAVLink for programs on the board (mav_local_port, 0 = off)
+mav_local() {
+	case "${mav_local_port:-0}" in
+	''|0|*[!0-9]*) ;;
+	*) echo "-j $mav_local_port" ;;
+	esac
+}
+
 start_telemetry() {
 	[ "$telemetry_enabled" = "true" ] || return 0
 	: "${serial:=ttyS3}" "${baud:=115200}" "${tun_index:=1}"
-	log "telemetry: /dev/$serial @ $baud"
+	log "telemetry: /dev/$serial @ $baud$(mav_local | sed 's/^-j /, local MAVLink port /')"
 	# -R: libpcap's default 2 MB capture ring is resident memory; the uplink
 	# carries a few hundred bytes/s, 128 KB is plenty (VmRSS 4.4 -> 2.8 MB)
 	# uplink stats once a second -> /tmp/wfb_uplink.status (rkfpv OSD):
@@ -124,7 +132,7 @@ start_telemetry() {
 		-S "$stbc" -L "$ldpc" -i "$link_id" -p 16 -u 14551 "$wfb_dev" > /dev/null 2>&1 &
 	# -c: a copy of the FC stream for rkfpv's OSD (UDP 14560)
 	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 > /dev/null 2>&1 &
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
 }
 
 # preview on a PC (debug mode, no radio): only the FC copy for rkfpv's OSD
@@ -133,7 +141,7 @@ start_osd_telemetry() {
 	: "${serial:=ttyS3}" "${baud:=115200}"
 	killall -q mavbridge
 	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 > /dev/null 2>&1 &
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
 }
 
 start() {
