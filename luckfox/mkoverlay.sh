@@ -10,6 +10,10 @@
 #                  files, e.g. add-on programs and their
 #                  etc/fpv/plugins.d/ scripts (docs/extending.md).
 #                  Replacing an rkfpv file is allowed but printed.
+#   KEEP_NPU=1:    keep loading the NPU driver (rknpu.ko) at boot, for
+#                  add-ons that use the NPU (librknnmrt.so is in the
+#                  SDK's /oem/usr/lib either way). Off: the driver is not
+#                  loaded, as before.
 #
 #   mini (default): Pico Mini, RV1103, boots from the TF card, recordings on
 #                   the card's "dvr" partition
@@ -40,6 +44,9 @@ need() { [ -e "$1" ] || { echo "missing: $1" >&2; exit 1; }; }
 # board hung there at boot. Pins come from our DTS, so they have nothing to do.
 TRIM_SERVICES="S49ntp S50telnet S41dhcpcd S99python S99hciinit S60micinit S99_auto_reboot S80dnsmasq S99luckfoxconfigload S99luckfoxcustomoverlay"
 TRIM_MODULES="rknpu snd-soc-rv1106 motor rve imx415 os04a10 sc4336 sc530ai gc2053 sc200ai sc401ai sc450ai techpoint mis5001 mia1321"
+if [ "${KEEP_NPU:-0}" = 1 ]; then
+	TRIM_MODULES=$(echo " $TRIM_MODULES " | sed 's/ rknpu / /; s/^ //; s/ $//')
+fi
 need "$HERE/build/rkfpv"
 need "$HERE/build/mavbridge"
 need "$HERE/build/fpvd"
@@ -90,6 +97,10 @@ for m in $TRIM_MODULES; do
 	grep -q "^__insmod $m\.ko" "$OV/oem/usr/ko/insmod_ko.sh" && { echo "insmod trim failed: $m" >&2; exit 1; }
 done
 grep -q '^__insmod sc3336\.ko' "$OV/oem/usr/ko/insmod_ko.sh" || { echo "insmod trim removed sc3336" >&2; exit 1; }
+if [ "${KEEP_NPU:-0}" = 1 ]; then
+	grep -q '^__insmod rknpu\.ko' "$OV/oem/usr/ko/insmod_ko.sh" || { echo "KEEP_NPU=1 but rknpu.ko is not loaded" >&2; exit 1; }
+	echo "NPU driver kept (KEEP_NPU=1)"
+fi
 
 if [ "$BOARD" = mini ]; then
 	# DVR partition: fixed-size rootfs, the rest of the TF card for recordings

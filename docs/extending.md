@@ -67,3 +67,16 @@ DRONE_KEY=... BOARD=mini EXTRA_OVERLAY=/path/my-addon luckfox/mkoverlay.sh
 - 目录不存在时直接报错退出，不改 SDK 里的任何东西。
 - 文件权限照原样保留，程序和脚本记得 `chmod 755`。
 - 不出镜像、直接更新正在运行的板子：`EXTRA_OVERLAY=... luckfox/push-update.sh`，用 ADB 推过去，和 rkfpv 的程序一起替换。
+
+## NPU：`KEEP_NPU=1`
+
+为了省内存，镜像默认不加载 NPU 驱动 `rknpu.ko`（`mkoverlay.sh` 的 `TRIM_MODULES`）。要用 NPU 的扩展程序，出镜像时加 `KEEP_NPU=1`：
+
+```sh
+DRONE_KEY=... BOARD=pro KEEP_NPU=1 EXTRA_OVERLAY=/path/my-addon luckfox/mkoverlay.sh
+```
+
+- 只是开机时多加载 `rknpu.ko`，驱动文件本来就在 `/oem/usr/ko/`；RKNN 运行库 `librknnmrt.so` 也已经在 SDK 的 `/oem/usr/lib/` 里，扩展程序直接链接即可。
+- 模型（`.rknn`）和推理程序用 `EXTRA_OVERLAY` 放进镜像。
+- 内存：NPU 的输入输出缓冲和视频共用 CMA。Mini 只有 64 MB，FPV 模式下可用内存只剩几 MB，基本跑不了模型；Pro（128 MB）可以试，启用后用 `fpv status` 看 `memory`，确认图传帧率不变。
+- 检查驱动是否加载：`ls /dev/rknpu* /sys/kernel/debug/rknpu 2>/dev/null` 或 `dmesg | grep -i rknpu`。
