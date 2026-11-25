@@ -46,3 +46,24 @@ S50hello: running
 # fpv status | grep plugins
 plugins:   1/1 started
 ```
+
+## 把自己的文件打进镜像：`EXTRA_OVERLAY`
+
+扩展程序、它的插件脚本和配置放在一个目录里，按板子上的路径摆好，比如：
+
+```
+my-addon/
+├── usr/bin/hello
+└── etc/fpv/plugins.d/S50hello
+```
+
+出镜像时传给 `mkoverlay.sh`，多个目录用 `:` 隔开：
+
+```sh
+DRONE_KEY=... BOARD=mini EXTRA_OVERLAY=/path/my-addon luckfox/mkoverlay.sh
+```
+
+- 在 rkfpv 自己的文件装好之后再合并，所以也能替换 rkfpv 的文件（比如自带一份 `etc/rkfpv.conf`），替换的每个文件都会打印出来。
+- 目录不存在时直接报错退出，不改 SDK 里的任何东西。
+- 文件权限照原样保留，程序和脚本记得 `chmod 755`。
+- 不出镜像、直接更新正在运行的板子：`EXTRA_OVERLAY=... luckfox/push-update.sh`，用 ADB 推过去，和 rkfpv 的程序一起替换。
