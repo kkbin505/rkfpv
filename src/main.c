@@ -199,7 +199,7 @@ static int isp_start_safe(const rkfpv_config_t *c)
 		} else
 			iq_tries_write(c->iq_dir, tries + 1);
 	}
-	if (isp_start(g_iq_used, c->fps, c->mirror, c->flip) == 0)
+	if (isp_start(g_iq_used, c->fps, c->mirror, c->flip, c->sensor_w, c->sensor_h) == 0)
 		return 0;
 	if (!custom || g_iq_fallback)
 		return -1;
@@ -207,7 +207,7 @@ static int isp_start_safe(const rkfpv_config_t *c)
 	snprintf(g_iq_note, sizeof g_iq_note, "rkaiq could not start with the custom IQ");
 	g_iq_fallback = 1;
 	snprintf(g_iq_used, sizeof g_iq_used, "%s", IQ_STOCK);
-	return isp_start(g_iq_used, c->fps, c->mirror, c->flip);
+	return isp_start(g_iq_used, c->fps, c->mirror, c->flip, c->sensor_w, c->sensor_h);
 }
 
 static uint64_t now_us(void)
@@ -528,7 +528,7 @@ static void usage(const char *p)
 {
 	fprintf(stderr,
 		"usage: %s [-c config] [-s key=value]...\n"
-		"keys: size fps vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
+		"keys: size fps sensor(WxH|auto) vi_chn iq_dir mirror flip rc(cbr|vbr) bitrate max_bitrate\n"
 		"      gop stat_time slice_bytes intra_refresh dst port pkt_size stats\n"
 		"defaults: size=1280x720 fps=30 rc=cbr bitrate=3500 gop=30 dst=127.0.0.1\n"
 		"          port=5600 pkt_size=1400\n", p);
@@ -885,6 +885,10 @@ int main(int argc, char **argv)
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
+			char ae[48] = "";
+			float exp_ms, gain;
+			if (isp_up && !isp_exposure(&exp_ms, &gain))
+				snprintf(ae, sizeof(ae), ", exp %.1f ms, gain %.1fx", exp_ms, gain);
 			char ds[300];
 			if (dvr)
 				dvr_status(dvr, ds, sizeof ds);
@@ -899,10 +903,10 @@ int main(int argc, char **argv)
 				dvr_b0 = db;
 			}
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu | preview %s | dvr%s %s\n",
+				"%.0f pkt/s, send errors %llu%s | preview %s | dvr%s %s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors,
+				(unsigned long long)rtp.send_errors, ae,
 				pv.cfd >= 0 ? "on" : "off", dr, ds);
 			t0 = t;
 			frames = bytes = max_frame = 0;

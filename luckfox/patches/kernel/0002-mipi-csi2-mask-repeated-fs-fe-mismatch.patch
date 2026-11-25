@@ -1,0 +1,26 @@
+diff --git a/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/mipi-csi2.c b/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/mipi-csi2.c
+index ec5be517a..97e157b0c 100644
+--- a/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/mipi-csi2.c
++++ b/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/mipi-csi2.c
+@@ -834,6 +834,21 @@ static irqreturn_t rk_csirx_irq1_handler(int irq, void *ctx)
+ 			csi2_err_strncat(err_str, cur_str);
+ 			if (csi2->match_data->chip_id < CHIP_RK3588_CSI2)
+ 				is_add_cnt = true;
++			/*
++			 * rkfpv: some sensor modes (SC3336 2x2 binning) raise this
++			 * on every frame although every frame arrives complete.
++			 * One pr_err per frame on a 115200 console costs several
++			 * ms of IRQ time each: after 16 of them in one stream,
++			 * mask this interrupt (the mask is cleared again at the
++			 * next stream start).
++			 */
++			if (err_list->cnt == 16) {
++				write_csihost_reg(csi2_hw->base, CSIHOST_MSK1,
++						  read_csihost_reg(csi2_hw->base, CSIHOST_MSK1) |
++						  CSIHOST_ERR1_ERR_BNDRY_MATCH);
++				pr_err("%s: fs/fe mismatch on every frame, masking this interrupt\n",
++				       csi2_hw->dev_name);
++			}
+ 		}
+ 
+ 		if (val & CSIHOST_ERR1_ERR_SEQ) {
