@@ -14,6 +14,9 @@
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
 #   fpv dvr device|format --yes      recording card (format: ext4, erases it)
+#   fpv blackbox status              Betaflight serial blackbox logger (UART4)
+#   fpv blackbox selftest [-r KB/s] [baud...]   UART4 TX wired to RX: send and
+#                                    compare BF-format logs (no flight controller)
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   fpv hotspot status               BOOT button, mode, SSID, password, clients
 #   fpv preview on|off|status        debug mode (board on a PC) or hotspot mode:
@@ -35,6 +38,8 @@ ISP_STATUS=$R/tmp/isp.status
 IQ_HISTORY_KEEP=5
 DVR_DIR=$R/mnt/dvr
 DVR_STATUS=$R/tmp/dvr.status
+BB_STATUS=$R/tmp/bblog.status
+BB_DEV=/dev/ttyS4
 INIT=$R/etc/init.d/S99fpv
 WFB_CMD_PORT=8000
 WLAN=wlan0
@@ -118,6 +123,9 @@ dvr_bitrate|rkfpv||int|1000|20000|8000|venc|DVR|Recording bitrate, kbit/s (the r
 dvr_rc|rkfpv||enum|vbr,cbr||vbr|venc|DVR|Recording rate control: vbr spends bits where the scene needs them
 dvr_gop|rkfpv||int|1|120|30|venc|DVR|Recording keyframe interval, frames. MP4 holds one GOP in RAM (bitrate x GOP): keep about 1 s
 dvr_format|rkfpv||enum|mp4,ts||mp4|venc|DVR|mp4 = fragmented MP4 (plays after a power cut), ts = MPEG-TS; from the next file
+dvr_osd|rkfpv||bool|0|1|1|video|DVR|OSD in the recording. 0 = clean recording for Gyroflow, the radio stream keeps its OSD. Needs the recording's own encoder (dvr_size not link)
+blackbox|rkfpv||bool|0|1|0|video|DVR|Save the flight controller's Betaflight blackbox (UART4 RX, BF: blackbox_device = SERIAL) as rec_SSSS_NN.bbl next to the recording it belongs to, for Gyroflow
+blackbox_baud|rkfpv||enum|1000000,1500000,2000000||1500000|video|DVR|Blackbox UART baud rate: the same as the flight controller's blackbox port. Check it with 'fpv blackbox selftest'
 EOF
 }
 
@@ -470,6 +478,9 @@ cmd_status() {
 	dvrst=$(dvr_state); dvrfile=-
 	running rkfpv && [ -f "$DVR_STATUS" ] && dvrfile=$(dvr_field file)
 	board=$(tr -d '\000' < "$R/proc/device-tree/model" 2>/dev/null)
+	bbst=off
+	[ "$(get_value blackbox)" = 1 ] && bbst=stopped
+	running bblog && bbst=$(bb_field state)
 
 	if [ "$JSON" = 1 ]; then
 		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
@@ -478,7 +489,8 @@ cmd_status() {
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
 		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s",' "$mem" "$temp" "$up"
-		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" "$(jesc "$board")"
+		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s","blackbox":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" \
+			"$(jesc "$board")" "$bbst"
 	else
 		[ -n "$board" ] && echo "board:     $board"
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
@@ -489,6 +501,7 @@ cmd_status() {
 		echo "temp:      ${temp:-?} C"
 		echo "uptime:    ${up:-?} s"
 		echo "dvr:       $dvrst${dvrfile:+ $dvrfile}"
+		echo "blackbox:  $bbst"
 	fi
 }
 
@@ -649,7 +662,18 @@ dvr_format() {
 }
 
 valid_rec_name() {
-	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts)$'
+	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts|bbl)$'
+}
+
+# key=value from bblog's status line ("state=logging file=... bytes=...")
+bb_field() {
+	[ -f "$BB_STATUS" ] || return 0
+	tr ' ' '\n' < "$BB_STATUS" | sed -n "s/^$1=//p" | head -1
+}
+
+# the blackbox log bblog is writing now, if any (never deleted)
+bb_busy() {
+	running bblog && [ "$(bb_field state)" = logging ] && bb_field file
 }
 
 dvr_cmd() {
@@ -686,18 +710,20 @@ dvr_cmd() {
 	list)
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
 		cur=$(running rkfpv && dvr_field file)
-		# newest first: session, then segment, numerically
-		files=$(ls -ln "$DVR_DIR" 2>/dev/null | awk '$9 ~ /^rec_[0-9]+_[0-9]+\.(mp4|ts)$/ { print $5, $9 }' \
-			| awk '{ split($2, a, /[_.]/); printf "%010d %010d %s %s\n", a[2], a[3], $1, $2 }' | sort -r)
+		bb=$(bb_busy)
+		# newest first: session, then segment, numerically; a segment's
+		# blackbox log (.bbl) right after its video
+		files=$(ls -ln "$DVR_DIR" 2>/dev/null | awk '$9 ~ /^rec_[0-9]+_[0-9]+\.(mp4|ts|bbl)$/ { print $5, $9 }' \
+			| awk '{ split($2, a, /[_.]/); printf "%010d %010d%d %s %s\n", a[2], a[3], (a[4] == "bbl" ? 0 : 1), $1, $2 }' | sort -r)
 		set -- $(dvr_space)
 		total=${1:-0}; free=${2:-0}
 		if [ "$JSON" = 1 ]; then
 			printf '{"ok":true,"total_mb":"%s","free_mb":"%s","recording":"%s","files":[' "$total" "$free" "$cur"
-			echo "$files" | awk -v cur="$cur" 'NF == 4 {
-				printf "%s{\"name\":\"%s\",\"size\":%s,\"recording\":%s}", sep, $4, $3, ($4 == cur ? "true" : "false"); sep = "," }'
+			echo "$files" | awk -v cur="$cur" -v bb="$bb" 'NF == 4 {
+				printf "%s{\"name\":\"%s\",\"size\":%s,\"recording\":%s}", sep, $4, $3, ($4 == cur || $4 == bb ? "true" : "false"); sep = "," }'
 			printf ']}\n'
 		else
-			echo "$files" | awk -v cur="$cur" 'NF == 4 { printf "%-22s %8.1f MB%s\n", $4, $3 / 1048576, ($4 == cur ? "  (recording)" : "") }'
+			echo "$files" | awk -v cur="$cur" -v bb="$bb" 'NF == 4 { printf "%-22s %8.1f MB%s\n", $4, $3 / 1048576, ($4 == cur || $4 == bb ? "  (recording)" : "") }'
 			echo "card: $free MB free of $total MB"
 		fi ;;
 	delete)
@@ -707,6 +733,7 @@ dvr_cmd() {
 		for n in "$@"; do
 			valid_rec_name "$n" || die "not a recording name: $n"
 			[ "$n" = "$cur" ] && die "$n is being recorded; stop recording first"
+			[ "$n" = "$(bb_busy)" ] && die "$n is being written (flight controller blackbox); disarm first"
 			[ -f "$DVR_DIR/$n" ] || die "no such recording: $n"
 		done
 		for n in "$@"; do rm -f "$DVR_DIR/$n"; done
@@ -716,11 +743,13 @@ dvr_cmd() {
 	delete-all)
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
 		cur=$(running rkfpv && dvr_field file)
+		bb=$(bb_busy)
 		n=0
 		for f in "$DVR_DIR"/rec_*; do
 			b=${f##*/}
 			valid_rec_name "$b" || continue
 			[ "$b" = "$cur" ] && continue
+			[ "$b" = "$bb" ] && continue
 			rm -f "$f" && n=$((n + 1))
 		done
 		sync
@@ -735,6 +764,100 @@ dvr_cmd() {
 		fi ;;
 	format) dvr_format "$@" ;;
 	*) die "dvr: status | start | stop | list | delete <file> | delete-all | device | format --yes" ;;
+	esac
+}
+
+# ----------------------------------------------------------- blackbox log
+# bblog saves the flight controller's Betaflight blackbox (serial, UART4)
+# as rec_SSSS_NN.bbl next to the recording; S99fpv starts it with rkfpv.
+
+blackbox_status() {
+	en=$(get_value blackbox); baud=$(get_value blackbox_baud)
+	st=off
+	[ "$en" = 1 ] && st=stopped
+	running bblog && st=$(bb_field state)
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"enabled":%s,"baud":"%s","state":"%s","file":"%s","log_bytes":"%s","bytes":"%s","logs":"%s","dropped":"%s","errors":"%s","why":"%s"}\n' \
+			"$([ "$en" = 1 ] && echo true || echo false)" "$baud" "$st" "$(bb_field file)" \
+			"$(bb_field log_bytes)" "$(bb_field bytes)" "$(bb_field logs)" "$(bb_field dropped)" \
+			"$(bb_field errors)" "$(bb_field why)"
+	else
+		echo "blackbox: $st (blackbox = ${en:-0}, $BB_DEV @ $baud)"
+		if running bblog; then
+			why=$(bb_field why)
+			echo "file:     $(bb_field file)${why:+ (not saved: $why)}"
+			echo "logs:     $(bb_field logs), $(bb_field bytes) bytes, $(bb_field dropped) dropped outside logs, $(bb_field errors) errors"
+		fi
+	fi
+}
+
+# UART4 loopback (TX GPIO1_C4 wired to RX GPIO1_C5): bbsend plays the flight
+# controller, bblog saves; the files must be identical to what was sent
+blackbox_selftest() {
+	rate=60
+	if [ "${1:-}" = -r ]; then
+		[ -n "${2:-}" ] || die "usage: fpv blackbox selftest [-r KB/s] [baud...]"
+		rate=$2; shift 2
+	fi
+	echo "$rate" | grep -Eq '^[0-9]+$' || die "rate must be a number (KB/s, 0 = full speed)"
+	bauds=${*:-1000000 1500000 2000000}
+	for b in $bauds; do
+		case "$b" in 115200|230400|460800|921600|1000000|1500000|2000000) ;;
+		*) die "unsupported baud rate $b" ;; esac
+	done
+	[ -c "$R$BB_DEV" ] || die "no $BB_DEV: UART4 is not enabled in this image's device tree"
+	command -v bbsend > /dev/null && command -v bblog > /dev/null || die "bblog/bbsend not installed"
+	was=; running bblog && { was=1; killall -q bblog; usleep 300000; }
+	T=$R/tmp/bbtest
+	size=$((rate > 0 ? rate * 1024 * 4 : 400000))     # ~4 s of logging per arm
+	res=; pass=0; fail=0
+	for b in $bauds; do
+		rm -rf "$T"; mkdir -p "$T/out" "$T/ref"
+		bblog -d "$BB_DEV" -b "$b" -o "$T/out" -s - -S "" -t 1000 -n 2 2> "$T/bblog.log" &
+		lp=$!
+		usleep 300000
+		bbsend -d "$BB_DEV" -b "$b" -r "$rate" -n 2 -g 1500 -s "$size" -w "$T/ref" 2> "$T/bbsend.log"
+		i=0
+		while kill -0 "$lp" 2> /dev/null && [ $i -lt 50 ]; do usleep 100000; i=$((i + 1)); done
+		kill "$lp" 2> /dev/null; wait "$lp" 2> /dev/null
+		ok=1; detail=
+		for n in 001 002; do
+			if [ ! -f "$T/out/log_$n.bbl" ]; then
+				ok=0; detail="$detail log $n: nothing received;"
+			elif ! cmp -s "$T/out/log_$n.bbl" "$T/ref/ref_$n.bbl"; then
+				ok=0
+				detail="$detail log $n: $(wc -c < "$T/out/log_$n.bbl") of $(wc -c < "$T/ref/ref_$n.bbl") bytes, $(cmp "$T/out/log_$n.bbl" "$T/ref/ref_$n.bbl" 2>&1 | head -1 | sed 's/.*: //');"
+			fi
+		done
+		kbs=$(sed -n 's/.*(\([0-9.]*\) KB\/s).*/\1/p' "$T/bbsend.log" | head -1)
+		if [ $ok = 1 ]; then pass=$((pass + 1)); r=pass; else fail=$((fail + 1)); r=FAIL; fi
+		res="$res$b $r ${kbs:-?} $detail
+"
+	done
+	rm -rf "$T"
+	[ -n "$was" ] && "$INIT" blackbox-start > /dev/null 2>&1
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":%s,"rate_kbs":%s,"results":[' "$([ $fail = 0 ] && echo true || echo false)" "$rate"
+		echo "$res" | awk 'NF >= 3 { d = ""; for (i = 4; i <= NF; i++) d = d (d ? " " : "") $i
+			gsub(/"/, "", d)
+			printf "%s{\"baud\":%s,\"pass\":%s,\"kbs\":\"%s\",\"detail\":\"%s\"}", sep, $1, ($2 == "pass" ? "true" : "false"), $3, d; sep = "," }'
+		printf ']}\n'
+	else
+		echo "$res" | awk 'NF >= 3 { printf "%-8s %-4s  %s KB/s  %s\n", $1, $2, $3, substr($0, index($0, $4)) }' | sed 's/  ?$//'
+		if [ $fail = 0 ]; then echo "selftest: all $pass baud rates byte for byte OK"
+		elif [ $pass = 0 ]; then echo "selftest: nothing passed: is UART4 TX (GPIO1_C4) wired to RX (GPIO1_C5)?"
+		else echo "selftest: use the highest baud rate that passed for blackbox_baud"; fi
+	fi
+	[ $fail = 0 ]
+}
+
+blackbox_cmd() {
+	sub=${1:-status}
+	[ $# -gt 0 ] && shift
+	case "$sub" in
+	status) blackbox_status ;;
+	selftest) blackbox_selftest "$@" ;;
+	*) die "blackbox: status | selftest [-r KB/s] [baud...]" ;;
 	esac
 }
 
@@ -908,7 +1031,7 @@ preview_cmd() {
 }
 
 usage() {
-	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --json may appear anywhere
@@ -935,6 +1058,7 @@ case "$cmd" in
 	mode) cmd_mode "$@" ;;
 	reset) cmd_reset ;;
 	dvr) dvr_cmd "$@" ;;
+	blackbox) blackbox_cmd "$@" ;;
 	iq) iq_cmd "$@" ;;
 	hotspot) hotspot_cmd "$@" ;;
 	preview) preview_cmd "$@" ;;

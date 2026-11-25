@@ -246,6 +246,37 @@ int main(void)
 	CHECK(!exists("rec_0001_00.mp4") && exists("rec_0001_10.mp4"), "oldest deleted, newest kept");
 	CHECK(count_files() <= 4, "card kept within capacity (%d files)", count_files());
 
+	/* blackbox logs (.bbl, bblog): numbered with the recordings, deleted
+	 * with them oldest first, but never the one of the session being
+	 * recorded (bblog may be writing it) */
+	reset();
+	dvr_destroy(d);
+	{
+		char p[512];
+		snprintf(p, sizeof p, "%s/rec_0003_00.bbl", dir);
+		FILE *bf = fopen(p, "w");
+		fputs("old flight", bf);
+		fclose(bf);
+	}
+	CHECK(dvr_next_session(dir) == 4, "a .bbl counts for the session number (%d)", dvr_next_session(dir));
+	d = dvr_create(&c, &W, 0);
+	cap_kb = 100 + 3 * 300;
+	dvr_start(d);
+	feed(d, 1, 30, 10000, 1);
+	{
+		char p[512];
+		snprintf(p, sizeof p, "%s/rec_0004_00.bbl", dir);
+		FILE *bf = fopen(p, "w");
+		fputs("this flight", bf);
+		fclose(bf);
+	}
+	feed(d, 11, 30, 10000, 1);
+	CHECK(!exists("rec_0003_00.bbl"), "old session's .bbl deleted for space");
+	CHECK(exists("rec_0004_00.bbl") && !exists("rec_0004_00.mp4"),
+	      "current session's .bbl kept, its older video deleted");
+	dvr_stop(d);
+	dvr_process(d);
+
 	/* space: overwrite off -> full, recording stops */
 	reset();
 	dvr_destroy(d);

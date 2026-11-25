@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 57 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 60 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -134,8 +134,9 @@ D="$T/root/mnt/dvr"
 head -c 3000 /dev/zero > "$D/rec_0001_00.mp4"
 head -c 2000 /dev/zero > "$D/rec_0001_01.mp4"
 head -c 1000 /dev/zero > "$D/rec_0002_00.ts"
+head -c 500 /dev/zero > "$D/rec_0001_01.bbl"
 touch "$D/notes.txt"
-check "dvr list newest first" "rec_0002_00.ts rec_0001_01.mp4 rec_0001_00.mp4" \
+check "dvr list newest first, blackbox logs too" "rec_0002_00.ts rec_0001_01.mp4 rec_0001_01.bbl rec_0001_00.mp4" \
 	"$(fpv dvr list --json | python3 -c 'import json,sys; print(" ".join(f["name"] for f in json.load(sys.stdin)["files"]))')"
 check "dvr list sizes" "1000" "$(fpv dvr list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"][0]["size"])')"
 fpv dvr delete ../../etc/rkfpv.conf > /dev/null 2>&1 && bad "path delete accepted" || ok "path delete rejected"
@@ -143,6 +144,8 @@ fpv dvr delete notes.txt > /dev/null 2>&1 && bad "non-recording delete accepted"
 [ -f "$T/root/etc/rkfpv.conf" ] && [ -f "$D/notes.txt" ] && ok "other files untouched" || bad "other files touched"
 fpv dvr delete rec_0001_00.mp4 > /dev/null && [ ! -e "$D/rec_0001_00.mp4" ] && ok "dvr delete" || bad "dvr delete"
 fpv dvr delete rec_0009_00.mp4 > /dev/null 2>&1 && bad "missing file delete ok" || ok "missing file delete fails"
+fpv dvr delete rec_0001_01.bbl > /dev/null && [ ! -e "$D/rec_0001_01.bbl" ] && ok "blackbox log delete" || bad "blackbox log delete"
+fpv dvr delete rec_0001_01.bbl.txt > /dev/null 2>&1 && bad "bad .bbl name accepted" || ok "bad .bbl name rejected"
 fpv dvr delete-all > /dev/null
 check "delete-all keeps non-recordings" "notes.txt" "$(ls "$D")"
 fpv dvr start > /dev/null 2>&1 && bad "start without FPV accepted" || ok "start refused when FPV is off"
@@ -152,6 +155,21 @@ check "dvr settings written" "dvr_segment = 300|dvr_overwrite = 0|dvr_format = t
 	"$(grep -E '^dvr_(segment|overwrite|format)' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//' | tr '\n' '|' | sed 's/|$//')"
 fpv set dvr_format mkv > /dev/null 2>&1 && bad "bad dvr_format accepted" || ok "bad dvr_format rejected"
 fpv set dvr_segment 5 > /dev/null 2>&1 && bad "dvr_segment 5 accepted" || ok "dvr_segment below 10 rejected"
+
+# Betaflight blackbox (bblog): settings, status, selftest guards
+fpv set blackbox 1 blackbox_baud 2000000 dvr_osd 0 > /dev/null
+check "blackbox settings written" "dvr_osd = 0|blackbox = 1|blackbox_baud = 2000000" \
+	"$(grep -E '^(dvr_osd|blackbox|blackbox_baud) ' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//' | tr '\n' '|' | sed 's/|$//')"
+fpv set blackbox_baud 115200 > /dev/null 2>&1 && bad "blackbox_baud 115200 accepted" || ok "blackbox_baud not in the list rejected"
+check "blackbox status: enabled, not running" "True 2000000 stopped" \
+	"$(fpv blackbox status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["enabled"], d["baud"], d["state"])')"
+check "fpv status has blackbox" "stopped" \
+	"$(fpv status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["blackbox"])')"
+fpv blackbox selftest 1234 > /dev/null 2>&1 && bad "selftest odd baud accepted" || ok "selftest odd baud rejected"
+fpv blackbox selftest -r x > /dev/null 2>&1 && bad "selftest bad rate accepted" || ok "selftest bad rate rejected"
+check "selftest without UART4" "no /dev/ttyS4" \
+	"$(fpv blackbox selftest 2>&1 | sed -n 's/.*\(no \/dev\/ttyS4\).*/\1/p')"
+fpv blackbox nope > /dev/null 2>&1 && bad "blackbox bad subcommand accepted" || ok "blackbox bad subcommand rejected"
 rm -rf "$T/root/mnt" "$T/root/tmp"
 check "no partition -> no-card" "no-card" "$(fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
 

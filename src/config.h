@@ -64,6 +64,9 @@ typedef struct {
 	rc_mode_t dvr_rc;
 	int dvr_bitrate_kbps;
 	int dvr_gop;
+	int dvr_osd;            /* 1: OSD in the recording (own encoder only) */
+	int blackbox;           /* bblog: FC blackbox on UART4 (read by S99fpv) */
+	int blackbox_baud;
 
 	isp_settings_t isp;
 

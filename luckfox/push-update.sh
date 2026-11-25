@@ -18,14 +18,14 @@ ADB="adb${1:+ -s $1}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-for b in rkfpv fpvd mavbridge dvrhttpd; do
+for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend; do
 	[ -f "$HERE/build/$b" ] || { echo "missing build/$b: run make first" >&2; exit 1; }
 	"$STRIP" -o "$TMP/$b" "$HERE/build/$b"
 done
 
 $ADB get-state > /dev/null || { echo "no board on adb" >&2; exit 1; }
 $ADB shell 'mount -o remount,rw / 2>/dev/null; mkdir -p /tmp/rkfpv-update'
-for b in rkfpv fpvd mavbridge dvrhttpd; do
+for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend; do
 	$ADB push "$TMP/$b" /tmp/rkfpv-update/ > /dev/null
 done
 for f in fpv wfb.sh S99fpv rkfpv.conf; do
@@ -33,7 +33,7 @@ for f in fpv wfb.sh S99fpv rkfpv.conf; do
 done
 # replace in place only after every file arrived (a half update would not boot FPV)
 $ADB shell 'set -e; cd /tmp/rkfpv-update
-	for b in rkfpv fpvd mavbridge dvrhttpd fpv wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
+	for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend fpv wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
 	cp S99fpv /etc/init.d/S99fpv.new && chmod 755 /etc/init.d/S99fpv.new && mv /etc/init.d/S99fpv.new /etc/init.d/S99fpv
 	mkdir -p /etc/fpv/defaults && cp rkfpv.conf /etc/fpv/defaults/rkfpv.conf
 	cd /; rm -rf /tmp/rkfpv-update; sync; echo "updated: $(cat /proc/device-tree/model 2>/dev/null | tr -d "\000")"'

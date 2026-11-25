@@ -675,7 +675,8 @@ async function loadDvrFiles() {
   for (const f of r.files) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td class="mono"></td><td></td><td></td>`;
-    tr.children[0].textContent = f.name + (f.recording ? "  ● recording" : "");
+    const bbl = f.name.endsWith(".bbl");   // flight controller blackbox log (bblog), for Gyroflow
+    tr.children[0].textContent = f.name + (bbl ? "  blackbox" : "") + (f.recording ? "  ● recording" : "");
     tr.children[1].textContent = fmtMB(f.size);
     const dl = document.createElement("button");
     dl.textContent = "Download";
@@ -687,7 +688,7 @@ async function loadDvrFiles() {
     play.target = "_blank";
     play.rel = "noopener";
     play.href = board.dvrFileUrl(f.name, false);
-    play.hidden = !direct || f.recording;
+    play.hidden = !direct || f.recording || bbl;
     const del = document.createElement("button");
     del.textContent = "Delete";
     del.className = "ghost danger";

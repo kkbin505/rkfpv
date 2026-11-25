@@ -42,6 +42,9 @@ void config_defaults(rkfpv_config_t *c)
 	c->dvr_rc = RC_VBR;     /* quality where the scene needs it; the card has room */
 	c->dvr_bitrate_kbps = 8000;
 	c->dvr_gop = 30;        /* 1 s: fMP4 fragment and seek granularity */
+	c->dvr_osd = 1;
+	c->blackbox = 0;        /* bblog's keys: rkfpv only accepts them */
+	c->blackbox_baud = 1500000;
 
 	/* iq = whatever the active IQ file sets (a custom IQ may set its own) */
 	c->isp.brightness = c->isp.contrast = c->isp.saturation = c->isp.hue = ISP_IQ;
@@ -186,6 +189,9 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("dvr_buffer_kb", dvr_buffer_kb, 256, 16384);
 	INT_KEY("dvr_bitrate", dvr_bitrate_kbps, 500, 50000);
 	INT_KEY("dvr_gop", dvr_gop, 1, 600);
+	INT_KEY("dvr_osd", dvr_osd, 0, 1);
+	INT_KEY("blackbox", blackbox, 0, 1);
+	INT_KEY("blackbox_baud", blackbox_baud, 115200, 2000000);
 	return -1;
 }
 

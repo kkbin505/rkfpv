@@ -74,7 +74,9 @@ static int parse_name(const char *name, int *session, int *seg)
 	int s, g, n = 0;
 	if (sscanf(name, "rec_%d_%d.%7s%n", &s, &g, ext, &n) != 3 || name[n] != '\0')
 		return 0;
-	if (strcmp(ext, "mp4") && strcmp(ext, "ts"))
+	/* .bbl: bblog's flight-controller blackbox log, named after the
+	 * recording it goes with; shares its age and is deleted with it */
+	if (strcmp(ext, "mp4") && strcmp(ext, "ts") && strcmp(ext, "bbl"))
 		return 0;
 	*session = s;
 	*seg = g;
@@ -95,7 +97,8 @@ int dvr_next_session(const char *dir)
 	return max + 1;
 }
 
-/* oldest recording that is not the file being written */
+/* oldest recording that is not the file being written (nor a blackbox log
+ * of the session being recorded: bblog may be writing it) */
 static int find_oldest(const dvr_t *d, char *out, size_t n)
 {
 	int bs = 0, bg = 0, found = 0, s, g;
@@ -109,6 +112,8 @@ static int find_oldest(const dvr_t *d, char *out, size_t n)
 		if (!parse_name(e->d_name, &s, &g))
 			continue;
 		if (d->h && !strcmp(e->d_name, cur))
+			continue;
+		if (!d->need_session && s == d->session && strstr(e->d_name, ".bbl"))
 			continue;
 		if (!found || s < bs || (s == bs && g < bg)) {
 			bs = s;

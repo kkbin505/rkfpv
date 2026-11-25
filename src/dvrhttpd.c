@@ -16,9 +16,10 @@
  *                           viewer wins (rkfpv keeps one client).
  *   OPTIONS *               CORS preflight, answered for the -o origin only
  *
- * Only names like rec_0003_01.mp4 / .ts in the DVR directory are served or
- * deleted; no other path exists. The file being recorded (rkfpv's
- * /tmp/dvr.status) is never deleted.
+ * Only names like rec_0003_01.mp4 / .ts / .bbl (bblog's flight-controller
+ * blackbox log) in the DVR directory are served or deleted; no other path
+ * exists. The file being recorded (rkfpv's /tmp/dvr.status) and the
+ * blackbox log being written (/tmp/bblog.status) are never deleted.
  *
  * Who may change things: every request that changes something needs the
  * custom header X-FPV-Confirm. A page from another site can only send it
@@ -36,7 +37,7 @@
  * served as listed above.
  *
  *   dvrhttpd [-b 10.0.0.1] [-p 80] [-d /mnt/dvr] [-s /tmp/dvr.status]
- *            [-o https://origin] [-f /usr/bin/fpv] [-P 5602]
+ *            [-B /tmp/bblog.status] [-o https://origin] [-f /usr/bin/fpv] [-P 5602]
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -66,6 +67,7 @@
 
 static const char *g_dir = "/mnt/dvr";
 static const char *g_status = "/tmp/dvr.status";
+static const char *g_bbstatus = "/tmp/bblog.status";
 static const char *g_host = "10.0.0.1";   /* our address: other Hosts are redirected */
 static int g_port = 80;
 static const char *g_origin;              /* the one origin CORS is answered for */
@@ -79,7 +81,7 @@ static void on_signal(int s) { (void)s; g_quit = 1; }
 
 static int valid_name(const char *n)
 {
-	/* rec_<digits>_<digits>.mp4|ts */
+	/* rec_<digits>_<digits>.mp4|ts|bbl */
 	size_t len = strlen(n);
 	if (len > 64 || strncmp(n, "rec_", 4))
 		return 0;
@@ -92,21 +94,22 @@ static int valid_name(const char *n)
 		return 0;
 	while (isdigit((unsigned char)*p))
 		p++;
-	return !strcmp(p, ".mp4") || !strcmp(p, ".ts");
+	return !strcmp(p, ".mp4") || !strcmp(p, ".ts") || !strcmp(p, ".bbl");
 }
 
-/* the file rkfpv is writing, "" if none */
-static void recording_name(char *out, size_t n)
+/* file= of a status file whose state= is `state`, "" if not */
+static void busy_name(const char *path, const char *state, char *out, size_t n)
 {
 	out[0] = '\0';
-	FILE *f = fopen(g_status, "r");
+	FILE *f = fopen(path, "r");
 	if (!f)
 		return;
-	char line[512];
+	char line[512], want[32];
+	snprintf(want, sizeof want, "state=%s ", state);
 	if (fgets(line, sizeof line, f)) {
-		char *p = strstr(line, "file=");
-		if (p && strstr(line, "state=recording")) {
-			p += 5;
+		char *p = strstr(line, " file=");
+		if (p && !strncmp(line, want, strlen(want))) {
+			p += 6;
 			size_t i = 0;
 			while (p[i] && p[i] != ' ' && p[i] != '\n' && i + 1 < n) {
 				out[i] = p[i];
@@ -116,6 +119,23 @@ static void recording_name(char *out, size_t n)
 		}
 	}
 	fclose(f);
+}
+
+/* the file rkfpv is writing, "" if none */
+static void recording_name(char *out, size_t n)
+{
+	busy_name(g_status, "recording", out, n);
+}
+
+/* the file being recorded or the blackbox log being written: not deletable */
+static int in_use(const char *name)
+{
+	char b[80];
+	recording_name(b, sizeof b);
+	if (!strcmp(name, b))
+		return 1;
+	busy_name(g_bbstatus, "logging", b, sizeof b);
+	return !strcmp(name, b);
 }
 
 static void send_all(int fd, const char *b, size_t n)
@@ -287,7 +307,8 @@ static void serve_file(int fd, const char *name, const char *range, int head, in
 		partial = 1;
 	}
 	long long len = size ? to - from + 1 : 0;
-	const char *ct = strstr(name, ".ts") ? "video/mp2t" : "video/mp4";
+	const char *ct = strstr(name, ".ts") ? "video/mp2t" :
+			 strstr(name, ".bbl") ? "application/octet-stream" : "video/mp4";
 	char h[1280];
 	int hl;
 	if (partial)
@@ -316,9 +337,8 @@ static void serve_file(int fd, const char *name, const char *range, int head, in
 
 static void do_delete(int fd, const char *name)
 {
-	char rec[80], p[512];
-	recording_name(rec, sizeof rec);
-	if (!strcmp(name, rec))
+	char p[512];
+	if (in_use(name))
 		return json_error(fd, 409, "Conflict", "this file is being recorded");
 	snprintf(p, sizeof p, "%s/%s", g_dir, name);
 	struct stat st;
@@ -332,13 +352,11 @@ static void do_delete(int fd, const char *name)
 
 static void do_delete_all(int fd)
 {
-	char rec[80];
-	recording_name(rec, sizeof rec);
 	int n = 0;
 	DIR *d = opendir(g_dir);
 	struct dirent *e;
 	while (d && (e = readdir(d))) {
-		if (!valid_name(e->d_name) || !strcmp(e->d_name, rec))
+		if (!valid_name(e->d_name) || in_use(e->d_name))
 			continue;
 		char p[512];
 		struct stat st;
@@ -617,18 +635,19 @@ int main(int argc, char **argv)
 {
 	const char *bind_ip = "10.0.0.1";
 	int port = 80, c;
-	while ((c = getopt(argc, argv, "b:p:d:s:o:f:P:h")) != -1) {
+	while ((c = getopt(argc, argv, "b:p:d:s:B:o:f:P:h")) != -1) {
 		switch (c) {
 		case 'b': bind_ip = optarg; break;
 		case 'p': port = atoi(optarg); break;
 		case 'd': g_dir = optarg; break;
 		case 's': g_status = optarg; break;
+		case 'B': g_bbstatus = optarg; break;
 		case 'o': g_origin = *optarg ? optarg : NULL; break;
 		case 'f': g_fpv = optarg; break;
 		case 'P': g_preview_port = atoi(optarg); break;
 		default:
 			fprintf(stderr, "usage: dvrhttpd [-b ip] [-p port] [-d dir] [-s dvr.status]\n"
-				"                [-o https://origin] [-f fpv] [-P preview port]\n");
+				"                [-B bblog.status] [-o https://origin] [-f fpv] [-P preview port]\n");
 			return c == 'h' ? 0 : 1;
 		}
 	}

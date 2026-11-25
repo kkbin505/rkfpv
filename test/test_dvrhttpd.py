@@ -53,6 +53,11 @@ def main():
             f.write(b"ts" * 10)
         with open(f"{d}/rec_0003_00.mp4", "wb") as f:
             f.write(b"recording")
+        bbl = os.urandom(5000)
+        with open(f"{d}/rec_0001_00.bbl", "wb") as f:      # blackbox log (bblog)
+            f.write(bbl)
+        with open(f"{d}/rec_0003_00.bbl", "wb") as f:      # ... being written
+            f.write(b"H Product")
         with open(f"{d}/notes.txt", "w") as f:
             f.write("keep")
         with open(f"{outside}/secret", "w") as f:
@@ -61,6 +66,9 @@ def main():
         status = f"{d}/dvr.status"
         with open(status, "w") as f:
             f.write("state=recording file=rec_0003_00.mp4 bytes=9 drops=0 free_mb=100\n")
+        bbstatus = f"{d}/bblog.status"
+        with open(bbstatus, "w") as f:
+            f.write("state=logging file=rec_0003_00.bbl log_bytes=9 bytes=9 logs=1 dropped=0 errors=0\n")
 
         # fake fpv: echoes its arguments as JSON
         fake_fpv = f"{outside}/fpv"
@@ -73,7 +81,7 @@ def main():
         pv.listen(1)
         pv_port = pv.getsockname()[1]
 
-        p = subprocess.Popen([BIN, "-b", "127.0.0.1", "-p", str(PORT), "-d", d, "-s", status,
+        p = subprocess.Popen([BIN, "-b", "127.0.0.1", "-p", str(PORT), "-d", d, "-s", status, "-B", bbstatus,
                               "-o", ORIGIN, "-f", fake_fpv, "-P", str(pv_port)],
                              stderr=subprocess.PIPE)
         time.sleep(0.4)
@@ -85,7 +93,8 @@ def main():
         j = json.loads(b)
         names = sorted(f["name"] for f in j["files"])
         check("list: recordings only, no symlink",
-              names == ["rec_0001_00.mp4", "rec_0002_01.ts", "rec_0003_00.mp4"], names)
+              names == ["rec_0001_00.bbl", "rec_0001_00.mp4", "rec_0002_01.ts", "rec_0003_00.bbl",
+                        "rec_0003_00.mp4"], names)
         check("list: recording reported", j["recording"] == "rec_0003_00.mp4", j)
         check("list: sizes", {f["name"]: f["size"] for f in j["files"]}["rec_0001_00.mp4"] == 300000)
 
@@ -103,6 +112,9 @@ def main():
         check("range past the end -> 416", st == 416, st)
         st, h, b = req("GET", "/dvr/rec_0002_01.ts")
         check("ts content type", st == 200 and h["Content-Type"] == "video/mp2t")
+        st, h, b = req("GET", "/dvr/rec_0001_00.bbl")
+        check("blackbox log download", st == 200 and b == bbl and
+              h["Content-Type"] == "application/octet-stream", st)
 
         # captive portal: phones' connectivity checks go to the page
         for host, path in [("connectivitycheck.gstatic.com", "/generate_204"),
@@ -128,6 +140,8 @@ def main():
         check("delete with confirm", st == 200 and not os.path.exists(f"{d}/rec_0002_01.ts"), st)
         st, h, b = req("DELETE", "/dvr/rec_0003_00.mp4", {"X-FPV-Confirm": "1"})
         check("file being recorded is kept", st == 409 and os.path.exists(f"{d}/rec_0003_00.mp4"), st)
+        st, h, b = req("DELETE", "/dvr/rec_0003_00.bbl", {"X-FPV-Confirm": "1"})
+        check("blackbox log being written is kept", st == 409 and os.path.exists(f"{d}/rec_0003_00.bbl"), st)
         st, h, b = req("DELETE", "/dvr/notes.txt", {"X-FPV-Confirm": "1"})
         check("delete non-recording refused", st == 404 and os.path.exists(f"{d}/notes.txt"), st)
         st, h, b = req("DELETE", "/dvr/rec_0009_00.mp4", {"X-FPV-Confirm": "1"})
@@ -141,8 +155,9 @@ def main():
         st, h, b = req("POST", "/api/delete-all", {"X-FPV-Confirm": "1"})
         left = sorted(os.listdir(d))
         check("delete-all: recordings gone, others kept",
-              st == 200 and json.loads(b)["deleted"] == 1 and
-              left == ["dvr.status", "notes.txt", "rec_0003_00.mp4", "rec_0009_00.mp4"], left)
+              st == 200 and json.loads(b)["deleted"] == 2 and
+              left == ["bblog.status", "dvr.status", "notes.txt", "rec_0003_00.bbl", "rec_0003_00.mp4",
+                       "rec_0009_00.mp4"], left)
 
         # ---- web configurator: CORS for one origin, /api/fpv, /live
         pre = {"Origin": ORIGIN, "Access-Control-Request-Method": "POST",
@@ -180,7 +195,7 @@ def main():
         st, h, b = req("POST", "/api/fpv", H, body=b"get" + b" bitrate" * 40)
         check("fpv: too many arguments refused", json.loads(b).get("ok") is False, b)
 
-        st, h, b = req("GET", "/dvr/rec_0001_00.mp4?dl=1")
+        st, h, b = req("GET", "/dvr/rec_0003_00.mp4?dl=1")
         check("?dl=1 -> attachment", st == 200 and h.get("Content-Disposition", "").startswith("attachment"), h)
 
         # /live relays the preview server's bytes; nothing listening -> 503

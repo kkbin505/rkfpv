@@ -86,7 +86,7 @@ fpv reset                       # 恢复出厂设置
 
 加 `--json` 输出机器可读格式。新增参数只要在 `files/fpv` 的参数表里加一行。
 
-**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset/dvr/preview/hotspot/iq，列表在 `src/fpvcmd.c`，和 dvrhttpd 共用），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
+**fpvd（UDP 命令服务）**：板子开机就在 UDP 7000 端口运行 `fpvd`（`src/fpvd.c`），只执行 `fpv` 的子命令（get/set/schema/status/log/restart/mode/reset/dvr/preview/hotspot/iq/blackbox，列表在 `src/fpvcmd.c`，和 dvrhttpd 共用），不给 shell，参数只允许安全字符。现在可以走 USB RNDIS（板子 172.32.0.93，电脑网卡手动设成 172.32.0.x），以后走 wfb 隧道（见 issue #1），不用 UART 也不占 USB 口。
 
 协议很简单，按无线丢包设计：请求 `FPV1 <id> <命令> [参数…]`；回复按 1200 字节分片，每片格式 `FPV1 <id> <序号>/<总数>\n<JSON 片段>`。丢包时客户端用**同一个 id** 重发，fpvd 直接返回缓存的结果，不会重复执行（比如 restart 不会跑两次）。
 
@@ -172,7 +172,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 
 `fpv hotspot status` 查看按键状态、热点名称、密码和已连接的设备。`hotspot_ssid` / `hotspot_pass` / `hotspot_channel` / `hotspot_country` 改的是下次开热点时的设置。5 GHz 热点能不能起来取决于网卡驱动（8812CU 目前不行，见 issue #16）。**只选天线支持的频段**：天线只适合 5.8 GHz 时不要用 1/6/11 信道（2.4 GHz），频段不对可能损坏网卡。热点起不来时会回到 FPV，不会自动换信道。
 
-热点上的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts` 文件（支持断点续传和拖动播放）、给网页版用的 `/api/fpv`（只执行白名单里的 `fpv` 子命令，不经过 shell）和 `/live`（实时画面）。改东西的请求必须带确认请求头，而且只对网页版的来源回应 CORS，所以别的网页没法借你的浏览器改设置或删卡上的文件。
+热点上的 HTTP 服务（`dvrhttpd`）只提供 `rec_*.mp4|ts|bbl` 文件（支持断点续传和拖动播放）、给网页版用的 `/api/fpv`（只执行白名单里的 `fpv` 子命令，不经过 shell）和 `/live`（实时画面）。改东西的请求必须带确认请求头，而且只对网页版的来源回应 CORS，所以别的网页没法借你的浏览器改设置或删卡上的文件。
 
 需要的 SDK 改动（见 docs/build-steps.md）：buildroot 加 `hostapd` 和 `dnsmasq`。BOOT 按键接在 SARADC 通道 0 上，原厂 DTS 已经打开 ADC，不用改。
 
@@ -234,6 +234,12 @@ fpv dvr delete-all        # 正在录的那个文件不会删
 ```
 
 H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEVC 视频扩展"。
+
+### Betaflight 黑盒（给 Gyroflow 增稳）
+
+飞控的 blackbox 设成串口输出（`blackbox_device = SERIAL`），TX 接板子的 UART4 RX。`bblog` 把每次解锁的日志存成和录像同名的 `rec_SSSS_NN.bbl`，和录像一起下载、一起按旧到新清理。`dvr_osd = 0` 让录像不烧 OSD。
+
+不接飞控也能先验证串口：把 UART4 的 TX 和 RX 短接（Mini 排针 10–11，Pro 排针 6–7），运行 `fpv blackbox selftest`。接线和 BF 设置见 [docs/blackbox.md](docs/blackbox.md)。
 
 ## 致谢
 
