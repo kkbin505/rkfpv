@@ -120,6 +120,9 @@ hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radi
 osd|rkfpv||bool|0|1|0|video|Video|Experimental OSD burned into the video (flight mode, battery, link quality). Off by default until tested on hardware
 osd_ext_port|rkfpv||int|0|65535|0|video|Video|UDP port on 127.0.0.1 where programs on the board send boxes, text and crosses for the OSD (needs osd = 1). 0 = off. See docs/extending.md
 osd_ext_ttl_ms|rkfpv||int|100|10000|500|video|Video|Shapes from other programs disappear this long after their last datagram, ms
+frame_tap|rkfpv||bool|0|1|0|video|Video|Grey copy of the camera picture in shared memory (/dev/shm/rkfpv-frame) for programs on the board, e.g. detection. Costs a third camera buffer (about 1.4 MB at 720p). See docs/extending.md
+frame_tap_fps|rkfpv||int|1|30|10|video|Video|Frame tap: pictures per second
+frame_tap_scale|rkfpv||enum|1,2,4||2|video|Video|Frame tap size: 1 full, 2 half (720p gives 640x360), 4 quarter (320x180, for the Mini)
 dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card

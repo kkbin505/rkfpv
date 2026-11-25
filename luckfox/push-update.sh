@@ -27,14 +27,14 @@ unset IFS
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend; do
+for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend ftdump; do
 	[ -f "$HERE/build/$b" ] || { echo "missing build/$b: run make first" >&2; exit 1; }
 	"$STRIP" -o "$TMP/$b" "$HERE/build/$b"
 done
 
 $ADB get-state > /dev/null || { echo "no board on adb" >&2; exit 1; }
 $ADB shell 'mount -o remount,rw / 2>/dev/null; mkdir -p /tmp/rkfpv-update'
-for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend; do
+for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend ftdump; do
 	$ADB push "$TMP/$b" /tmp/rkfpv-update/ > /dev/null
 done
 for f in fpv fpv-plugins wfb.sh S99fpv rkfpv.conf; do
@@ -53,7 +53,7 @@ done
 unset IFS
 # replace in place only after every file arrived (a half update would not boot FPV)
 $ADB shell 'set -e; cd /tmp/rkfpv-update
-	for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend fpv fpv-plugins wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
+	for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend ftdump fpv fpv-plugins wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
 	cp S99fpv /etc/init.d/S99fpv.new && chmod 755 /etc/init.d/S99fpv.new && mv /etc/init.d/S99fpv.new /etc/init.d/S99fpv
 	mkdir -p /etc/fpv/plugins.d /etc/fpv/defaults && cp rkfpv.conf /etc/fpv/defaults/rkfpv.conf
 	for d in /tmp/rkfpv-update/extra*; do if [ -d "$d" ]; then cp -a "$d/." /; fi; done

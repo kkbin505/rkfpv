@@ -73,6 +73,9 @@ typedef struct {
 	int osd;                /* experimental: burn a test OSD into the video */
 	int osd_ext_port;       /* UDP on 127.0.0.1 for shapes from other programs, 0 = off */
 	int osd_ext_ttl_ms;     /* their shapes vanish after this long without news */
+	int frame_tap;          /* 1: luma copy of the link picture in /dev/shm */
+	int frame_tap_fps;
+	int frame_tap_scale;    /* keep every n-th pixel and row */
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;

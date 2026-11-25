@@ -155,6 +155,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `src/config.c` | key=value 配置解析 |
 | `src/mavbridge.c` | 串口 ↔ UDP 的 MAVLink 转发，按帧打包，不依赖其他库 |
 | `src/fpvd.c` | UDP 命令服务，只执行 `fpv` 子命令 |
+| `src/frametap.c` / `frametap.h` | 帧接口：画面灰度小图放进共享内存，给其他程序读 |
 | `src/osd_ext.c` | 其他程序通过 UDP 往 OSD 上画框和文字 |
 | `files/fpv` | 板子上的设置命令（get / set / status …） |
 | `files/fpv-plugins` | 跟着视频启停 `/etc/fpv/plugins.d/` 里的扩展程序 |
@@ -252,6 +253,7 @@ H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEV
 - **NPU**：`KEEP_NPU=1 luckfox/mkoverlay.sh` 让镜像开机加载 NPU 驱动（默认为省内存不加载）。
 - **MAVLink**：`fpv set mav_local_port 14570`，板子上的程序往这个本地端口发消息就能到飞控，也收得到飞控的数据流。
 - **OSD**：`fpv set osd 1 osd_ext_port 14580`，板子上的程序发一行 `box X Y W H` / `text X Y 文字` 就能在图传画面上画框和文字。
+- **画面**：`fpv set frame_tap 1`，图传画面的灰度小图放在共享内存 `/dev/shm/rkfpv-frame`，读法见 `src/frametap.h`，`ftdump` 可以测试。
 
 ## 致谢
 
