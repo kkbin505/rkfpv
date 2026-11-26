@@ -55,8 +55,18 @@ fun SettingsScreen(s: UiState, vm: BoardViewModel, modifier: Modifier) {
     var groupName by rememberSaveable { mutableStateOf(groups.first()) }
     val gi = groups.indexOf(groupName).coerceAtLeast(0)
     var confirmLink by remember { mutableStateOf(false) }
+    var showPreview by rememberSaveable { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize()) {
+        // watch the picture while tuning (Picture / Exposure are live)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.show_preview), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = showPreview, onCheckedChange = {
+                showPreview = it
+                if (it && !s.videoRunning) vm.setVideo(true)
+            })
+        }
+        if (showPreview && s.videoRunning) VideoSurface(s, vm, Modifier.fillMaxWidth())
         ScrollableTabRow(selectedTabIndex = gi, edgePadding = 8.dp) {
             groups.forEachIndexed { i, g ->
                 val dirty = s.edits.keys.any { s.param(it)?.group == g }

@@ -1,18 +1,28 @@
 # rkfpv 安卓 App
 
-用一根 Type-C 线把天空端直接接到手机上，就能调参、查看状态、下载和播放 TF 卡上的录像。不需要电脑。
+用一根 Type-C 线把天空端直接接到手机上，就能调参、实时预览画面、开始和停止录像、下载和播放 TF 卡上的录像。不需要电脑。
 
 App 在手机上直接实现了 ADB 协议（通过安卓的 USB Host API），所以板子这边不用装任何新东西，手机也不需要 root。它执行的命令和 PC 配置器（`configurator/`）完全一样，都是 `fpv … --json`。所以 App 能做的事，`adb shell` 里也都能做。
 
-## 第一版的功能
+## 功能
 
 | 页面 | 内容 |
 |---|---|
 | 状态 | 模式、视频帧率和码率、网卡和发射功率、内存、温度、录像状态；每 3 秒刷新一次 |
-| 参数 | 按 `fpv schema` 自动生成，分组和 PC 配置器一样（Video / Camera / Radio / Picture …）。改过的项会高亮，点 **保存** 后作为一条 `fpv set` 发给板子。板子会先校验所有参数再写入。每一项都标明生效方式：即时生效、需重启、链路、下次启动 |
-| 录像 | 板子 TF 卡上的录像列表（剩余空间、文件大小）；可以下载到手机、播放、分享、删除 |
+| 预览 | **视频** 开关（`fpv preview on/off`），实时画面（H.265 硬解），分辨率 / 帧率 / 丢帧，录像控制 |
+| 参数 | 按 `fpv schema` 自动生成，分组和 PC 配置器一样（Video / Camera / Radio / Picture …）。改过的项会高亮，点 **保存** 后作为一条 `fpv set` 发给板子。板子会先校验所有参数再写入。每一项都标明生效方式：即时生效、需重启、链路、下次启动。打开 **显示预览** 可以边调边看 |
+| 录像 | **开始录像 / 停止**（当前文件、大小、丢帧）；板子 TF 卡上的录像列表（剩余空间、文件大小）；可以下载到手机、播放、分享、删除 |
 
-还不支持：实时预览、IQ 文件编辑、预设和备份、日志。这些 PC 配置器里都有。
+还不支持：IQ 文件编辑、预设和备份、日志。这些 PC 配置器里都有。
+
+## 预览和录像控制
+
+调试模式下图传不运行，录像是 `rkfpv` 做的，所以要先打开 **视频** 开关。App 执行 `fpv preview on`，板子在调试模式下启动 `rkfpv`，但不开无线。
+
+- **需要板子固件支持有线预览**（PR #18，目前在 `hotspot-osd-v2` 分支上，`main` 还没有）。老固件上打开视频会提示 `unknown command 'preview'`；调参和下载录像不受影响。
+- **预览**：App 通过 ADB 直接打开板子上的 `tcp:5602`（和 `adb forward` 用的是同一个服务，手机上不需要转发端口）。码流格式见 `src/preview.c`：每帧是 4 字节大端长度加 Annex-B 的 H.265。App 用 `MediaCodec` 硬解，每帧解出来马上显示；解码跟不上时丢帧，直到下一个关键帧。改了"需重启"的参数后视频会重启，预览会自动重连。
+- **录像**：开始和停止对应 `fpv dvr start/stop`，只有视频在运行时才能用。固件里 `dvr` 默认是关闭的（不占内存）：在 **参数 → DVR** 里把 `dvr` 打开，然后把视频关掉再打开。`dvr` 打开时，视频一启动就会自动开始录像。
+- **供电**：视频运行时摄像头、编码器都在工作，录像时还要写 TF 卡，比纯调试模式耗电多。用手机供电时注意手机的 OTG 输出能力。
 
 ## 使用
 
@@ -57,13 +67,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | `adb/AdbKey.kt` | App 自己的 RSA 密钥、AUTH 签名、adbd 用的公钥格式 |
 | `adb/UsbAdbChannel.kt` | USB bulk 端点（接口 class 0xff / subclass 0x42 / protocol 1） |
 | `fpv/Fpv.kt` | `fpv` 命令的客户端，解析 JSON；参数校验规则和 `files/fpv` 一致 |
+| `video/H265.kt` | 预览码流的分帧（长度 + Annex-B），找关键帧和 VPS / SPS / PPS |
+| `video/PreviewPlayer.kt` | 通过 ADB 读 `tcp:5602`，`MediaCodec` 解码到 SurfaceView，断开后自动重连 |
 | `ui/` | Jetpack Compose 界面和 ViewModel |
 
 测试：
 
 - `AdbConnectionTest` 让 App 的协议代码和一个假的 adbd 通过本机 socket 通信。假 adbd 严格按流控收发，最大负载设得很小，让 sync 头跨包，并且用公钥验证 AUTH 签名。
 - `AdbKeyTest` 用 `adb keygen` 生成的密钥对（`src/test/resources/adb/`，只用于测试），检查公钥编码和 PC 上的 adb 完全一致。
-- `FpvClientTest` 用的 JSON 是在电脑上用 `FPV_ROOT` 运行 `files/fpv` 录下来的。`validate_cases.txt` 里每一条都和 `fpv set` 的结果对过。
+- `FpvClientTest` 用的 JSON 是在电脑上用 `FPV_ROOT` 运行 `files/fpv` 录下来的（preview 和 dvr status 来自 `hotspot-osd-v2` 的 `fpv`；`dvr_status_recording.json` 是按同样格式手写的，因为录像时的状态在电脑上跑不出来）。`validate_cases.txt` 里每一条都和 `fpv set` 的结果对过。
+- `H265Test` 检查分帧在任意切包方式下都正确，以及关键帧和参数集的识别。`MediaCodec` 解码只能在手机上测。
 
 ## 已知限制和待验证
 

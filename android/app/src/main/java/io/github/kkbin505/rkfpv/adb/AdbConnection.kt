@@ -271,6 +271,9 @@ class AdbStream internal constructor(
         if (closed) return
         closed = true
         conn.removeStream(localId)
+        // wake a reader or writer blocked on this stream (another thread may be in read(0))
+        okays.offer(CLOSED)
+        data.offer(EOF)
         if (!remoteClosed && remoteId != 0 && conn.isAlive) {
             runCatching { conn.send(AdbMessage(A_CLSE, localId, remoteId)) }
         }

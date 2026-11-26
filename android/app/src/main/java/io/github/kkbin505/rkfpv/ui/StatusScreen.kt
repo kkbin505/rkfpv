@@ -88,7 +88,8 @@ fun StatusScreen(s: UiState, vm: BoardViewModel, modifier: Modifier) {
         }
         if (!st.fpvRunning) {
             Card(Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.debug_mode_note), Modifier.padding(16.dp))
+                Text(stringResource(if (st.videoRunning) R.string.preview_mode_note else R.string.debug_mode_note),
+                    Modifier.padding(16.dp))
             }
         }
         Card(Modifier.fillMaxWidth()) {

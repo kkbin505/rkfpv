@@ -113,6 +113,22 @@ class AdbConnectionTest {
         }
     }
 
+    /** The preview reads with no timeout on its own thread; stop() closes the stream from another. */
+    @Test fun closeWakesABlockedReader() {
+        val c = connect(true)
+        val s = c.open("shell:silent")
+        var result: Any? = "not returned"
+        val t = Thread { result = runCatching { s.read(0) }.getOrNull() }
+        t.start()
+        Thread.sleep(200)
+        s.close()
+        t.join(2000)
+        assertTrue("reader still blocked", !t.isAlive)
+        assertEquals(null, result)
+        // the connection is fine afterwards
+        assertEquals("hi\n", c.shell("echo hi"))
+    }
+
     @Test fun deviceGoneFailsTheConnection() {
         val c = connect(true)
         try {
@@ -193,6 +209,7 @@ class AdbConnectionTest {
                 when {
                     dest == "shell:big" -> { send(AdbMessage(A_OKAY, me, host)); writeAll(me, host, BIG_OUTPUT.toByteArray()); close(me, host) }
                     dest == "shell:echo hi" -> { send(AdbMessage(A_OKAY, me, host)); writeAll(me, host, "hi\r\n".toByteArray()); close(me, host) }
+                    dest == "shell:silent" -> send(AdbMessage(A_OKAY, me, host))
                     dest == "shell:die" -> { send(AdbMessage(A_OKAY, me, host)); sock.close(); return }
                     dest == "sync:" -> { send(AdbMessage(A_OKAY, me, host)); sync(me, host) }
                     else -> send(AdbMessage(A_CLSE, 0, host))

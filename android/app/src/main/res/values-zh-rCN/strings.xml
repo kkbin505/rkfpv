@@ -69,4 +69,21 @@
     <string name="delete_board_title">从板子上删除？</string>
     <string name="delete_phone_title">从手机上删除？</string>
     <string name="no_player">没有安装视频播放器</string>
+    <string name="tab_preview">预览</string>
+    <string name="video">视频</string>
+    <string name="video_running">为预览运行中（无线未开）</string>
+    <string name="video_stopped">已关闭（调试模式）</string>
+    <string name="video_fpv_mode">FPV 模式：视频一直在运行</string>
+    <string name="preview_mode_note">调试模式，视频为预览运行中，无线未开。“即时生效”的参数马上生效；“需重启”的参数会重启视频，预览会自动重连。</string>
+    <string name="preview_note">预览画面就是图传码流本身：编码器、分辨率、码率、GOP、OSD 都和无线传出去的一样，只是没有无线丢包。打开视频需要板子固件支持有线预览（fpv preview）。</string>
+    <string name="preview_waiting">等待视频…</string>
+    <string name="preview_dropped">丢弃 %1$d 帧</string>
+    <string name="show_preview">显示预览</string>
+    <string name="recording">录像</string>
+    <string name="rec_start">开始录像</string>
+    <string name="rec_stop">停止</string>
+    <string name="dvr_drops">丢帧 %1$d</string>
+    <string name="dvr_free">剩余 %1$d MB</string>
+    <string name="rec_hint_video_off">先打开视频才能录像。</string>
+    <string name="rec_hint_dvr_off">DVR 已关闭：在 参数 → DVR 里打开 dvr，然后把视频关掉再打开。</string>
 </resources>

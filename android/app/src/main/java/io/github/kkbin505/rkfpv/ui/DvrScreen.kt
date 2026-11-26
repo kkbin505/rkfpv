@@ -80,6 +80,12 @@ fun DvrScreen(s: UiState, vm: BoardViewModel, modifier: Modifier) {
         modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (s.connected) item {
+            Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                VideoSwitch(s, vm)
+                RecordControl(s, vm)
+            }
+        }
         item {
             Text(stringResource(R.string.dvr_board), style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(top = 16.dp))

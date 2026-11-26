@@ -11,6 +11,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -97,7 +98,7 @@ fun RkfpvApp(vm: BoardViewModel) {
                     ConnBadge(s.conn)
                     IconButton(onClick = {
                         when (tab) {
-                            2 -> vm.refreshDvr()
+                            3 -> vm.refreshDvr()
                             else -> if (s.connected) vm.reload() else vm.retry()
                         }
                     }) { Icon(Icons.Filled.Refresh, stringResource(R.string.refresh)) }
@@ -108,9 +109,11 @@ fun RkfpvApp(vm: BoardViewModel) {
             NavigationBar {
                 NavigationBarItem(tab == 0, { tab = 0 }, { Icon(Icons.Filled.Info, null) },
                     label = { Text(stringResource(R.string.tab_status)) })
-                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Filled.Settings, null) },
+                NavigationBarItem(tab == 1, { tab = 1 }, { Icon(Icons.Filled.PlayArrow, null) },
+                    label = { Text(stringResource(R.string.tab_preview)) })
+                NavigationBarItem(tab == 2, { tab = 2 }, { Icon(Icons.Filled.Settings, null) },
                     label = { Text(stringResource(R.string.tab_settings)) })
-                NavigationBarItem(tab == 2, { tab = 2; vm.refreshLocal() }, { Icon(Icons.Filled.PlayArrow, null) },
+                NavigationBarItem(tab == 3, { tab = 3; vm.refreshLocal() }, { Icon(Icons.AutoMirrored.Filled.List, null) },
                     label = { Text(stringResource(R.string.tab_dvr)) })
             }
         },
@@ -119,7 +122,8 @@ fun RkfpvApp(vm: BoardViewModel) {
         val m = Modifier.padding(pad)
         when (tab) {
             0 -> StatusScreen(s, vm, m)
-            1 -> SettingsScreen(s, vm, m)
+            1 -> PreviewScreen(s, vm, m)
+            2 -> SettingsScreen(s, vm, m)
             else -> DvrScreen(s, vm, m)
         }
     }

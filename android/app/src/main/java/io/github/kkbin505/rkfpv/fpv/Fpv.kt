@@ -61,6 +61,36 @@ class FpvClient(private val shell: (String) -> String) {
         )
     }
 
+    /** `fpv dvr status`: state, current file and size (needs the video running to record). */
+    fun dvrStatus(): DvrStatus {
+        val r = ok(run("dvr", "status"))
+        return DvrStatus(
+            state = r.str("state"), file = r.str("file").takeIf { it != "-" } ?: "",
+            bytes = r.str("bytes").toLongOrNull() ?: 0, drops = r.str("drops").toLongOrNull() ?: 0,
+            freeMb = r.str("free_mb").toLongOrNull() ?: 0, totalMb = r.str("total_mb").toLongOrNull() ?: 0,
+            videoRunning = r.bool("fpv_running"), error = r.str("error"),
+        )
+    }
+
+    /** Start or stop recording (signals rkfpv); the board refuses when the video is not running. */
+    fun dvr(start: Boolean) {
+        ok(run("dvr", if (start) "start" else "stop"))
+    }
+
+    /**
+     * `fpv preview on|off|status` (board on USB, debug mode): runs rkfpv
+     * without the radio, so the link stream is served on 127.0.0.1:[PreviewInfo.port].
+     */
+    fun preview(sub: String): PreviewInfo {
+        require(sub in setOf("on", "off", "status"))
+        val r = ok(run("preview", sub))
+        return PreviewInfo(
+            running = r.bool("running"),
+            port = (r["port"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 5602,
+            mode = r.str("mode"),
+        )
+    }
+
     fun dvrDelete(names: List<String>): Int {
         require(names.isNotEmpty())
         val r = ok(run("dvr", "delete", *names.toTypedArray()))
@@ -163,6 +193,8 @@ class FpvStatus(val raw: JsonObject) {
     val mode get() = this["mode"]
     val txpowerKey get() = this["txpower_key"]
     val fpvRunning get() = mode == "fpv"
+    /** rkfpv runs: FPV mode, or the wired preview in debug mode ("preview") */
+    val videoRunning get() = this["rkfpv_pid"].isNotEmpty()
 }
 
 data class SetResult(val fpvRunning: Boolean, val results: List<Item>, val warning: String) {
@@ -181,5 +213,21 @@ data class SetResult(val fpvRunning: Boolean, val results: List<Item>, val warni
 }
 
 data class DvrFile(val name: String, val size: Long, val recording: Boolean)
+
+data class DvrStatus(
+    /** recording | stopped | no-card | ... (from rkfpv) */
+    val state: String,
+    val file: String,
+    val bytes: Long,
+    val drops: Long,
+    val freeMb: Long,
+    val totalMb: Long,
+    val videoRunning: Boolean,
+    val error: String,
+) {
+    val recording get() = state == "recording"
+}
+
+data class PreviewInfo(val running: Boolean, val port: Int, val mode: String)
 
 data class DvrList(val totalMb: Long, val freeMb: Long, val files: List<DvrFile>)

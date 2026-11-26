@@ -85,6 +85,39 @@ class FpvClientTest {
         assertEquals(1048577L, d.files[0].size)
     }
 
+    @Test fun previewStatus() {
+        val sent = mutableListOf<String>()
+        val p = client(fixture("preview_status.json"), sent).preview("status")
+        assertEquals(listOf("fpv preview status --json"), sent)
+        assertFalse(p.running)
+        assertEquals(5602, p.port)
+        assertEquals("debug", p.mode)
+    }
+
+    @Test fun dvrStatus() {
+        val stopped = client(fixture("dvr_status_stopped.json")).dvrStatus()
+        assertFalse(stopped.recording)
+        assertEquals("", stopped.file)
+        assertFalse(stopped.videoRunning)
+        val rec = client(fixture("dvr_status_recording.json")).dvrStatus()
+        assertTrue(rec.recording)
+        assertEquals("rec_0004_02.mp4", rec.file)
+        assertEquals(7340032L, rec.bytes)
+        assertEquals(3L, rec.drops)
+        assertTrue(rec.videoRunning)
+    }
+
+    @Test fun dvrStartRefusedInDebugMode() {
+        val sent = mutableListOf<String>()
+        try {
+            client(fixture("dvr_start_debug.json"), sent).dvr(start = true)
+            fail()
+        } catch (e: FpvException) {
+            assertTrue(e.message!!.contains("debug mode"))
+        }
+        assertEquals(listOf("fpv dvr start --json"), sent)
+    }
+
     @Test fun replyWithStrayOutputAndCrLf() {
         val r = FpvClient.parseReply("some warning\r\n{\"ok\":true,\"x\":\"1\"}\r\n")
         assertEquals("1", r.str("x"))

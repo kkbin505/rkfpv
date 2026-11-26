@@ -70,4 +70,21 @@
     <string name="delete_board_title">Delete from the board?</string>
     <string name="delete_phone_title">Delete from this phone?</string>
     <string name="no_player">No video player installed</string>
+    <string name="tab_preview">Preview</string>
+    <string name="video">Video</string>
+    <string name="video_running">Running for the preview (no radio)</string>
+    <string name="video_stopped">Off (debug mode)</string>
+    <string name="video_fpv_mode">FPV mode: the video always runs</string>
+    <string name="preview_mode_note">Debug mode with the video running for the preview: no radio. Settings tagged live apply at once; restart ones restart the video (the preview reconnects).</string>
+    <string name="preview_note">The preview is the link stream itself: same encoder, resolution, bitrate, GOP and OSD as over the air, only without radio losses. Video on needs a board image with the wired preview (fpv preview).</string>
+    <string name="preview_waiting">Waiting for the video…</string>
+    <string name="preview_dropped">%1$d dropped</string>
+    <string name="show_preview">Show preview</string>
+    <string name="recording">Recording</string>
+    <string name="rec_start">Record</string>
+    <string name="rec_stop">Stop</string>
+    <string name="dvr_drops">%1$d frames dropped</string>
+    <string name="dvr_free">%1$d MB free</string>
+    <string name="rec_hint_video_off">Turn the video on to record.</string>
+    <string name="rec_hint_dvr_off">DVR is off: switch on dvr in Settings → DVR, then turn the video off and on again.</string>
 </resources>

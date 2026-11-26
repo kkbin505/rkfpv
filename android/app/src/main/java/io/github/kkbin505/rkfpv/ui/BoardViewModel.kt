@@ -10,6 +10,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Environment
+import android.view.Surface
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,11 +19,14 @@ import io.github.kkbin505.rkfpv.adb.AdbConnection
 import io.github.kkbin505.rkfpv.adb.AdbKey
 import io.github.kkbin505.rkfpv.adb.UsbAdbChannel
 import io.github.kkbin505.rkfpv.fpv.DvrList
+import io.github.kkbin505.rkfpv.fpv.DvrStatus
 import io.github.kkbin505.rkfpv.fpv.FpvClient
 import io.github.kkbin505.rkfpv.fpv.FpvException
 import io.github.kkbin505.rkfpv.fpv.FpvParam
 import io.github.kkbin505.rkfpv.fpv.FpvStatus
 import io.github.kkbin505.rkfpv.fpv.SetResult
+import io.github.kkbin505.rkfpv.video.PreviewPlayer
+import io.github.kkbin505.rkfpv.video.PreviewState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,7 +72,17 @@ data class UiState(
     val downloads: Map<String, Long> = emptyMap(),
     /** one-shot text for the snackbar */
     val toast: String? = null,
+    val dvrStatus: DvrStatus? = null,
+    /** `fpv preview on/off` or `fpv dvr start/stop` in flight */
+    val videoBusy: Boolean = false,
+    /** null while no preview surface is shown */
+    val preview: PreviewState? = null,
 ) {
+    /** rkfpv runs on the board (FPV mode or wired preview) */
+    val videoRunning get() = status?.videoRunning == true
+    /** DVR is switched on in the settings (`dvr` = 1) */
+    val dvrEnabled get() = values["dvr"] == "1"
+
     val connected get() = conn is ConnState.Connected
     val groups: List<String> get() = schema.map { it.group }.distinct()
     fun param(key: String) = schema.firstOrNull { it.key == key }
@@ -90,6 +104,8 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     /** true from connect() until it succeeded or failed (covers AwaitingAuth too) */
     private var connecting = false
     private val downloadJobs = mutableMapOf<String, Job>()
+    private var player: PreviewPlayer? = null
+    private var previewPort = 5602
 
     val dvrDir: File
         get() = File(ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: ctx.filesDir, "rkfpv-dvr")
@@ -122,6 +138,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        player?.let { p -> Thread { p.stop() }.start() }
         ctx.unregisterReceiver(receiver)
         conn?.close()
     }
@@ -183,13 +200,14 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun disconnect(next: ConnState) {
+        stopPreview()
         pollJob?.cancel()
         downloadJobs.values.forEach { it.cancel() }
         // closing sends CLSE over USB: not on the main thread
         conn?.let { c -> Thread { c.close() }.start() }
         conn = null
         fpv = null
-        _state.update { it.copy(conn = next, status = null, dvr = null, downloads = emptyMap()) }
+        _state.update { it.copy(conn = next, status = null, dvr = null, dvrStatus = null, downloads = emptyMap()) }
     }
 
     fun retry() {
@@ -202,8 +220,10 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         val schema = f.schema()
         val status = f.status()
         val dvr = runCatching { f.dvrList() }.getOrNull()
+        val dvrStatus = runCatching { f.dvrStatus() }.getOrNull()
         _state.update { s ->
             s.copy(
+                dvrStatus = dvrStatus,
                 schema = schema, values = schema.associate { it.key to it.value },
                 edits = s.edits.filterKeys { k -> schema.any { it.key == k } },
                 status = status, dvr = dvr,
@@ -223,6 +243,10 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 runCatching { withContext(Dispatchers.IO) { fpv?.status() } }
                     .onSuccess { st -> if (st != null) _state.update { it.copy(status = st) } }
+                if (_state.value.videoRunning || _state.value.dvrStatus?.recording == true) {
+                    runCatching { withContext(Dispatchers.IO) { fpv?.dvrStatus() } }
+                        .onSuccess { d -> if (d != null) _state.update { it.copy(dvrStatus = d) } }
+                }
             }
         }
     }
@@ -283,7 +307,71 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------- video / preview
+
+    /** `fpv preview on|off`: run the video in debug mode (no radio), for the preview and recording. */
+    fun setVideo(on: Boolean) {
+        if (_state.value.videoBusy) return
+        _state.update { it.copy(videoBusy = true) }
+        board { f ->
+            try {
+                val p = f.preview(if (on) "on" else "off")
+                previewPort = p.port
+                val st = f.status()
+                val d = runCatching { f.dvrStatus() }.getOrNull()
+                _state.update { it.copy(status = st, dvrStatus = d) }
+            } finally {
+                _state.update { it.copy(videoBusy = false) }
+            }
+        }
+    }
+
+    /** A preview surface appeared: decode the board's stream onto it. */
+    fun startPreview(surface: Surface) {
+        val c = conn ?: return
+        stopPreview()
+        val (w, h) = (_state.value.values["size"] ?: "").split("x").mapNotNull { it.toIntOrNull() }
+            .takeIf { it.size == 2 } ?: listOf(1280, 720)
+        _state.update { it.copy(preview = PreviewState.Waiting) }
+        var self: PreviewPlayer? = null
+        val p = PreviewPlayer(c, previewPort, surface, w, h) { ps ->
+            // a stopped player may still report once from its thread
+            if (player === self) _state.update { it.copy(preview = ps) }
+        }
+        self = p
+        player = p
+        p.start()
+    }
+
+    /**
+     * [wait] = true when the surface is about to go away: the decoder must be
+     * released first (stop() joins its thread, normally a few ms).
+     */
+    fun stopPreview(wait: Boolean = false) {
+        val p = player ?: return
+        player = null
+        if (wait) p.stop() else Thread { p.stop() }.start()
+        _state.update { it.copy(preview = null) }
+    }
+
     // -------------------------------------------------------------------- DVR
+
+    fun setRecording(start: Boolean) {
+        if (_state.value.videoBusy) return
+        _state.update { it.copy(videoBusy = true) }
+        board { f ->
+            try {
+                f.dvr(start)
+                // rkfpv starts / closes the file at its next frame
+                delay(800)
+                val d = f.dvrStatus()
+                _state.update { it.copy(dvrStatus = d) }
+                if (!start) _state.update { it.copy(dvr = f.dvrList()) }
+            } finally {
+                _state.update { it.copy(videoBusy = false) }
+            }
+        }
+    }
 
     fun refreshDvr() {
         refreshLocal()
