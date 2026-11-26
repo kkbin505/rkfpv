@@ -70,7 +70,7 @@ function toast(msg, kind = "", actions = []) {
 function setBadge(mode) {
   const b = $("#modeBadge");
   b.className = "badge " + (mode || "off");
-  b.textContent = mode ? { fpv: "FPV running", debug: "debug mode", idle: "idle" }[mode] || mode : "disconnected";
+  b.textContent = mode ? { fpv: "FPV running", debug: "debug mode", preview: "preview (USB)", idle: "idle" }[mode] || mode : "disconnected";
 }
 
 function showTab(tab) {
@@ -131,6 +131,7 @@ async function connect() {
     state.connected = true;
     $("#connect").textContent = "Disconnect";
     $("#tabs").classList.remove("disabled");
+    $("#previewBtn").disabled = conn().transport !== "adb";
     showTab(state.tab);
     if (state.tab !== "status") refreshStatus();   // mode badge
     state.pollTimer = setInterval(() => {
@@ -146,6 +147,8 @@ async function connect() {
 }
 
 function disconnect() {
+  if (pv.on) previewStop();
+  $("#previewBtn").disabled = true;
   state.connected = false;
   clearInterval(state.pollTimer);
   $("#connect").textContent = "Connect";
@@ -781,6 +784,177 @@ async function cliSend(e) {
 // ---------------------------------------------------------------- wiring
 
 // USB RNDIS address for fpvd today; the wfb tunnel address (issue #1) later
+// ---------------------------------------------------------------- wired preview
+// rkfpv sends the link stream's access units (u32 big-endian length +
+// H.265 Annex-B) over `adb forward`; fpvconf.py passes the bytes through and
+// WebCodecs decodes them with the GPU.
+
+const pv = { on: false, port: 0, ctl: null, dec: null, codec: "", waitKey: true,
+  frames: 0, bytes: 0, shown: 0, skipped: 0, t0: 0, timer: null, retry: null };
+const HEVC_CODECS = ["hev1.1.6.L123.B0", "hvc1.1.6.L123.B0", "hev1.1.6.L153.B0", "hev1.1.6.L93.B0", "hvc1.1.6.L93.B0"];
+
+function pvMsg(text, ffplay = false) {
+  $("#pvMsg").textContent = text;
+  $("#pvFfplay").hidden = !ffplay;
+}
+
+async function pickHevc() {
+  if (!("VideoDecoder" in window)) return "";
+  for (const hw of ["prefer-hardware", "no-preference"]) {
+    for (const codec of HEVC_CODECS) {
+      try {
+        const r = await VideoDecoder.isConfigSupported({ codec, hardwareAcceleration: hw, optimizeForLatency: true });
+        if (r.supported) return codec;
+      } catch (e) { /* try the next one */ }
+    }
+  }
+  return "";
+}
+
+// first NAL type of an Annex-B access unit: VPS (32) or IRAP (16..23) = key
+function isKey(au) {
+  for (let i = 0; i + 4 < au.length; i++) {
+    if (au[i] || au[i + 1] || au[i + 2] !== 1) continue;
+    const t = (au[i + 3] >> 1) & 0x3f;
+    if (t === 32 || (t >= 16 && t <= 23)) return true;
+    if (t < 32) return false;
+    i += 2;
+  }
+  return false;
+}
+
+function newDecoder() {
+  const cv = $("#pvCanvas"), g = cv.getContext("2d");
+  const dec = new VideoDecoder({
+    output: (f) => {
+      if (cv.width !== f.displayWidth || cv.height !== f.displayHeight) {
+        cv.width = f.displayWidth; cv.height = f.displayHeight;
+      }
+      g.drawImage(f, 0, 0);
+      f.close();
+      pv.shown++;
+    },
+    error: (e) => {
+      pvMsg("Decoder error: " + e.message + ". Your browser or GPU may not decode H.265.", true);
+      pv.waitKey = true;
+      pv.dec = null;
+    },
+  });
+  dec.configure({ codec: pv.codec, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
+  return dec;
+}
+
+function feed(au) {
+  pv.frames++;
+  pv.bytes += au.length;
+  const key = isKey(au);
+  if (!pv.dec) {
+    if (!key) return;
+    pv.dec = newDecoder();
+  }
+  // keep the latency low: if the decoder falls behind, skip to the next key frame
+  if (pv.dec.decodeQueueSize > 3) pv.waitKey = true;
+  if (pv.waitKey) {
+    if (!key) { pv.skipped++; return; }
+    pv.waitKey = false;
+  }
+  pv.dec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: performance.now() * 1000, data: au }));
+}
+
+async function pvRead() {
+  if (!pv.on) return;
+  pv.ctl = new AbortController();
+  let got = false;
+  try {
+    const r = await fetch(`/api/preview/stream?port=${pv.port}`,
+      { headers: { "X-Token": window.FPV_TOKEN }, signal: pv.ctl.signal });
+    if (!r.ok) throw new Error(await r.text());
+    const rd = r.body.getReader();
+    let buf = new Uint8Array(0);
+    for (;;) {
+      const { value, done } = await rd.read();
+      if (done) break;
+      if (!got) { got = true; pvMsg(""); }
+      const b = new Uint8Array(buf.length + value.length);
+      b.set(buf); b.set(value, buf.length);
+      let off = 0;
+      while (b.length - off >= 4) {
+        const n = ((b[off] << 24) >>> 0) + (b[off + 1] << 16) + (b[off + 2] << 8) + b[off + 3];
+        if (n === 0 || n > 4 << 20) throw new Error("garbled stream");
+        if (b.length - off - 4 < n) break;
+        feed(b.subarray(off + 4, off + 4 + n));
+        off += 4 + n;
+      }
+      buf = b.slice(off);
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    pvMsg("Stream: " + e.message);
+  }
+  if (!pv.on) return;
+  // rkfpv restarted (a setting needed it) or is still starting: reconnect
+  if (pv.dec) { try { pv.dec.close(); } catch (e) { /* closed */ } pv.dec = null; }
+  pv.waitKey = true;
+  if (!got) pvMsg("Waiting for video… (rkfpv starting, or see Logs → rkfpv)");
+  pv.retry = setTimeout(pvRead, got ? 300 : 1500);
+}
+
+function pvStats() {
+  const s = (performance.now() - pv.t0) / 1000;
+  if (s <= 0) return;
+  $("#pvInfo").textContent = pv.frames
+    ? `${(pv.shown / s).toFixed(1)} fps · ${Math.round(pv.bytes * 8 / s / 1000)} kbps` +
+      (pv.dec ? ` · queue ${pv.dec.decodeQueueSize}` : "") + (pv.skipped ? ` · skipped ${pv.skipped}` : "")
+    : "";
+  pv.frames = pv.bytes = pv.shown = pv.skipped = 0;
+  pv.t0 = performance.now();
+}
+
+async function previewStart() {
+  if ($("#transport").value !== "adb") return toast("The preview works over ADB (board on USB) only.", "err");
+  $("#previewDock").hidden = false;
+  $("#previewBtn").classList.add("on");
+  pv.codec = await pickHevc();
+  if (!pv.codec) pvMsg("This browser cannot decode H.265 (use Chrome or Edge with GPU decoding).", true);
+  else pvMsg("Starting video on the board…");
+  const r = await post("/api/preview/start", {});
+  if (!r.ok) { pvMsg(r.error); return; }
+  pv.on = true;
+  pv.port = r.local_port;
+  pv.waitKey = true;
+  pv.t0 = performance.now();
+  pv.timer = setInterval(pvStats, 1000);
+  if (pv.codec) pvRead();
+  if (state.connected) refreshStatus();   // mode badge: preview
+}
+
+async function previewStop(hide = true) {
+  const port = pv.port;
+  pv.on = false;
+  clearTimeout(pv.retry);
+  clearInterval(pv.timer);
+  if (pv.ctl) pv.ctl.abort();
+  if (pv.dec) { try { pv.dec.close(); } catch (e) { /* closed */ } pv.dec = null; }
+  pv.port = 0;
+  $("#previewBtn").classList.remove("on");
+  if (hide) $("#previewDock").hidden = true;
+  $("#pvInfo").textContent = "";
+  if (port) {
+    const r = await post("/api/preview/stop", { port });
+    if (!r.ok) toast(r.error, "err");
+    if (state.connected) refreshStatus();
+  }
+}
+
+async function previewFfplay() {
+  if (!pv.port) return;
+  // only one reader at a time: the browser lets go of the stream
+  if (pv.ctl) pv.ctl.abort();
+  clearTimeout(pv.retry);
+  const r = await post("/api/preview/ffplay", { port: pv.port });
+  r.ok ? pvMsg("Playing in the ffplay window. Close this panel (✕) to stop.") : pvMsg(r.error, true);
+}
+
 const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "192.168.73.1" };
 $("#transport").onchange = () => {
   const t = $("#transport").value;
@@ -791,6 +965,10 @@ $("#transport").onchange = () => {
   if (net && Object.values(DEFAULT_HOST).includes($("#host").value)) $("#host").value = DEFAULT_HOST[t];
 };
 $("#refresh").onclick = loadDevices;
+$("#previewBtn").onclick = () => (pv.on ? previewStop() : previewStart());
+$("#pvStop").onclick = () => previewStop();
+$("#pvSize").onclick = () => $("#previewDock").classList.toggle("big");
+$("#pvFfplay").onclick = previewFfplay;
 $("#connect").onclick = connect;
 $$("#tabs a").forEach((a) => (a.onclick = () => showTab(a.dataset.tab)));
 $$("#bootMode button").forEach((b) => (b.onclick = () => setBootMode(b.dataset.mode)));

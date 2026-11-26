@@ -16,6 +16,7 @@
  * If the DVR pipeline cannot be created, the link stream is recorded.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <pthread.h>
 #include <signal.h>
@@ -38,6 +39,7 @@
 #include "osd.h"
 #include "osd_layout.h"
 #include "telem.h"
+#include "preview.h"
 #include "rtp_h265.h"
 
 #define VENC_CHN 0              /* link stream -> RTP */
@@ -422,6 +424,26 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 #define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
 #define UPLINK_STATUS "/tmp/wfb_uplink.status"
 #define OSD_PERIOD_US 250000            /* 4 redraws per second */
+#define SOC_TEMP "/sys/class/thermal/thermal_zone0/temp"   /* RV1103 tsadc, m°C */
+
+/* SoC temperature in whole degrees C; 0 if there is no sensor. Kept open
+ * and re-read with pread: one syscall, no process, once per second. */
+static int read_soc_temp(int *c)
+{
+	static int fd = -2;
+	if (fd == -2)
+		fd = open(SOC_TEMP, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;
+	char b[16];
+	ssize_t n = pread(fd, b, sizeof b - 1, 0);
+	if (n <= 0)
+		return 0;
+	b[n] = 0;
+	long mc = strtol(b, NULL, 10);
+	*c = (int)((mc + (mc < 0 ? -500 : 500)) / 1000);
+	return mc > -40000 && mc < 150000;
+}
 
 /* air-side wfb_rx (uplink from the ground station), see wfb.sh */
 static int read_uplink(int *rssi, int *lq)
@@ -445,12 +467,12 @@ static int read_uplink(int *rssi, int *lq)
 
 /* one OSD redraw, timed */
 static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
-			 uint64_t (*clock_us)(void))
+			 int temp_ok, int temp_c, uint64_t (*clock_us)(void))
 {
 	if (!o)
 		return 0;
 	uint64_t t0 = clock_us();
-	osd_view_t v = { t, rec, 0, 0, 0, now_ms };
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c };
 	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
 	osd_draw_view(o, &v);
 	return clock_us() - t0;
@@ -575,6 +597,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	rtp.pt = (uint8_t)cfg.pt;
+	/* only on loopback: reached over USB with adb forward, never over the air */
+	preview_t pv;
+	preview_open(&pv, "127.0.0.1", cfg.preview_port);
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
 	osd_t *osd_link = NULL, *osd_dvr = NULL;
@@ -705,7 +730,8 @@ int main(int argc, char **argv)
 		if (dual)
 			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
 	}
-	uint64_t t_osd = now_us(), osd_worst = 0;
+	uint64_t t_osd = now_us(), osd_worst = 0, temp_ms = 0;
+	int temp_ok = 0, temp_c = 0;
 	telem_t telem;
 	telem_init(&telem);
 	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
@@ -761,6 +787,10 @@ int main(int argc, char **argv)
 				dvr_stop(dvr);
 		}
 
+		preview_poll(&pv);
+		if (preview_take_idr_request(&pv))
+			RK_MPI_VENC_RequestIDR(VENC_CHN, RK_TRUE);
+
 		g_stage = 1;
 		RK_S32 r = RK_MPI_VENC_GetStream(VENC_CHN, &st, 200);
 		if (r != RK_SUCCESS)
@@ -791,6 +821,7 @@ int main(int argc, char **argv)
 			}
 
 			rtp_h265_send(&rtp, data, len, ts, p->bFrameEnd);
+			preview_push(&pv, data, len, p->bFrameEnd);
 			if (!dual)
 				dvr_push(dvr, data, len, p->u64PTS, p->bFrameEnd);
 
@@ -836,8 +867,12 @@ int main(int argc, char **argv)
 					snprintf(rec, sizeof rec, "CARD FULL");
 			}
 			uint64_t now_ms = now_us() / 1000;
-			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, now_us);
-			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, now_us);
+			if (now_ms - temp_ms >= 1000) {
+				temp_ok = read_soc_temp(&temp_c);
+				temp_ms = now_ms;
+			}
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c, now_us);
 			if (d1 + d2 > osd_worst) {
 				osd_worst = d1 + d2;
 				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",
@@ -864,10 +899,11 @@ int main(int argc, char **argv)
 				dvr_b0 = db;
 			}
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu | dvr%s %s\n",
+				"%.0f pkt/s, send errors %llu | preview %s | dvr%s %s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors, dr, ds);
+				(unsigned long long)rtp.send_errors,
+				pv.cfd >= 0 ? "on" : "off", dr, ds);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
@@ -923,6 +959,7 @@ out:
 	}
 	fprintf(stderr, "rkfpv: sys exit\n");
 	RK_MPI_SYS_Exit();
+	preview_close(&pv);
 	rtp_h265_close(&rtp);
 	fprintf(stderr, "rkfpv: done\n");
 	return ret;

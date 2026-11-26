@@ -127,6 +127,15 @@ start_telemetry() {
 		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 > /dev/null 2>&1 &
 }
 
+# preview on a PC (debug mode, no radio): only the FC copy for rkfpv's OSD
+start_osd_telemetry() {
+	[ "$telemetry_enabled" = "true" ] || return 0
+	: "${serial:=ttyS3}" "${baud:=115200}"
+	killall -q mavbridge
+	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 > /dev/null 2>&1 &
+}
+
 start() {
 	wfb_yaml "$wfb_cfg"
 	: "${video_port:=5600}"
@@ -176,5 +185,8 @@ case "$1" in
 		wfb_yaml "$wfb_cfg"
 		loaded_driver || { log "txpower: no adapter driver loaded"; exit 1; }
 		set_txpower ;;
-	*) echo "Usage: $0 {start|stop|detect [seconds]|adapter|txpower}"; exit 1 ;;
+	osd-telemetry)
+		wfb_yaml "$wfb_cfg"
+		start_osd_telemetry ;;
+	*) echo "Usage: $0 {start|stop|detect [seconds]|adapter|txpower|osd-telemetry}"; exit 1 ;;
 esac
