@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Rockchip boards (Luckfox Pico: RV1103 / RV1106), USB vendor 0x2207 -->
+    <usb-device vendor-id="8711" />
+</resources>

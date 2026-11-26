@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- downloaded recordings: getExternalFilesDir(Movies)/rkfpv-dvr -->
+    <external-files-path name="dvr" path="Movies/rkfpv-dvr/" />
+</paths>

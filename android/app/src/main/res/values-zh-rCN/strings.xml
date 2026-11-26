@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="refresh">刷新</string>
+    <string name="tab_status">状态</string>
+    <string name="tab_settings">参数</string>
+    <string name="tab_dvr">录像</string>
+
+    <string name="conn_connected">已连接</string>
+    <string name="conn_connecting">连接中</string>
+    <string name="conn_none">未连接</string>
+    <string name="no_board_title">USB 上没有板子</string>
+    <string name="no_board_help">用 Type-C 对 Type-C 线（或 OTG 转接头）把天空端的 USB-C 口接到手机上，不要插 WiFi 网卡。板子上电约 10 秒后进入调试模式（ADB）。</string>
+    <string name="retry">重试</string>
+    <string name="need_permission">检测到板子。请允许本应用通过 USB 访问它。</string>
+    <string name="allow_usb">允许 USB 访问</string>
+    <string name="usb_denied">没有获得 USB 访问权限</string>
+    <string name="connecting">正在通过 ADB 连接…</string>
+    <string name="awaiting_auth">板子要求确认这台手机的 ADB 密钥…</string>
+    <string name="conn_failed">连接失败</string>
+    <string name="conn_lost">与板子的连接断开</string>
+    <string name="missing_fpv_help">请先把 rkfpv 文件装到板子上：PC 配置器 Status 页的 \"Install / update on board\"。</string>
+
+    <string name="debug_mode_note">板子处于调试模式（手机接在 USB 上），图传没有运行。保存的参数在下次 FPV 启动时生效。</string>
+    <string name="st_mode">模式</string>
+    <string name="st_video">视频</string>
+    <string name="st_adapter">网卡</string>
+    <string name="st_radio">无线</string>
+    <string name="st_memory">内存</string>
+    <string name="st_temp">温度</string>
+    <string name="st_uptime">运行时间</string>
+    <string name="st_dvr">录像</string>
+    <string name="none">无</string>
+
+    <string name="tag_live">即时生效</string>
+    <string name="tag_restart">需重启</string>
+    <string name="tag_link">链路</string>
+    <string name="tag_boot">下次启动</string>
+    <string name="tag_in_use">使用中</string>
+    <string name="number">数值</string>
+    <string name="link_note">标为“链路”的参数必须在地面站上改成同样的值，否则会断链。</string>
+    <string name="fix_fields">请修正 %1$s</string>
+    <string name="unsaved">未保存的修改：%1$d</string>
+    <string name="discard">放弃</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="ok">确定</string>
+    <string name="later">稍后</string>
+    <string name="link_confirm_title">修改链路参数？</string>
+    <string name="link_confirm_text">地面站上的 %1$s 必须改成相同的值，否则会断链。</string>
+    <string name="saved_title">已保存</string>
+    <string name="saved_debug_mode">FPV 未运行（调试模式）：下次 FPV 启动时生效。</string>
+    <string name="restart_what">重启 %1$s</string>
+    <string name="restarted">已重启 %1$s</string>
+
+    <string name="dvr_board">板子上（TF 卡）</string>
+    <string name="dvr_no_card">卡上没有录像分区</string>
+    <string name="dvr_space">剩余 %1$d MB，共 %2$d MB</string>
+    <string name="dvr_empty">没有录像</string>
+    <string name="dvr_recording">正在录制</string>
+    <string name="dvr_on_phone">已在手机上</string>
+    <string name="dvr_phone">手机上</string>
+    <string name="dvr_phone_empty">还没有下载录像</string>
+    <string name="dvr_phone_dir">保存在 %1$s</string>
+    <string name="download">下载</string>
+    <string name="downloaded">已下载 %1$s</string>
+    <string name="play">播放</string>
+    <string name="share">分享</string>
+    <string name="delete">删除</string>
+    <string name="delete_board_title">从板子上删除？</string>
+    <string name="delete_phone_title">从手机上删除？</string>
+    <string name="no_player">没有安装视频播放器</string>
+</resources>

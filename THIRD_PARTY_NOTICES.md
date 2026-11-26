@@ -68,6 +68,16 @@ Each patch file is a derivative of the project it patches and stays under that p
 | [libc0607/rtl88x2eu-20230815](https://github.com/libc0607/rtl88x2eu-20230815) | `12977e40` | GPL-2.0 | RTL8812EU driver |
 | [svpcom/rtl8812au](https://github.com/svpcom/rtl8812au) | `35779999` (v5.2.20) | GPL-2.0 | RTL8812AU driver (bench ground station) |
 
+## Android app: libraries bundled into the APK (not in this repository)
+Gradle downloads these from Google Maven and Maven Central when `android/` is built. They are compiled into the APK, so an APK you distribute must carry their notices. All of them are Apache-2.0.
+
+| Library | License |
+|---|---|
+| AndroidX (Activity, Core, Lifecycle), Jetpack Compose (UI, Material 3, Material icons) | Apache-2.0 |
+| Kotlin standard library, kotlinx.coroutines, kotlinx.serialization | Apache-2.0 |
+
+The ADB protocol code in `android/` is new code written for rkfpv; it follows AOSP's published protocol description (`adb/protocol.txt`, `adb/SYNC.TXT`) and does not copy AOSP sources.
+
 ## Linked at build time, from the Luckfox Pico SDK (not in this repository)
 rkfpv links these libraries from the user's own copy of the [Luckfox Pico SDK](https://github.com/LuckfoxTECH/luckfox-pico). They are not distributed here.
 
