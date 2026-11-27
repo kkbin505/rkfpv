@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOARD_FILES = ["files/fpv", "files/S99fpv", "files/wfb.sh", "files/rkfpv.conf", "files/wfb.yaml"]
@@ -35,6 +36,9 @@ def main():
     ap.add_argument("--version", default=None)
     a = ap.parse_args()
     ver = a.version or version()
+    # every UI word comes from web/i18n/*.json: stop on a key the code uses but en.json lacks
+    if subprocess.call([sys.executable, os.path.join(REPO, "configurator", "check_i18n.py")]) != 0:
+        sys.exit("build_site: fix the language files first (configurator/check_i18n.py)")
     out = os.path.abspath(a.out)
     if os.path.exists(out):
         shutil.rmtree(out)

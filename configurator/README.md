@@ -114,6 +114,19 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 - **工作原理**：网页里带了 Tango ADB（MIT，`web/vendor/`）。板子的 adbd 比较老，没有 `exec:` 服务，所以每条命令都走 `shell:`，和电脑上的 `adb shell` 一样。预览直接通过 adbd 打开板子上的 `127.0.0.1:5602`，不需要 `adb forward`。下载录像时，Chrome / Edge 电脑版会问保存位置，边收边写进文件，大文件也不占内存。安卓上收完后作为一次浏览器下载保存。**Install / update on board** 推送的脚本是网页发布时打包的那一版（`board-files/`）。
 - **试新版本**：`python3 configurator/build_site.py /tmp/site && cd /tmp/site && python3 -m http.server 8000`，然后打开 `http://localhost:8000/`。WebUSB 在 localhost 上也能用。
 
+## 界面语言
+
+右上角可以切换 **EN / 中文**，选择会记在浏览器里；第一次打开时按浏览器语言选。界面上的所有文字都在 `web/i18n/` 里，代码里不写死文字：
+
+- `en.json`：英文，所有键的基准。
+- `zh.json`：中文。另外还有每个设置的说明（`param.<key>`）和预设的名称、说明（`preset.<文件名>.name/.desc`）；英文的这些文字直接来自板子上的 `files/fpv` 和预设文件。
+- 缺的键显示英文。板子错误信息（`fpv` 返回的 `error`）保持英文。
+
+改文字或加一种语言：
+
+1. 改 `web/i18n/*.json`；加语言就把 `en.json` 复制成 `xx.json` 翻译，再在 `web/i18n.js` 的 `LANGS` 里加一项。
+2. 运行 `python3 configurator/check_i18n.py`：报告代码用到但 `en.json` 没有的键、没人用的键、没翻译的键、占位符 `{…}` 不一致，以及 `files/fpv` 里还没有翻译说明的设置。`build_site.py` 发布前会先跑它，有错误就停。
+
 ## 网页版：热点（手机，不用装 App）
 
 同一个网页，上面选 **WiFi hotspot**。

@@ -3,6 +3,7 @@
 // canvas. WebCodecs needs a secure context: http://127.0.0.1 (the PC
 // configurator) and the hosted HTTPS page both are.
 import * as board from "./board.js";
+import { t } from "./i18n.js";
 
 const HEVC_CODECS = ["hev1.1.6.L123.B0", "hvc1.1.6.L123.B0", "hev1.1.6.L153.B0", "hev1.1.6.L93.B0", "hvc1.1.6.L93.B0"];
 
@@ -23,9 +24,9 @@ export async function pickHevc() {
 export function isKey(au) {
   for (let i = 0; i + 4 < au.length; i++) {
     if (au[i] || au[i + 1] || au[i + 2] !== 1) continue;
-    const t = (au[i + 3] >> 1) & 0x3f;
-    if (t === 32 || (t >= 16 && t <= 23)) return true;
-    if (t < 32) return false;
+    const nal = (au[i + 3] >> 1) & 0x3f;
+    if (nal === 32 || (nal >= 16 && nal <= 23)) return true;
+    if (nal < 32) return false;
     i += 2;
   }
   return false;
@@ -70,8 +71,8 @@ export class Preview {
   async start() {
     if (this.on) return { ok: true };
     this.codec = await pickHevc();
-    if (!this.codec) this.onMsg("This browser cannot decode H.265 (use Chrome or Edge with hardware video decoding).", board.caps.ffplay);
-    else this.onMsg("Starting video on the board…");
+    if (!this.codec) this.onMsg(t("preview.noHevc"), board.caps.ffplay);
+    else this.onMsg(t("preview.starting"));
     const r = await board.previewStart();
     if (!r.ok) { this.onMsg(r.error); return r; }
     this.on = true;
@@ -120,7 +121,7 @@ export class Preview {
         this.shown++;
       },
       error: (e) => {
-        this.onMsg("Decoder error: " + e.message + ". Your browser or GPU may not decode H.265.", board.caps.ffplay);
+        this.onMsg(t("preview.decoderError", { e: e.message }), board.caps.ffplay);
         this.waitKey = true;
         this.dec = null;
       },
@@ -163,13 +164,13 @@ export class Preview {
       }
     } catch (e) {
       if (e.name === "AbortError") return;
-      this.onMsg("Stream: " + e.message);
+      this.onMsg(t("preview.streamError", { e: e.message }));
     }
     if (!this.on) return;
     // rkfpv restarted (a setting needed it) or is still starting: reconnect
     this._closeDecoder();
     this.waitKey = true;
-    if (!got) this.onMsg("Waiting for video… (rkfpv starting, or see Logs → rkfpv)");
+    if (!got) this.onMsg(t("preview.waiting"));
     this.retry = setTimeout(() => this._read(), got ? 300 : 1500);
   }
 
