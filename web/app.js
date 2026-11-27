@@ -1065,6 +1065,25 @@ $$("#diffAll, #diffNone").forEach((b) => (b.onclick = () => {
 $("#revert").onclick = revert;
 window.onbeforeunload = () => (Object.keys(state.edits).length ? "unsaved changes" : undefined);
 
+// light / dark: follows the system until the button picks one (kept per browser)
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const isDark = () => {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === "dark" : darkQuery.matches;
+};
+function showThemeBtn() {
+  $("#themeBtn").textContent = isDark() ? "☀" : "☾";
+  $("#themeBtn").title = isDark() ? "Light theme" : "Dark theme";
+}
+$("#themeBtn").onclick = () => {
+  const t = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("rkfpv.theme", t); } catch (e) { /* private mode */ }
+  showThemeBtn();
+};
+darkQuery.addEventListener("change", showThemeBtn);
+showThemeBtn();
+
 $("#liveFull").onclick = liveFullscreen;
 $("#liveStage").ondblclick = liveFullscreen;
 
