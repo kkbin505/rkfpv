@@ -174,13 +174,107 @@ footer {
 #pvInfo { font-size: 12px; font-variant-numeric: tabular-nums; }
 #pvCanvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; }
 #pvMsg { min-height: 1.4em; margin-top: 6px; }
+.pvNote { white-space: normal; }
 #previewBtn.on { border-color: var(--accent); color: var(--accent); }
 
-@media (max-width: 720px) {
+/* links that look like buttons (Play on the DVR list) */
+a.btn {
+  display: inline-block; color: var(--text); text-decoration: none; border: 1px solid var(--line);
+  border-radius: 4px; padding: 3px 10px; margin-left: 4px; background: var(--panel);
+}
+a.btn:hover { border-color: var(--accent); }
+.banner { background: #f6e7c6; color: #5c4100; padding: 8px 16px; border-bottom: 1px solid #e8d29c; font-size: 13px; }
+.badge.hotspot { background: var(--accent); color: #fff; }
+.badge.preview { background: var(--info); color: #fff; }
+
+/* Live tab: the picture as large as the page allows */
+.liveStage { background: #000; border-radius: 6px; overflow: hidden; }
+.liveStage #pvCanvas { border-radius: 0; }
+.liveStage:fullscreen { display: flex; align-items: center; justify-content: center; border-radius: 0; }
+.liveStage:fullscreen #pvCanvas { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+.liveBar { margin: 8px 0 4px; }
+#liveInfo { font-variant-numeric: tabular-nums; }
+#liveMsg { min-height: 1.2em; margin-bottom: 8px; }
+.slider { margin-top: 6px; }
+.slider input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; margin: 0; padding: 0; border: 0; background: none; }
+.slider.off { opacity: .4; }
+
+/* ---- wide screens (PC): connection bar on top, tabs left, preview right ---- */
+@media (min-width: 900px) {
+  nav { order: 0; }
+  main { order: 1; }
+  #previewDock { order: 2; }
+  .liveStage { max-width: 1100px; }
+}
+
+/* ---- narrow / portrait (phones): tabs at the bottom, preview at the top ---- */
+@media (max-width: 899px) {
+  body { font-size: 15px; }
+  /* row 1: brand + preview + mode; row 2: the connection fields */
+  .top { gap: 8px 10px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); }
+  .brand { font-size: 18px; }
+  .brand span { display: none; }
+  .badges { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .conn { order: 3; flex: 1 0 100%; flex-wrap: nowrap; min-width: 0; }
+  .conn input#host, .conn select#device { flex: 1; min-width: 0; }
+  .conn select#transport { max-width: 40%; }
+
   .layout { flex-direction: column; }
-  nav { width: auto; display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; }
-  nav a { border-left: 0; border-bottom: 3px solid transparent; white-space: nowrap; }
-  nav a.active { border-bottom-color: var(--accent); }
-  .param { grid-template-columns: 1fr; }
-  #previewDock, #previewDock.big { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+  /* bottom tab bar, scrolls sideways when the tabs do not fit */
+  nav {
+    order: 3; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; width: auto;
+    display: flex; overflow-x: auto; padding: 0 0 env(safe-area-inset-bottom);
+    border-right: 0; border-top: 1px solid var(--line); background: var(--chrome);
+    box-shadow: 0 -2px 10px #0000000d; scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav a {
+    flex: 1 0 auto; text-align: center; padding: 14px 14px 12px; min-height: 48px; white-space: nowrap;
+    border-left: 0; border-top: 3px solid transparent;
+  }
+  nav a.active { border-left-color: transparent; border-top-color: var(--accent); }
+
+  /* the preview stays at the top while you scroll the settings */
+  #previewDock, #previewDock.big {
+    order: 1; position: sticky; top: 0; z-index: 10; width: auto; padding: 6px 10px;
+    border-left: 0; border-bottom: 1px solid var(--line);
+  }
+  #previewDock .pvHead { margin-bottom: 4px; }
+  #previewDock .pvHead button { min-height: 36px; padding: 4px 10px; }
+  #previewDock .pvNote { display: none; }
+  /* small by default so the settings stay in view; ⤢ makes it full width */
+  #previewDock #pvCanvas { width: auto; max-width: 100%; height: 26vh; margin: 0 auto; }
+  #previewDock.big #pvCanvas { width: 100%; height: auto; }
+  #pvMsg:empty { display: none; }
+  main { order: 2; padding: 12px; padding-bottom: 150px; overflow: visible; }
+  .layout { overflow: auto; }
+
+  /* forms: one column, big touch targets */
+  .param { grid-template-columns: 1fr; gap: 6px; padding: 12px 0; }
+  button, select, input { min-height: 44px; padding: 8px 12px; }
+  .seg button { min-height: 44px; }
+  .param input[type=number], .param input[type=text], .param select { font-size: 16px; } /* no zoom on focus */
+  .switch { width: 52px; height: 30px; }
+  .switch span::before { width: 24px; height: 24px; }
+  .switch input:checked + span::before { transform: translateX(22px); }
+  .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid .box { margin: 0; }
+  .big { font-size: 19px; }
+
+  /* tables become stacked rows */
+  table.files, table.files tbody, table.files tr, table.files td { display: block; width: 100%; }
+  table.files thead { display: none; }
+  table.files tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  table.files td { border: 0; padding: 2px 0; text-align: left !important; }
+  table.files td:last-child { display: flex; gap: 6px; flex-wrap: wrap; padding-top: 6px; }
+  table.files button, a.btn { margin-left: 0; padding: 8px 14px; }
+  table.diff td.note { display: none; }
+
+  .log { max-height: 55vh; font-size: 12px; }
+  footer {
+    bottom: calc(52px + env(safe-area-inset-bottom)); padding: 8px 12px; z-index: 15; flex-wrap: wrap;
+  }
+  #saveInfo { flex-basis: 100%; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #toast { left: 12px; right: 12px; bottom: 120px; max-width: none; z-index: 30; }
+  .empty { margin: 16px auto; }
 }

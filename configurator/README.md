@@ -1,14 +1,24 @@
 # rkfpv configurator
 
-电脑上运行的配置界面，风格参考 Betaflight Configurator。界面上的每个操作都对应板子上的一条 `fpv … --json` 命令，所以界面能做的事，`adb shell` 里也都能做。
+配置界面，风格参考 Betaflight Configurator。界面上的每个操作都对应板子上的一条 `fpv … --json` 命令，所以界面能做的事，`adb shell` 里也都能做。
+
+同一套界面（仓库里的 `web/`）有两种用法：
+
+| | 网页版（推荐手机用） | 电脑版 `rkfpvconf.py` |
+|---|---|---|
+| 打开方式 | 浏览器打开 https://kkbin505.github.io/rkfpv/ | `python3 configurator/rkfpvconf.py` |
+| 怎么连板子 | 手机/电脑连上板子的 WiFi 热点，直接访问 `http://10.0.0.1` | ADB（USB）、fpvd、热点，经过本机的 Python 服务 |
+| 布局 | 手机竖屏：标签在底部，预览在顶部；电脑横屏：和电脑版一样 | 横屏 |
+| 能做什么 | 所有设置、实时画面、录像下载、预设、备份、日志、`fpv` 命令 | 以上全部，另外还有安装脚本、IQ 文件上传下载、任意 shell 命令 |
+| 浏览器 | Chrome、Edge、三星浏览器（见下面“网页版”） | Chrome 或 Edge |
 
 ## 运行
 
-需要 Python 3.8+（只用标准库），`adb` 要在 PATH 里。Linux 和 Windows 都能用。
+需要 Python 3.8+（只用标准库），`adb` 要在 PATH 里。Linux 和 Windows 都能用。界面文件在 `web/`，和网页版是同一份。
 
 ```sh
-python3 configurator/fpvconf.py            # 自动打开 http://127.0.0.1:8765/
-python3 configurator/fpvconf.py --no-browser --port 9000
+python3 configurator/rkfpvconf.py            # 自动打开 http://127.0.0.1:8765/
+python3 configurator/rkfpvconf.py --no-browser --port 9000
 ```
 
 1. 不插 WiFi 网卡，板子 USB 直接接电脑，上电。约 10 秒后进入调试模式（开机找不到网卡就切回 USB 设备模式），ADB 出现。
@@ -21,7 +31,8 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 
 | 页面 | 内容 |
 |---|---|
-| Status | 模式（FPV / 调试）、码流 fps/码率、无线 MCS/FEC、温度、内存；开机模式切换；安装脚本 |
+| Status | 模式（FPV / 调试 / 热点）、码流 fps/码率、无线 MCS/FEC、温度、内存；开机模式切换；安装脚本 |
+| Live | 大画面实时预览，下面是常调的画质参数（滑块），拖动后画面马上变化 |
 | Video / Camera / Radio / Telemetry | 根据 `fpv schema` 自动生成的表单 |
 | Image | 画质设置（曝光、降噪、颜色等，FPV 运行时立即生效）；IQ 文件的下载、上传、切换出厂/修改版、历史版本回滚 |
 | DVR | 录像状态、开始/停止按钮、卡上剩余空间；录像文件列表，可以下载（ADB）和删除；DVR 设置 |
@@ -81,3 +92,21 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 ## 安全
 
 服务只监听 127.0.0.1。每次启动生成一个随机 token，只嵌在服务自己返回的页面里，所有 API 请求都要带上它。这样别的网站不能借你的浏览器向板子发命令。
+
+## 网页版（手机，不用装 App）
+
+网页放在 GitHub Pages 上（`https://kkbin505.github.io/rkfpv/`，由 `.github/workflows/pages.yml` 从 `web/` 发布）。
+
+1. **先在有网的时候**用手机 Chrome 打开上面的地址，菜单里选 **安装应用 / 添加到主屏幕**。以后在热点上没有网也能打开（离线缓存）。
+2. 板子（接着 WiFi 网卡）正常开机后，**按住 BOOT 约 2 秒**，WiFi 网卡变成热点 `rkfpv-XXXX`（名称和密码见 `fpv hotspot`）。
+3. 手机连上这个热点。提示“无法上网”时选 **保持连接**，或者关掉手机流量。
+4. 打开刚才安装的应用，点 **Connect**。Chrome 会问是否允许访问**本地网络上的设备**：选允许。
+5. **Live** 页看实时画面，拖动下面的滑块（码率、曝光、亮度、对比度、降噪…）画面马上变化。其他页面改设置时，画面固定在页面顶部。需要重启视频的设置（分辨率、帧率）点 Save 后再点 Restart video，预览会自动重连。
+
+工作原理：
+
+- 网页是 HTTPS，板子是 `http://10.0.0.1`。Chrome 的 Local Network Access 允许 HTTPS 网页访问内网地址（会弹出一次权限提示）。**Safari（所有 iPhone 浏览器）和 Firefox 不支持**，页面会提示换浏览器。
+- 板子上热点模式时 `dvrhttpd` 提供：`POST /api/fpv`（执行一条 `fpv` 命令，和 fpvd 同一份白名单 `src/fpvcmd.c`，不经过 shell），`GET /live`（rkfpv 预览流，原样转发），录像列表和下载。
+- 只对网页版的来源（`https://kkbin505.github.io`）回应 CORS，其他网站被浏览器拦住；所有会改东西的请求都要带 `X-FPV-Confirm` 头。能连上热点本身也要 WPA2 密码。自己 fork 并发布到别的地址时，把地址写进板子上的 `/etc/fpv/web_origin`（一行）。
+- 热点模式下点预览：板子运行 `fpv preview on`，rkfpv 只在本机 `127.0.0.1:5602` 输出预览流，由 dvrhttpd 转发；这次运行**不录像**。网页切到后台或关闭时自动 `fpv preview off`；按 BOOT 回到 FPV 时也会停掉。
+- 画面用浏览器的 WebCodecs 硬件解码 H.265。手机浏览器不支持 H.265 时，设置照样能改，只是没有画面。延迟约 100–200 ms，用来调画质够用，不能用来飞。

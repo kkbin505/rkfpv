@@ -110,6 +110,10 @@ def main():
 
         r, _, _ = request(s, "e1", "set bitrate 999999")
         check("fpv error passed through", r and r["ok"] is False and "range" in r["error"], r)
+        r, _, _ = request(s, "h1", "hotspot status")
+        check("hotspot allowed over fpvd", r and "not allowed" not in r.get("error", ""), r)
+        r, _, _ = request(s, "h2", "preview status")
+        check("preview allowed over fpvd", r and "not allowed" not in r.get("error", ""), r)
         r, _, _ = request(s, "e2", "sh -c reboot")
         check("non-fpv command refused", r and r["ok"] is False and "not allowed" in r["error"], r)
         n = runs()

@@ -16,8 +16,9 @@
 #   fpv dvr device|format --yes      recording card (format: ext4, erases it)
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   fpv hotspot status               BOOT button, mode, SSID, password, clients
-#   fpv preview on|off|status        board on a PC: run the video for the
-#                                    configurator's wired preview (adb forward)
+#   fpv preview on|off|status        debug mode (board on a PC) or hotspot mode:
+#                                    run the video for the configurator's preview
+#                                    (adb forward, or dvrhttpd /live on the hotspot)
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -438,7 +439,8 @@ cmd_status() {
 	role=$(cat "$R"/sys/class/usb_role/*/role 2>/dev/null | head -1)
 	pid_rk=$(pidof rkfpv 2>/dev/null)
 	pid_tx=$(pidof wfb_tx 2>/dev/null | tr ' ' ',')
-	if [ -n "$pid_rk" ] && [ -z "$pid_tx" ] && [ "$role" = device ]; then mode=preview
+	if [ "$(cat "$R/tmp/mode.status" 2>/dev/null)" = hotspot ]; then mode=hotspot
+	elif [ -n "$pid_rk" ] && [ -z "$pid_tx" ] && [ "$role" = device ]; then mode=preview
 	elif [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
 	elif [ "$role" = device ]; then mode=debug
 	else mode=idle; fi
@@ -887,8 +889,8 @@ preview_cmd() {
 	mode=$(cat "$R/tmp/mode.status" 2>/dev/null)
 	case "$sub" in
 	on|off)
-		case "$mode" in debug|off) ;;
-		*) die "preview: only when the board is on a PC over USB (mode: ${mode:-unknown})" ;;
+		case "$mode" in debug|off|hotspot) ;;
+		*) die "preview: only in debug mode (PC on USB) or hotspot mode (mode: ${mode:-unknown})" ;;
 		esac
 		[ "$(preview_port)" != 0 ] || die "preview: preview_port = 0 in rkfpv.conf"
 		"$INIT" "preview-$sub" > /dev/null 2>&1 || die "preview $sub failed (fpv log fpv)" ;;

@@ -1,6 +1,9 @@
-// rkfpv configurator UI. Every board action is an `fpv ... --json` call
-// through fpvconf.py (POST /api/fpv).
-"use strict";
+// rkfpv configurator UI, one page for the PC (wide layout) and phones
+// (portrait). Every board action is an `fpv ... --json` call; board.js
+// sends it through the PC configurator (rkfpvconf.py) or straight to the
+// board over its WiFi hotspot.
+import * as board from "./board.js";
+import { Preview } from "./preview.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -16,7 +19,13 @@ const state = {
   txpowerKey: "",    // txpower_<card> of the adapter in use (from status)
 };
 
-const NON_FORM_TABS = ["status", "image", "dvr", "presets", "logs", "cli"];
+const NON_FORM_TABS = ["status", "live", "image", "dvr", "presets", "logs", "cli"];
+// the Live tab's quick controls: what you tune while watching (all apply live)
+const LIVE_KEYS = ["bitrate", "isp_exp_max", "isp_brightness", "isp_contrast", "isp_saturation",
+  "isp_sharpness", "isp_nr_temporal", "isp_nr_spatial"];
+// apply modes that change the picture at once; edited while the preview runs,
+// these are written right away (no Save needed)
+const LIVE_APPLY = ["venc"];
 const IMAGE_GROUPS = [["Picture", "#imgPicture"], ["Exposure", "#imgExposure"], ["Noise & detail", "#imgNoise"]];
 
 const APPLY_TAG = {
@@ -29,22 +38,17 @@ const APPLY_TAG = {
 
 function conn() {
   return {
-    transport: $("#transport").value,
+    transport: board.kind === "hotspot" ? "hotspot" : $("#transport").value,
     device: $("#device").value,
     host: $("#host").value.trim(),
   };
 }
+board.setConnection(conn);
 
-async function post(path, body) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Token": window.FPV_TOKEN },
-    body: JSON.stringify({ ...conn(), ...body }),
-  });
-  return r.json();
-}
-
-const fpv = (...args) => post("/api/fpv", { args });
+const post = board.post;
+const fpv = board.fpv;
+// wired preview through the PC configurator needs ADB; on the hotspot it always works
+const previewPossible = () => board.kind === "hotspot" || conn().transport === "adb";
 
 // ---------------------------------------------------------------- ui helpers
 
@@ -70,7 +74,8 @@ function toast(msg, kind = "", actions = []) {
 function setBadge(mode) {
   const b = $("#modeBadge");
   b.className = "badge " + (mode || "off");
-  b.textContent = mode ? { fpv: "FPV running", debug: "debug mode", preview: "preview (USB)", idle: "idle" }[mode] || mode : "disconnected";
+  b.textContent = mode ? { fpv: "FPV running", debug: "debug mode", preview: "preview (USB)", idle: "idle",
+    hotspot: "hotspot" }[mode] || mode : "disconnected";
 }
 
 function showTab(tab) {
@@ -80,7 +85,9 @@ function showTab(tab) {
   $("#notConnected").hidden = state.connected;
   $$(".tab").forEach((s) => (s.hidden = true));
   if (!state.connected) return;
+  placeCanvas();
   if (tab === "status") { $("#tab-status").hidden = false; refreshStatus(); renderForm("Hotspot", $("#hsSettings")); loadHotspot(); }
+  else if (tab === "live") { $("#tab-live").hidden = false; renderLive(); if (!pv.on && previewPossible()) previewStart(); }
   else if (tab === "logs") { $("#tab-logs").hidden = false; loadLog(); }
   else if (tab === "cli") { $("#tab-cli").hidden = false; $("#cliIn").focus(); }
   else if (tab === "presets") { $("#tab-presets").hidden = false; loadPresets(); }
@@ -92,6 +99,7 @@ function showTab(tab) {
 // ---------------------------------------------------------------- connect
 
 async function loadDevices() {
+  if (board.kind !== "local") return;
   const r = await fetch("/api/devices", { headers: { "X-Token": window.FPV_TOKEN } }).then((x) => x.json());
   const sel = $("#device");
   const prev = sel.value;
@@ -112,12 +120,13 @@ async function loadDevices() {
 
 async function connect() {
   if (state.connected) return disconnect();
+  if (!board.hotspotSupported()) return toast($("#browserNote").textContent.trim(), "err");
   $("#connect").disabled = true;
   $("#connect").textContent = "Connecting…";
   try {
     const r = await fpv("schema");
     if (!r.ok) {
-      if (r.missing_fpv) {
+      if (r.missing_fpv && board.caps.install) {
         toast("fpv is not on the board yet.", "err", [["Install it now", async () => {
           const i = await post("/api/install", {});
           i.ok ? (toast("Installed: " + i.installed.join(", "), "ok"), connect()) : toast(i.error, "err");
@@ -131,7 +140,7 @@ async function connect() {
     state.connected = true;
     $("#connect").textContent = "Disconnect";
     $("#tabs").classList.remove("disabled");
-    $("#previewBtn").disabled = conn().transport !== "adb";
+    $("#previewBtn").disabled = !previewPossible();
     showTab(state.tab);
     if (state.tab !== "status") refreshStatus();   // mode badge
     state.pollTimer = setInterval(() => {
@@ -139,7 +148,7 @@ async function connect() {
       if (state.tab === "dvr") refreshDvr();
     }, 2000);
   } catch (e) {
-    toast("Configurator server not reachable: " + e, "err");
+    toast((board.kind === "local" ? "Configurator server not reachable: " : "Board not reachable: ") + e, "err");
   } finally {
     $("#connect").disabled = false;
     if (!state.connected) $("#connect").textContent = "Connect";
@@ -224,13 +233,14 @@ async function setBootMode(mode) {
 
 // ---------------------------------------------------------------- settings forms
 
-function control(p, value) {
+function control(p, value, slider = false) {
   const wrap = document.createElement("div");
   const onChange = (v) => {
     if (String(v) === String(state.values[p.key])) delete state.edits[p.key];
     else state.edits[p.key] = String(v);
     wrap.closest(".param").classList.toggle("changed", p.key in state.edits);
     updateSaveBar();
+    if (pv.on && LIVE_APPLY.includes(p.apply)) scheduleLiveApply();
   };
 
   if (p.type === "bool") {
@@ -290,25 +300,73 @@ function control(p, value) {
       num.oninput = () => validate() ? onChange(num.value) : (state.edits[p.key] = null, updateSaveBar());
       wrap.appendChild(num);
     }
+    if (slider) {
+      const outer = document.createElement("div");
+      outer.appendChild(wrap);
+      addSlider(p, outer, wrap, num, validate, onChange);
+      return outer;
+    }
   }
   return wrap;
 }
 
+// A slider under the number field (Live tab): drag it and the picture follows.
+// Moving it while a word (iq / auto / off) is selected switches to "value".
+function addSlider(p, outer, wrap, num, validate, onChange) {
+  const box = document.createElement("div");
+  box.className = "slider";
+  const r = document.createElement("input");
+  r.type = "range";
+  r.min = p.min;
+  r.max = p.max;
+  r.step = p.max - p.min > 2000 ? 50 : 1;
+  r.value = num.value === "" ? p.min : num.value;
+  box.appendChild(r);
+  outer.appendChild(box);
+  const sel = wrap.querySelector("select");
+  box.classList.toggle("off", num.disabled);
+  r.oninput = () => {
+    if (sel && sel.value !== "") { sel.value = ""; num.disabled = false; box.classList.remove("off"); }
+    num.value = r.value;
+    if (validate()) onChange(num.value);
+  };
+  num.addEventListener("input", () => { if (num.value !== "") r.value = num.value; });
+  if (sel) sel.addEventListener("change", () => {
+    box.classList.toggle("off", sel.value !== "");
+    if (sel.value === "") r.value = num.value || p.min;
+  });
+}
+
 function renderForm(group, body = $("#formBody")) {
+  renderParams(group, state.schema.filter((p) => p.group === group), body);
+  if (group === "Radio" || group === "Telemetry") radioNotes(group, body);
+}
+
+// the Live tab: a few picture settings under the video
+function renderLive() {
+  const params = LIVE_KEYS.map((k) => state.schema.find((p) => p.key === k)).filter(Boolean);
+  renderParams("Tune while watching", params, $("#liveControls"), true);
+  const note = document.createElement("p");
+  note.className = "sub";
+  note.textContent = "These change the picture as you move them. More on the Image and Video tabs.";
+  $("#liveControls").appendChild(note);
+}
+
+function renderParams(title, params, body, sliders = false) {
   body.innerHTML = "";
-  const params = state.schema.filter((p) => p.group === group);
   const box = document.createElement("div");
   box.className = "box";
-  box.innerHTML = `<h3>${group}</h3>`;
+  box.innerHTML = `<h3>${title}</h3>`;
   for (const p of params) {
     const row = document.createElement("div");
     row.className = "param" + (p.key in state.edits ? " changed" : "");
+    row.dataset.key = p.key;
     const [cls, label] = APPLY_TAG[p.apply] || ["restart", p.apply];
     const range = p.type === "int" ? ` · ${p.min}–${p.max}` : "";
     const inUse = p.key === state.txpowerKey ? `<span class="tag inuse">in use</span>` : "";
     row.innerHTML = `<div class="name">${p.key}<span class="tag ${cls}">${label}</span>${inUse}</div>`;
     const value = p.key in state.edits && state.edits[p.key] !== null ? state.edits[p.key] : state.values[p.key];
-    row.appendChild(control(p, value));
+    row.appendChild(control(p, value, sliders));
     const help = document.createElement("div");
     help.className = "help";
     help.textContent = p.default === "" ? p.help : `${p.help} (default ${p.default}${range})`;
@@ -316,6 +374,9 @@ function renderForm(group, body = $("#formBody")) {
     box.appendChild(row);
   }
   body.appendChild(box);
+}
+
+function radioNotes(group, body) {
   if (group === "Radio") {
     const note = document.createElement("div");
     note.className = "box note";
@@ -374,6 +435,39 @@ async function applyValues(values) {
   return r;
 }
 
+// While the preview shows, picture settings are written as you move them
+// (one `fpv set` ~300 ms after the last change): you see the result at once.
+let liveTimer = null, liveBusy = false;
+function scheduleLiveApply() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(liveApply, 300);
+}
+
+async function liveApply() {
+  if (liveBusy) return scheduleLiveApply();
+  const vals = {};
+  for (const [k, v] of Object.entries(state.edits)) {
+    const p = state.schema.find((x) => x.key === k);
+    if (v !== null && p && LIVE_APPLY.includes(p.apply)) vals[k] = v;
+  }
+  if (!Object.keys(vals).length) return;
+  liveBusy = true;
+  const args = ["set"];
+  for (const [k, v] of Object.entries(vals)) args.push(k, v);
+  const r = await fpv(...args);
+  liveBusy = false;
+  if (!r.ok) return toast(r.error, "err");
+  for (const res of r.results) {
+    state.values[res.key] = res.value;
+    if (state.edits[res.key] === vals[res.key]) delete state.edits[res.key];
+  }
+  state.schema.forEach((p) => (p.value = state.values[p.key]));
+  $$(".param.changed").forEach((row) => {
+    if (!(row.dataset.key in state.edits)) row.classList.remove("changed");
+  });
+  updateSaveBar();
+}
+
 async function save() {
   $("#save").disabled = true;
   const r = await applyValues(state.edits);
@@ -390,6 +484,7 @@ function rerenderForms() {
   else if (state.tab === "dvr") renderForm("DVR", $("#dvrSettings"));
   else if (state.tab === "image") renderImage();
   else if (state.tab === "status") renderForm("Hotspot", $("#hsSettings"));
+  else if (state.tab === "live") renderLive();
 }
 
 function revert() {
@@ -441,7 +536,7 @@ async function loadIq() {
   $("#iqUseStock").disabled = !custom;
   $("#iqUseCustom").disabled = custom || !r.custom.length;
 
-  const adb = $("#transport").value === "adb";
+  const adb = board.caps.iqFiles && conn().transport === "adb";
   const tb = $("#iqFiles");
   tb.innerHTML = "";
   const rows = [...r.custom.map((f) => ({ ...f, where: "custom" })), ...r.stock.map((f) => ({ ...f, where: "stock" }))];
@@ -459,7 +554,9 @@ async function loadIq() {
     tr.children[3].append(dl);
     tb.appendChild(tr);
   }
-  $("#iqHint").textContent = adb ? "" : "Download and upload need the ADB (USB) connection.";
+  $("#iqHint").textContent = adb ? "" : board.kind === "local"
+    ? "Download and upload need the ADB (USB) connection."
+    : "Download and upload of IQ files need the PC configurator (board on USB).";
   $("#iqUpload").disabled = !adb;
 
   const hb = $("#iqHistory");
@@ -569,8 +666,10 @@ async function loadDvrFiles() {
   tb.innerHTML = "";
   if (!r.ok) { $("#dvrHint").textContent = r.error; dvrFiles = []; return; }
   dvrFiles = r.files;
-  const adb = ["adb", "hotspot"].includes($("#transport").value);
+  const direct = board.kind === "hotspot";
+  const adb = direct || ["adb", "hotspot"].includes(conn().transport);
   $("#dvrHint").textContent = !r.files.length ? "No recordings on the card."
+    : direct ? "Download saves the file with the browser; Play opens it in a new tab."
     : adb ? `Files are saved on this PC in the folder 'Open folder' shows.`
     : "Downloading needs the ADB (USB) or WiFi hotspot connection.";
   for (const f of r.files) {
@@ -582,6 +681,13 @@ async function loadDvrFiles() {
     dl.textContent = "Download";
     dl.disabled = !adb || f.recording;
     dl.onclick = () => pull(f.name, dl);
+    const play = document.createElement("a");
+    play.textContent = "Play";
+    play.className = "btn ghost";
+    play.target = "_blank";
+    play.rel = "noopener";
+    play.href = board.dvrFileUrl(f.name, false);
+    play.hidden = !direct || f.recording;
     const del = document.createElement("button");
     del.textContent = "Delete";
     del.className = "ghost danger";
@@ -591,12 +697,23 @@ async function loadDvrFiles() {
       const d = await fpv("dvr", "delete", f.name);
       d.ok ? loadDvrFiles() : toast(d.error, "err");
     };
-    tr.children[2].append(dl, del);
+    tr.children[2].append(play, dl, del);
     tb.appendChild(tr);
   }
 }
 
 async function pull(name, btn) {
+  if (board.kind === "hotspot") {
+    // the board sends it as an attachment: the browser saves it, the page stays
+    const a = document.createElement("a");
+    a.href = board.dvrFileUrl(name, true);
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast(`${name}: downloading (see the browser's downloads)`, "ok");
+    return true;
+  }
   const old = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "downloading…"; }
   const r = await post("/api/dvr/pull", { name });
@@ -613,7 +730,8 @@ async function pullAll() {
     toast(`Downloading ${i + 1}/${todo.length}: ${todo[i].name}…`);
     if (!(await pull(todo[i].name, null))) return;
   }
-  if (todo.length) toast(`Downloaded ${todo.length} recording(s)`, "ok", [["Open folder", () => post("/api/dvr/open", {})]]);
+  if (todo.length) toast(`Downloaded ${todo.length} recording(s)`, "ok",
+    board.caps.savesOnPc ? [["Open folder", () => post("/api/dvr/open", {})]] : []);
 }
 
 // ---------------------------------------------------------------- presets + backup
@@ -641,7 +759,7 @@ async function loadPresets() {
   list.textContent = "loading…";
   let presets = [];
   try {
-    const r = await fetch("/api/presets", { headers: { "X-Token": window.FPV_TOKEN } }).then((x) => x.json());
+    const r = await board.presets();
     if (r.ok) presets = r.presets;
     else toast(r.error, "err");
   } catch (e) { toast("presets: " + e, "err"); }
@@ -772,7 +890,7 @@ async function cliSend(e) {
   $("#cliIn").value = "";
   const out = $("#cliOut");
   out.textContent += `# ${line}\n`;
-  const r = await post("/api/cli", { line });
+  const r = await board.cli(line);
   out.textContent += (r.ok ? r.output : "error: " + r.error) + "\n";
   out.scrollTop = 1e9;
   // a `fpv set` typed here changes values the forms show
@@ -787,176 +905,69 @@ async function cliSend(e) {
 
 // ---------------------------------------------------------------- wiring
 
-// USB RNDIS address for fpvd today; the wfb tunnel address (issue #1) later
-// ---------------------------------------------------------------- wired preview
-// rkfpv sends the link stream's access units (u32 big-endian length +
-// H.265 Annex-B) over `adb forward`; fpvconf.py passes the bytes through and
-// WebCodecs decodes them with the GPU.
+// ---------------------------------------------------------------- live preview
+// One decoder, one canvas. The canvas sits in the preview dock (right side on
+// a wide screen, top on a phone) and moves into the Live tab while that is open.
 
-const pv = { on: false, port: 0, ctl: null, dec: null, codec: "", waitKey: true,
-  frames: 0, bytes: 0, shown: 0, skipped: 0, t0: 0, timer: null, retry: null };
-const HEVC_CODECS = ["hev1.1.6.L123.B0", "hvc1.1.6.L123.B0", "hev1.1.6.L153.B0", "hev1.1.6.L93.B0", "hvc1.1.6.L93.B0"];
+const pv = new Preview($("#pvCanvas"), {
+  onMsg: (text, ffplay = false) => {
+    $("#pvMsg").textContent = text;
+    $("#liveMsg").textContent = text;
+    $("#pvFfplay").hidden = !ffplay;
+  },
+  onInfo: (text) => {
+    $("#pvInfo").textContent = text;
+    $("#liveInfo").textContent = text;
+  },
+});
 
-function pvMsg(text, ffplay = false) {
-  $("#pvMsg").textContent = text;
-  $("#pvFfplay").hidden = !ffplay;
+function placeCanvas() {
+  const cv = $("#pvCanvas");
+  const live = state.tab === "live" && state.connected;
+  const slot = live ? $("#liveStage") : $("#pvSlot");
+  if (cv.parentElement !== slot) slot.appendChild(cv);
+  // the dock is not needed while the Live tab shows the picture itself
+  $("#previewDock").hidden = !(pv.on || pvStarting) || live;
 }
 
-async function pickHevc() {
-  if (!("VideoDecoder" in window)) return "";
-  for (const hw of ["prefer-hardware", "no-preference"]) {
-    for (const codec of HEVC_CODECS) {
-      try {
-        const r = await VideoDecoder.isConfigSupported({ codec, hardwareAcceleration: hw, optimizeForLatency: true });
-        if (r.supported) return codec;
-      } catch (e) { /* try the next one */ }
-    }
-  }
-  return "";
-}
-
-// first NAL type of an Annex-B access unit: VPS (32) or IRAP (16..23) = key
-function isKey(au) {
-  for (let i = 0; i + 4 < au.length; i++) {
-    if (au[i] || au[i + 1] || au[i + 2] !== 1) continue;
-    const t = (au[i + 3] >> 1) & 0x3f;
-    if (t === 32 || (t >= 16 && t <= 23)) return true;
-    if (t < 32) return false;
-    i += 2;
-  }
-  return false;
-}
-
-function newDecoder() {
-  const cv = $("#pvCanvas"), g = cv.getContext("2d");
-  const dec = new VideoDecoder({
-    output: (f) => {
-      if (cv.width !== f.displayWidth || cv.height !== f.displayHeight) {
-        cv.width = f.displayWidth; cv.height = f.displayHeight;
-      }
-      g.drawImage(f, 0, 0);
-      f.close();
-      pv.shown++;
-    },
-    error: (e) => {
-      pvMsg("Decoder error: " + e.message + ". Your browser or GPU may not decode H.265.", true);
-      pv.waitKey = true;
-      pv.dec = null;
-    },
-  });
-  dec.configure({ codec: pv.codec, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
-  return dec;
-}
-
-function feed(au) {
-  pv.frames++;
-  pv.bytes += au.length;
-  const key = isKey(au);
-  if (!pv.dec) {
-    if (!key) return;
-    pv.dec = newDecoder();
-  }
-  // keep the latency low: if the decoder falls behind, skip to the next key frame
-  if (pv.dec.decodeQueueSize > 3) pv.waitKey = true;
-  if (pv.waitKey) {
-    if (!key) { pv.skipped++; return; }
-    pv.waitKey = false;
-  }
-  pv.dec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: performance.now() * 1000, data: au }));
-}
-
-async function pvRead() {
-  if (!pv.on) return;
-  pv.ctl = new AbortController();
-  let got = false;
-  try {
-    const r = await fetch(`/api/preview/stream?port=${pv.port}`,
-      { headers: { "X-Token": window.FPV_TOKEN }, signal: pv.ctl.signal });
-    if (!r.ok) throw new Error(await r.text());
-    const rd = r.body.getReader();
-    let buf = new Uint8Array(0);
-    for (;;) {
-      const { value, done } = await rd.read();
-      if (done) break;
-      if (!got) { got = true; pvMsg(""); }
-      const b = new Uint8Array(buf.length + value.length);
-      b.set(buf); b.set(value, buf.length);
-      let off = 0;
-      while (b.length - off >= 4) {
-        const n = ((b[off] << 24) >>> 0) + (b[off + 1] << 16) + (b[off + 2] << 8) + b[off + 3];
-        if (n === 0 || n > 4 << 20) throw new Error("garbled stream");
-        if (b.length - off - 4 < n) break;
-        feed(b.subarray(off + 4, off + 4 + n));
-        off += 4 + n;
-      }
-      buf = b.slice(off);
-    }
-  } catch (e) {
-    if (e.name === "AbortError") return;
-    pvMsg("Stream: " + e.message);
-  }
-  if (!pv.on) return;
-  // rkfpv restarted (a setting needed it) or is still starting: reconnect
-  if (pv.dec) { try { pv.dec.close(); } catch (e) { /* closed */ } pv.dec = null; }
-  pv.waitKey = true;
-  if (!got) pvMsg("Waiting for video… (rkfpv starting, or see Logs → rkfpv)");
-  pv.retry = setTimeout(pvRead, got ? 300 : 1500);
-}
-
-function pvStats() {
-  const s = (performance.now() - pv.t0) / 1000;
-  if (s <= 0) return;
-  $("#pvInfo").textContent = pv.frames
-    ? `${(pv.shown / s).toFixed(1)} fps · ${Math.round(pv.bytes * 8 / s / 1000)} kbps` +
-      (pv.dec ? ` · queue ${pv.dec.decodeQueueSize}` : "") + (pv.skipped ? ` · skipped ${pv.skipped}` : "")
-    : "";
-  pv.frames = pv.bytes = pv.shown = pv.skipped = 0;
-  pv.t0 = performance.now();
-}
-
+let pvStarting = false;
 async function previewStart() {
-  if ($("#transport").value !== "adb") return toast("The preview works over ADB (board on USB) only.", "err");
-  $("#previewDock").hidden = false;
+  if (!previewPossible()) return toast("The preview works over ADB (board on USB) or the WiFi hotspot.", "err");
+  if (pv.on || pvStarting) return;
   $("#previewBtn").classList.add("on");
-  pv.codec = await pickHevc();
-  if (!pv.codec) pvMsg("This browser cannot decode H.265 (use Chrome or Edge with GPU decoding).", true);
-  else pvMsg("Starting video on the board…");
-  const r = await post("/api/preview/start", {});
-  if (!r.ok) { pvMsg(r.error); return; }
-  pv.on = true;
-  pv.port = r.local_port;
-  pv.waitKey = true;
-  pv.t0 = performance.now();
-  pv.timer = setInterval(pvStats, 1000);
-  if (pv.codec) pvRead();
+  pvStarting = true;          // dock visible with "Starting video…" meanwhile
+  placeCanvas();
+  const r = await pv.start();
+  pvStarting = false;
+  if (!r.ok) $("#previewBtn").classList.remove("on");
+  placeCanvas();
   if (state.connected) refreshStatus();   // mode badge: preview
 }
 
-async function previewStop(hide = true) {
-  const port = pv.port;
-  pv.on = false;
-  clearTimeout(pv.retry);
-  clearInterval(pv.timer);
-  if (pv.ctl) pv.ctl.abort();
-  if (pv.dec) { try { pv.dec.close(); } catch (e) { /* closed */ } pv.dec = null; }
-  pv.port = 0;
+async function previewStop() {
+  const r = await pv.stop();
   $("#previewBtn").classList.remove("on");
-  if (hide) $("#previewDock").hidden = true;
-  $("#pvInfo").textContent = "";
-  if (port) {
-    const r = await post("/api/preview/stop", { port });
-    if (!r.ok) toast(r.error, "err");
-    if (state.connected) refreshStatus();
-  }
+  placeCanvas();
+  if (r && !r.ok) toast(r.error, "err");
+  if (state.connected) refreshStatus();
 }
 
 async function previewFfplay() {
-  if (!pv.port) return;
   // only one reader at a time: the browser lets go of the stream
-  if (pv.ctl) pv.ctl.abort();
-  clearTimeout(pv.retry);
-  const r = await post("/api/preview/ffplay", { port: pv.port });
-  r.ok ? pvMsg("Playing in the ffplay window. Close this panel (✕) to stop.") : pvMsg(r.error, true);
+  pv.detach();
+  const r = await board.previewFfplay();
+  r.ok ? pv.onMsg("Playing in the ffplay window. Close this panel (✕) to stop.")
+       : pv.onMsg(r.error, true);
+}
+
+function liveFullscreen() {
+  const el = $("#liveStage");
+  if (document.fullscreenElement) return document.exitFullscreen();
+  if (!el.requestFullscreen) return;
+  el.requestFullscreen().then(() => {
+    // phones: turn to landscape while full screen (not every browser allows it)
+    if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
+  }).catch(() => {});
 }
 
 const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "10.0.0.1" };
@@ -1028,9 +1039,35 @@ $$("#diffAll, #diffNone").forEach((b) => (b.onclick = () => {
 $("#revert").onclick = revert;
 window.onbeforeunload = () => (Object.keys(state.edits).length ? "unsaved changes" : undefined);
 
+$("#liveFull").onclick = liveFullscreen;
+$("#liveStage").ondblclick = liveFullscreen;
+
+// hosted page on the board's hotspot: no transports, no PC-only tools
+if (board.kind === "hotspot") {
+  document.body.classList.add("hosted");
+  $("#transport").hidden = $("#device").hidden = $("#refresh").hidden = true;
+  $("#host").hidden = false;
+  try { $("#host").value = localStorage.getItem("rkfpv.host") || "10.0.0.1"; } catch (e) { $("#host").value = "10.0.0.1"; }
+  $("#host").onchange = () => { try { localStorage.setItem("rkfpv.host", $("#host").value.trim()); } catch (e) { /* private mode */ } };
+  $("#ncLocal").hidden = true;
+  $("#ncHotspot").hidden = false;
+  $("#browserNote").hidden = board.hotspotSupported();
+  // a phone puts the page in the background: free the board's encoder for nobody
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && pv.on) previewStop();
+  });
+  window.addEventListener("pagehide", () => { if (pv.on) board.previewStop(); });
+  // offline copy for use on the hotspot (no internet there)
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+}
+$("#installBox").hidden = !board.caps.install;
+$("#dvrOpen").hidden = !board.caps.savesOnPc;
+
 $("#tabs").classList.add("disabled");
 showTab("status");
-// ?connect[&tab=Video]: connect to the first device on load (bookmarkable)
+// ?connect[&tab=Video]: connect on load (bookmarkable; the first ADB device locally)
 const qs = new URLSearchParams(location.search);
 loadDevices().then(() => {
   if (!qs.has("connect")) return;
