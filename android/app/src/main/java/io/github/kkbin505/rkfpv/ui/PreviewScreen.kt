@@ -70,6 +70,7 @@ fun VideoSwitch(s: UiState, vm: BoardViewModel) {
                         when {
                             fpvMode -> R.string.video_fpv_mode
                             s.videoRunning -> R.string.video_running
+                            s.hotspotMode -> R.string.video_stopped_hotspot
                             else -> R.string.video_stopped
                         },
                     ),
@@ -158,7 +159,8 @@ fun RecordControl(s: UiState, vm: BoardViewModel) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                val enabled = s.videoRunning && s.dvrEnabled && !s.videoBusy && d != null && d.state != "no-card"
+                val enabled = s.videoRunning && s.dvrEnabled && !s.videoBusy && d != null && d.state != "no-card" &&
+                    !s.hotspotMode
                 if (recording) {
                     Button(
                         onClick = { vm.setRecording(false) }, enabled = !s.videoBusy,
@@ -173,6 +175,8 @@ fun RecordControl(s: UiState, vm: BoardViewModel) {
                 }
             }
             val hint = when {
+                // S99fpv runs rkfpv with dvr=0 on the hotspot: the WiFi card is busy being the access point
+                s.hotspotMode && !recording -> stringResource(R.string.rec_hint_hotspot)
                 d?.error?.isNotEmpty() == true -> d.error
                 !s.dvrEnabled -> stringResource(R.string.rec_hint_dvr_off)
                 !s.videoRunning -> stringResource(R.string.rec_hint_video_off)

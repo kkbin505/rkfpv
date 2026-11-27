@@ -14,7 +14,7 @@ class FpvClientTest {
 
     /** A client whose "board" answers [reply] and records the command line. */
     private fun client(reply: String, sent: MutableList<String> = mutableListOf()) =
-        FpvClient { cmd -> sent += cmd; reply }
+        FpvClient { args -> sent += FpvClient.shellCommand(args); reply }
 
     @Test fun schemaParses() {
         val params = client(fixture("schema.json")).schema()

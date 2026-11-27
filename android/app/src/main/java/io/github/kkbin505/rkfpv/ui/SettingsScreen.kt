@@ -114,7 +114,7 @@ fun SettingsScreen(s: UiState, vm: BoardViewModel, modifier: Modifier) {
             dismissButton = { TextButton(onClick = { confirmLink = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
-    s.setResult?.let { SetResultDialog(it, vm) }
+    s.setResult?.let { SetResultDialog(it, s, vm) }
 }
 
 @Composable
@@ -198,7 +198,7 @@ private fun Choice(value: String, options: List<String>, onChange: (String) -> U
 }
 
 @Composable
-private fun SetResultDialog(r: SetResult, vm: BoardViewModel) {
+private fun SetResultDialog(r: SetResult, s: UiState, vm: BoardViewModel) {
     val restart = r.restartNeeded()
     AlertDialog(
         onDismissRequest = vm::dismissSetResult,
@@ -207,7 +207,7 @@ private fun SetResultDialog(r: SetResult, vm: BoardViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 r.results.forEach { Text("${it.key} = ${it.value}  → ${it.result}") }
                 if (r.warning.isNotEmpty()) Text("⚠ ${r.warning}", color = MaterialTheme.colorScheme.error)
-                if (!r.fpvRunning) Text(stringResource(R.string.saved_debug_mode))
+                if (!r.fpvRunning) Text(stringResource(if (s.hotspotMode) R.string.saved_hotspot_mode else R.string.saved_debug_mode))
             }
         },
         confirmButton = {

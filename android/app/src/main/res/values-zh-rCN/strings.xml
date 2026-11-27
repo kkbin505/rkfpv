@@ -86,4 +86,20 @@
     <string name="dvr_free">剩余 %1$d MB</string>
     <string name="rec_hint_video_off">先打开视频才能录像。</string>
     <string name="rec_hint_dvr_off">DVR 已关闭：在 参数 → DVR 里打开 dvr，然后把视频关掉再打开。</string>
+    <!-- WiFi：天空端热点（热点模式，板子上 dvrhttpd 在 http://10.0.0.1） -->
+    <string name="conn_connected_usb">USB</string>
+    <string name="conn_connected_wifi">WiFi</string>
+    <string name="wifi_title">通过天空端 WiFi 热点</string>
+    <string name="wifi_help">按住板子的 BOOT 键 2 秒，WiFi 网卡会变成热点，名字是 rkfpv-XXXX。在安卓的 WiFi 设置里连上它；系统提示“此网络无法访问互联网”时选择保持连接，然后回到这里连接。第一次的密码要先用 USB 连上，在 参数 → Hotspot 里看（hotspot_pass）。需要板子固件带热点网页接口。</string>
+    <string name="wifi_address">板子地址</string>
+    <string name="wifi_connect">通过 WiFi 连接</string>
+    <string name="wifi_connect_short">连接</string>
+    <string name="connecting_wifi">正在通过 WiFi 连接 %1$s…</string>
+    <string name="wifi_failed">%1$s 上没有板子应答：%2$s。手机连的是板子的热点（rkfpv-XXXX）吗？板子在热点模式吗？</string>
+    <string name="wifi_lost">WiFi 已和板子的热点断开</string>
+    <string name="disconnect">断开</string>
+    <string name="hotspot_mode_note">热点模式：WiFi 网卡在当热点，所以图传不运行，也不会录像。保存的参数在下次 FPV 启动时生效（再按住 BOOT 2 秒）。</string>
+    <string name="video_stopped_hotspot">关闭（热点模式）</string>
+    <string name="rec_hint_hotspot">热点模式下不录像：WiFi 网卡正在当热点。</string>
+    <string name="saved_hotspot_mode">FPV 没有运行（热点模式）：下次 FPV 启动时生效。</string>
 </resources>
