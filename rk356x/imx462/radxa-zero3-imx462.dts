@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Waveshare IMX462 (Raspberry Pi style, 2-lane MIPI) on the Radxa ZERO 3W/3E
+ * 22-pin camera connector, through rkisp (ISP) for rkaiq.
+ *
+ * Derived from radxa-zero3-rpi-camera-v2.dts (radxa-pkg/radxa-overlays,
+ * GPL-2.0). Changes: sensor node (sony,imx462 at 0x1a), 37.125 MHz module
+ * crystal, module/lens names that pick the IQ file
+ * /etc/iqfiles/imx462_WS-IMX462-A_default.json.
+ *
+ * No #include, so plain dtc builds it: 0 = GPIO_ACTIVE_HIGH,
+ * 22 = RK_PC6 (GPIO3_C6, connector pin 17, the module's power enable).
+ *
+ * If the crystal on the module reads 74.250 instead of 37.125, change
+ * clock-frequency to 74250000; the driver supports both.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	metadata {
+		title = "Enable Waveshare IMX462 camera";
+		compatible = "radxa,zero3";
+		category = "camera";
+		exclusive = "csi2_dphy0";
+		description = "Enable a Raspberry Pi style IMX462 camera (2-lane, 37.125 MHz crystal) through the ISP.";
+	};
+};
+
+&{/} {
+	clk_cam_37m: external-camera-clock-37m {
+		status = "okay";
+		compatible = "fixed-clock";
+		clock-frequency = <37125000>;
+		clock-output-names = "clk_cam_37m";
+		#clock-cells = <0>;
+	};
+
+	camera_pwdn_gpio: camera-pwdn-gpio {
+		status = "okay";
+		compatible = "regulator-fixed";
+		regulator-name = "camera_pwdn_gpio";
+		regulator-always-on;
+		regulator-boot-on;
+		enable-active-high;
+		gpio = <&gpio3 22 0>;
+	};
+};
+
+&i2c2 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2m1_xfer>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera_imx462: camera-imx462@1a {
+		status = "okay";
+		compatible = "sony,imx462";
+		reg = <0x1a>;
+		clocks = <&clk_cam_37m>;
+		clock-names = "xvclk";
+		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-facing = "back";
+		rockchip,camera-module-name = "WS-IMX462-A";
+		rockchip,camera-module-lens-name = "default";
+
+		port {
+			ucam_out0: endpoint {
+				remote-endpoint = <&mipi_in_ucam0>;
+				data-lanes = <1 2>;
+			};
+		};
+	};
+};
+
+&csi2_dphy_hw {
+	status = "okay";
+};
+
+&csi2_dphy0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			mipi_in_ucam0: endpoint@1 {
+				reg = <1>;
+				remote-endpoint = <&ucam_out0>;
+				data-lanes = <1 2>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			dphy0_out: endpoint@1 {
+				reg = <1>;
+				remote-endpoint = <&isp0_in>;
+			};
+		};
+	};
+};
+
+&rkisp_vir0 {
+	status = "okay";
+
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		isp0_in: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&dphy0_out>;
+		};
+	};
+};
+
+&rkisp {
+	status = "okay";
+};
+
+&rkisp_mmu {
+	status = "okay";
+};
+
+&rkcif_mmu {
+	status = "okay";
+};
+
+&rkcif {
+	status = "okay";
+};

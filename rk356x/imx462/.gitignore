@@ -1,0 +1,10 @@
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+*.dtbo
+Module.symvers
+modules.order
+.tmp_versions/
+imx462-check.log
