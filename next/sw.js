@@ -4,7 +4,7 @@
 //
 // The deploy build (configurator/build_site.py) puts the commit in the cache name, so every deploy
 // gets a new cache and old ones are dropped.
-const CACHE = "rkfpv-69a2e31e7c42";
+const CACHE = "rkfpv-08b85a123335";
 // The deploy workflow replaces the list with every file of the site (the
 // vendored ADB modules too); this one is what a plain copy of web/ needs.
 const FILES = [

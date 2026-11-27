@@ -8,7 +8,11 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=69a2e31e7c42">
+<link rel="stylesheet" href="style.css?v=08b85a123335">
+<script>
+  // saved light/dark choice, before the first paint (no flash); none = follow the system
+  try { const t = localStorage.getItem("rkfpv.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <!-- rkfpvconf.py fills in the token; with the placeholder left in, this is the hosted page (USB or hotspot) -->
 <script>window.FPV_TOKEN = "__TOKEN__";</script>
 <!-- Tango ADB (MIT) for WebUSB, vendored in ./vendor: no CDN, no build step. Versions in vendor/VERSIONS. -->
@@ -44,6 +48,7 @@
     <button id="connect" class="primary">Connect</button>
   </div>
   <div class="badges">
+    <button id="themeBtn" class="ghost" type="button" title="Light / dark">◐</button>
     <button id="previewBtn" class="ghost" title="Show the live video" disabled>▶ Preview</button>
     <span id="modeBadge" class="badge off">disconnected</span>
   </div>
@@ -331,6 +336,6 @@ sudo udevadm control --reload-rules</pre>
 </footer>
 
 <div id="toast" hidden></div>
-<script type="module" src="app.js?v=69a2e31e7c42"></script>
+<script type="module" src="app.js?v=08b85a123335"></script>
 </body>
 </html>
