@@ -1,8 +1,13 @@
 # rkfpv 安卓 App
 
-用一根 Type-C 线把天空端直接接到手机上，就能调参、实时预览画面、开始和停止录像、下载和播放 TF 卡上的录像。不需要电脑。
+用一根 Type-C 线把天空端直接接到手机上，或者让手机连上天空端的 WiFi 热点，就能调参、实时预览画面、下载和播放 TF 卡上的录像。有线时还能开始和停止录像。不需要电脑。
 
-App 在手机上直接实现了 ADB 协议（通过安卓的 USB Host API），所以板子这边不用装任何新东西，手机也不需要 root。它执行的命令和 PC 配置器（`configurator/`）完全一样，都是 `fpv … --json`。所以 App 能做的事，`adb shell` 里也都能做。
+两种连接方式：
+
+- **USB（ADB）**：App 在手机上直接实现了 ADB 协议（通过安卓的 USB Host API），所以板子这边不用装任何新东西，手机也不需要 root。
+- **WiFi（天空端热点）**：按住板子的 BOOT 键 2 秒，WiFi 网卡变成热点，App 通过 HTTP 访问板子上的 `dvrhttpd`（`http://10.0.0.1`）。用的是网页配置器在热点模式下用的同一套接口。不占 USB 口，网卡可以一直插着。见下面的 [WiFi](#wifi天空端热点)。
+
+两种方式执行的命令和 PC 配置器（`configurator/`）完全一样，都是 `fpv … --json`。所以 App 能做的事，`adb shell` 里也都能做。
 
 ## 功能
 
@@ -15,16 +20,40 @@ App 在手机上直接实现了 ADB 协议（通过安卓的 USB Host API），�
 
 还不支持：IQ 文件编辑、预设和备份、日志。这些 PC 配置器里都有。
 
+## WiFi（天空端热点）
+
+**两代板子固件都能用**：
+
+- 带热点网页接口的固件（PR #25，`web-configurator-hotspot` 分支）：调参走 `dvrhttpd` 的 `POST /api/fpv`，预览走 `GET /live`。
+- 更早的热点固件：`dvrhttpd` 只管录像，`/api/fpv` 返回 404。App 自动改用板子上的 `fpvd`（UDP 7000，和 PC 配置器的 fpvd 连接方式同一个协议）来调参，录像照样走 HTTP。**这种固件上没有预览**，状态页地址后面会注明。
+
+1. 天空端插着 WiFi 网卡，正常上电进入 FPV。按住 **BOOT 键 2 秒**，网卡变成热点 `rkfpv-XXXX`（信道、国家码见 **参数 → Hotspot**）。
+2. 在安卓的 WiFi 设置里连上这个热点。系统提示"此网络无法访问互联网"时，选**保持连接**。手机可能会弹出录像页面（captive portal），关掉就行。
+3. 打开 App，在 **状态** 页的"通过天空端 WiFi 热点"里点 **连接**。地址默认 `10.0.0.1`。
+4. 之后再打开 App，如果上次是用 WiFi 连的，并且手机还在 WiFi 上，App 会自动重连。点 **断开** 后就不再自动连接。
+
+**第一次的密码**：`hotspot_pass` 是板子第一次开机时随机生成的。先用 USB 连一次，在 **参数 → Hotspot** 里查看或修改；也可以在 `adb shell` 里运行 `fpv hotspot status`。
+
+**和 USB 的区别**：
+
+- 热点模式下网卡在当热点，所以**图传不运行，也不录像**（`S99fpv` 用 `dvr=0` 启动 rkfpv）。录像按钮是灰的；已有的录像可以下载、播放、删除。
+- 预览（只有带热点网页接口的固件）：打开 **视频** 开关，App 执行 `fpv preview on`，画面从 `/live` 读取，延迟取决于 WiFi。
+- 保存的参数在下次 FPV 启动时生效（再按住 BOOT 2 秒回到 FPV）。改 `hotspot_*` 不会断开当前连接，下次开热点时才用新值。
+- `dvrhttpd` 只接受由字母、数字和 `_ . , : -` 组成、不超过 64 个字符的参数值（`src/fpvcmd.c`，那里没有 shell）。带其他字符的值，比如含 `/` 的路径 `iq_dir`，或含特殊字符的密码，App 会直接提示改用 USB，不会发给板子。
+- 下载走 HTTP，不支持断点续传；断了就重新下载。
+- 手机的移动数据开着也没关系：热点没有互联网，安卓会继续把移动数据当默认网络，但 App 的请求显式走 WiFi 那个网络（`Network.openConnection`），不需要关掉移动数据。
+
 ## 预览和录像控制
 
 调试模式下图传不运行，录像是 `rkfpv` 做的，所以要先打开 **视频** 开关。App 执行 `fpv preview on`，板子在调试模式下启动 `rkfpv`，但不开无线。
 
 - **需要板子固件支持有线预览**（PR #18，目前在 `hotspot-osd-v2` 分支上，`main` 还没有）。老固件上打开视频会提示 `unknown command 'preview'`；调参和下载录像不受影响。
 - **预览**：App 通过 ADB 直接打开板子上的 `tcp:5602`（和 `adb forward` 用的是同一个服务，手机上不需要转发端口）。码流格式见 `src/preview.c`：每帧是 4 字节大端长度加 Annex-B 的 H.265。App 用 `MediaCodec` 硬解，每帧解出来马上显示；解码跟不上时丢帧，直到下一个关键帧。改了"需重启"的参数后视频会重启，预览会自动重连。
+- **全屏**：在预览页把手机横过来就自动全屏，竖回去退出；也可以点画面下方的全屏按钮（会强制横屏，之后转一下手机又恢复跟随重力）。全屏时隐藏系统栏，点一下画面显示分辨率 / 帧率 / 码率和退出按钮，3 秒后自动隐藏，返回键也能退出。按钮都不放在画面四角，因为 OSD 可能在任何一个角上。全屏和小窗各有一个 SurfaceView，切换时预览重连一次（码流从关键帧开始，很快）。
 - **录像**：开始和停止对应 `fpv dvr start/stop`，只有视频在运行时才能用。固件里 `dvr` 默认是关闭的（不占内存）：在 **参数 → DVR** 里把 `dvr` 打开，然后把视频关掉再打开。`dvr` 打开时，视频一启动就会自动开始录像。
 - **供电**：视频运行时摄像头、编码器都在工作，录像时还要写 TF 卡，比纯调试模式耗电多。用手机供电时注意手机的 OTG 输出能力。
 
-## 使用
+## 使用（USB）
 
 1. 天空端**不要插 WiFi 网卡**，用 Type-C 对 Type-C 线（或 OTG 转接头）接到手机上。手机会给板子供电。
 2. 板子上电约 10 秒后，发现 USB 上有主机，进入调试模式（ADB）。这一步手机和电脑一样。
@@ -66,10 +95,15 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | `adb/AdbSync.kt` | `sync:` 服务：STAT、RECV（也就是 `adb pull`） |
 | `adb/AdbKey.kt` | App 自己的 RSA 密钥、AUTH 签名、adbd 用的公钥格式 |
 | `adb/UsbAdbChannel.kt` | USB bulk 端点（接口 class 0xff / subclass 0x42 / protocol 1） |
+| `board/Board.kt` | 连接方式的接口：`fpv` 命令、预览码流、下载录像三件事 |
+| `board/AdbBoard.kt` | USB：`shell:` 执行 fpv，`tcp:5602` 读预览，`sync:` 下载 |
+| `board/HttpBoard.kt` | WiFi：`dvrhttpd` 的 `/api/fpv`、`/live`、`/dvr/<名字>`；请求绑定到热点的 `Network` |
+| `board/FpvdClient.kt` | WiFi、老固件：`fpvd` 的 UDP 协议（同一个 id 重发，按 1200 字节分片收回复） |
 | `fpv/Fpv.kt` | `fpv` 命令的客户端，解析 JSON；参数校验规则和 `files/fpv` 一致 |
 | `video/H265.kt` | 预览码流的分帧（长度 + Annex-B），找关键帧和 VPS / SPS / PPS |
 | `video/PreviewPlayer.kt` | 通过 ADB 读 `tcp:5602`，`MediaCodec` 解码到 SurfaceView，断开后自动重连 |
 | `ui/` | Jetpack Compose 界面和 ViewModel |
+| `ui/Rotation.kt` | 全屏的横竖屏：先锁定方向，手机真的转到那个方向后再交还给重力感应 |
 
 测试：
 
@@ -77,10 +111,19 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - `AdbKeyTest` 用 `adb keygen` 生成的密钥对（`src/test/resources/adb/`，只用于测试），检查公钥编码和 PC 上的 adb 完全一致。
 - `FpvClientTest` 用的 JSON 是在电脑上用 `FPV_ROOT` 运行 `files/fpv` 录下来的（preview 和 dvr status 来自 `hotspot-osd-v2` 的 `fpv`；`dvr_status_recording.json` 是按同样格式手写的，因为录像时的状态在电脑上跑不出来）。`validate_cases.txt` 里每一条都和 `fpv set` 的结果对过。
 - `H265Test` 检查分帧在任意切包方式下都正确，以及关键帧和参数集的识别。`MediaCodec` 解码只能在手机上测。
+- `HttpBoardTest` 让 `HttpBoard` 和一个假的 `dvrhttpd`（本机 socket）通信：确认头、参数不加引号、JSON 错误、503 表示预览没开、预览码流任意切包、下载、不合法的参数值不发送；还有老固件：`/api/fpv` 404 时改走假的 `fpvd`（第一个包故意丢掉、两个分片倒序到达）。
+- `HttpBoardLiveTest` 连真的 `dvrhttpd`，默认跳过。在电脑上用 PR #25 的 `src/dvrhttpd.c` 和 `files/fpv`（`FPV_ROOT` 指向一个临时目录，`tmp/mode.status` 写 `hotspot`）就能跑，接真板子也可以：
+  ```sh
+  RKFPV_TEST_BOARD=127.0.0.1:28080 ./gradlew testDebugUnitTest --tests '*HttpBoardLiveTest*'
+  ```
+  会改一次 `bitrate` 再改回去；需要板子上有 `rec_0003_01.mp4`，预览端口有画面。
 
 ## 已知限制和待验证
 
-- **只有一个 USB 口**：接手机时就不能接 WiFi 网卡，所以有线模式只用在地面调参和回看。
+- **只有一个 USB 口**：接手机时就不能接 WiFi 网卡，所以有线模式只用在地面调参和回看。不想拔网卡时用 WiFi 热点。
+- **WiFi 在三星 S22 和一块老热点固件的板子上测过**：连接、状态、参数、录像列表、下载都正常（设置走 fpvd）。还没测的：
+  - 带热点网页接口的新固件上的 `/live` 预览，以及它在 WiFi 上的延迟和丢帧（只在电脑上对真的 `dvrhttpd` 测过转发）。
+  - 移动数据开着时请求是否仍走 WiFi（测试时手机只有 WiFi 一个网络）。
 - **还没在真实板子上测过**的几点：
   - 手机能否通过 C 对 C 线当主机并给板子供电，取决于板子 Type-C 口的 CC 电阻。不行的话换 OTG 转接头。
   - 板子 adbd 的版本和是否开了认证。两种情况代码都处理了：老版本 adbd 最大负载 4 KB、要求校验和；开了认证时会发送公钥。

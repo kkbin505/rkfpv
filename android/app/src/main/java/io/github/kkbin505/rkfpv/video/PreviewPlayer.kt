@@ -4,8 +4,9 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
 import android.view.Surface
-import io.github.kkbin505.rkfpv.adb.AdbConnection
-import io.github.kkbin505.rkfpv.adb.AdbStream
+import io.github.kkbin505.rkfpv.board.Board
+import io.github.kkbin505.rkfpv.board.ChunkStream
+import io.github.kkbin505.rkfpv.board.PreviewNotRunning
 import java.io.IOException
 import java.nio.ByteBuffer
 
@@ -17,16 +18,16 @@ sealed interface PreviewState {
 }
 
 /**
- * Wired preview: reads rkfpv's preview port through ADB ("tcp:<port>",
- * the service `adb forward` uses, so nothing is forwarded on the phone) and
- * decodes it with MediaCodec onto [surface].
+ * Preview: reads rkfpv's preview stream from the board (over USB: ADB
+ * "tcp:<port>"; over the hotspot: dvrhttpd's /live) and decodes it with
+ * MediaCodec onto [surface].
  *
  * Latency first: every decoded frame is shown at once; when the decoder
  * falls behind, frames are dropped up to the next key frame. When the
  * stream ends (rkfpv restarted for a setting) it reconnects.
  */
 class PreviewPlayer(
-    private val conn: AdbConnection,
+    private val board: Board,
     private val port: Int,
     private val surface: Surface,
     /** size for the decoder before the SPS is seen, e.g. from the `size` setting */
@@ -35,7 +36,7 @@ class PreviewPlayer(
     private val onState: (PreviewState) -> Unit,
 ) {
     @Volatile private var running = false
-    @Volatile private var stream: AdbStream? = null
+    @Volatile private var stream: ChunkStream? = null
     private var thread: Thread? = null
 
     fun start() {
@@ -55,11 +56,16 @@ class PreviewPlayer(
         var failures = 0
         while (running) {
             val s = try {
-                conn.open("tcp:$port", 3000)
+                board.openPreview(port)
             } catch (e: IOException) {
-                // nothing listens yet: adbd refuses the OPEN
-                if (!conn.isAlive) { onState(PreviewState.Failed(e.message ?: "ADB closed")); return }
-                onState(PreviewState.Waiting)
+                if (!board.isAlive) { onState(PreviewState.Failed(e.message ?: "connection closed")); return }
+                // nothing serves it yet (video starting); on WiFi also a lost packet or two
+                if (e !is PreviewNotRunning && ++failures >= 5) {
+                    onState(PreviewState.Failed(e.message ?: e.toString()))
+                    sleep(2000)
+                } else {
+                    onState(PreviewState.Waiting)
+                }
                 sleep(400)
                 continue
             }
@@ -84,8 +90,8 @@ class PreviewPlayer(
         }
     }
 
-    private fun decode(s: AdbStream) {
-        val reader = AuReader { if (running) s.read(0) else null }
+    private fun decode(s: ChunkStream) {
+        val reader = AuReader { if (running) s.read() else null }
         var codec: MediaCodec? = null
         val info = MediaCodec.BufferInfo()
         var pts = 0L

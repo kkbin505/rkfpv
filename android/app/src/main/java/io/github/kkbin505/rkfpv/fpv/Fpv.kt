@@ -12,16 +12,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
- * Client for the board's `fpv` command (files/fpv): every call is
- * `fpv <args> --json` through a shell, exactly what the PC configurator
- * runs, so anything here can also be typed in `adb shell`.
+ * Client for the board's `fpv` command (files/fpv): every call is one
+ * `fpv <args> --json`, exactly what the PC configurator runs, so anything
+ * here can also be typed in `adb shell`. [exec] runs it on the board and
+ * returns what it printed: through ADB's shell ([shellCommand]) or
+ * dvrhttpd's /api/fpv on the hotspot (see board/).
  */
-class FpvClient(private val shell: (String) -> String) {
+class FpvClient(private val exec: (List<String>) -> String) {
 
-    fun run(vararg args: String): JsonObject {
-        val cmd = "fpv " + args.joinToString(" ") { quote(it) } + " --json"
-        return parseReply(shell(cmd))
-    }
+    fun run(vararg args: String): JsonObject = parseReply(exec(args.toList()))
 
     fun schema(): List<FpvParam> =
         ok(run("schema"))["params"]!!.jsonArray.map { FpvParam.from(it.jsonObject) }
@@ -102,6 +101,9 @@ class FpvClient(private val shell: (String) -> String) {
         private val REC_NAME = Regex("^rec_[0-9]+_[0-9]+\\.(mp4|ts)$")
 
         fun isRecordingName(name: String) = REC_NAME.matches(name)
+
+        /** The shell line for [args]: `fpv <quoted args> --json`. */
+        fun shellCommand(args: List<String>): String = "fpv " + args.joinToString(" ") { quote(it) } + " --json"
 
         /** POSIX shell single quotes, like Python's shlex.quote. */
         fun quote(s: String): String =

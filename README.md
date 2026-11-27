@@ -96,7 +96,7 @@ python3 configurator/fpvconf.py
 
 浏览器里会打开界面，详见 `configurator/README.md`。
 
-**手机 App（安卓）**：用 Type-C 线把板子直接接到手机上，可以调参、实时预览、开始和停止录像、下载和播放 TF 卡上的录像。App 在手机上直接实现 ADB 协议，不需要电脑，也不需要 root。详见 `android/README.md`。
+**手机 App（安卓）**：用 Type-C 线把板子直接接到手机上，或者按住 BOOT 2 秒后连上天空端的 WiFi 热点，可以调参、实时预览、下载和播放 TF 卡上的录像；有线时还能开始和停止录像。USB 时 App 在手机上直接实现 ADB 协议，WiFi 时走板子上 `dvrhttpd` 的 HTTP 接口。不需要电脑，也不需要 root。详见 `android/README.md`。
 
 直接改文件也可以：
 
@@ -155,7 +155,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `src/fpvd.c` | UDP 命令服务，只执行 `fpv` 子命令 |
 | `files/fpv` | 板子上的设置命令（get / set / status …） |
 | `configurator/` | 电脑上的配置界面 |
-| `android/` | 安卓 App：通过 USB（ADB）调参和回看录像 |
+| `android/` | 安卓 App：通过 USB（ADB）或天空端 WiFi 热点调参、预览和回看录像 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
 
 ## 画质（ISP）和 IQ 文件
