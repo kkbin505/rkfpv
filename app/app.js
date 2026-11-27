@@ -73,6 +73,7 @@ async function connect() {
       credentialStore: credentials,
     });
     adb = new Adb(transport);
+    haveExec = true;
   } catch (e) {
     return fail("连接", e);
   }
@@ -109,10 +110,37 @@ function onDisconnected(msg) {
 
 // ---------------------------------------------------------------- shell
 
+// The board's adbd (luckfox / buildroot) has no `exec:` service, which
+// spawnWaitText uses, and answers "Socket open failed". `shell:<cmd>` is what
+// the desktop `adb shell` uses on such daemons; it may turn \n into \r\n.
+let haveExec = true;
+
+async function shellService(cmd) {
+  const socket = await adb.createSocket(`shell:${cmd}`);
+  const reader = socket.readable.getReader();
+  const dec = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += dec.decode(value, { stream: true });
+  }
+  return (text + dec.decode()).replace(/\r\n/g, "\n");
+}
+
 function shell(cmd) {
   const run = async () => {
     if (!adb) throw new Error("没有连接板子");
-    return await adb.subprocess.noneProtocol.spawnWaitText(cmd);
+    if (haveExec) {
+      try {
+        return await adb.subprocess.noneProtocol.spawnWaitText(cmd);
+      } catch (e) {
+        if (!/socket open failed/i.test(String(e?.message || e))) throw e;
+        haveExec = false;
+        log("板子不支持 exec:，改用 shell:");
+      }
+    }
+    return await shellService(cmd);
   };
   const p = queue.then(run, run);
   queue = p.catch(() => {});
