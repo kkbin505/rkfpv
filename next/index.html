@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=08b85a123335">
+<link rel="stylesheet" href="style.css?v=fdf5e03f17f4">
 <script>
   // saved light/dark choice, before the first paint (no flash); none = follow the system
   try { const t = localStorage.getItem("rkfpv.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -33,147 +33,120 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">rk<b>fpv</b> <span>configurator</span></div>
+  <div class="brand">rk<b>fpv</b> <span data-i18n="brand.sub"></span></div>
   <div class="conn">
-    <select id="transport" title="How to reach the board">
-      <option value="usb">USB</option>
-      <option value="adb">ADB (USB)</option>
-      <option value="hotspot">WiFi hotspot</option>
-      <option value="fpvd">fpvd (UDP)</option>
-      <option value="ssh">SSH (wfb tunnel)</option>
+    <select id="transport" data-i18n-title="conn.transport.title">
+      <option value="usb" data-i18n="conn.usb"></option>
+      <option value="adb" data-i18n="conn.adb"></option>
+      <option value="hotspot" data-i18n="conn.hotspot"></option>
+      <option value="fpvd" data-i18n="conn.fpvd"></option>
+      <option value="ssh" data-i18n="conn.ssh"></option>
     </select>
-    <select id="device" title="ADB device"></select>
-    <input id="host" value="172.32.0.93" title="Board address (host or host:port)" hidden>
-    <button id="refresh" class="ghost" title="Rescan ADB devices">⟳</button>
-    <button id="connect" class="primary">Connect</button>
+    <select id="device" data-i18n-title="conn.device.title"></select>
+    <input id="host" value="172.32.0.93" data-i18n-title="conn.host.title" hidden>
+    <button id="refresh" class="ghost" data-i18n-title="conn.refresh.title">⟳</button>
+    <button id="connect" class="primary" data-i18n="conn.connect"></button>
   </div>
   <div class="badges">
-    <button id="themeBtn" class="ghost" type="button" title="Light / dark">◐</button>
-    <button id="previewBtn" class="ghost" title="Show the live video" disabled>▶ Preview</button>
-    <span id="modeBadge" class="badge off">disconnected</span>
+    <select id="langSel" data-i18n-title="lang.title"></select>
+    <button id="themeBtn" class="ghost" type="button">◐</button>
+    <button id="previewBtn" class="ghost" data-i18n-title="preview.btn.title" disabled></button>
+    <span id="modeBadge" class="badge off"></span>
   </div>
 </header>
-<div id="browserNote" class="banner" hidden>
-  This browser cannot reach the board from this page. Use <b>Chrome</b>, <b>Edge</b> or <b>Samsung Internet</b>
-  (they allow a web page to talk to devices on the local network after asking you).
-</div>
-<template id="hotspotNoteText">
-  This browser cannot reach the board from this page. Use <b>Chrome</b>, <b>Edge</b> or <b>Samsung Internet</b>
-  (they allow a web page to talk to devices on the local network after asking you).
-</template>
-<template id="usbNoteText">
-  This browser cannot talk to USB devices (WebUSB). Use <b>Chrome</b> or <b>Edge</b> on a PC or an Android phone;
-  Firefox, Safari and every browser on iPhone / iPad cannot. Or pick <b>WiFi hotspot</b> above.
-</template>
+<div id="browserNote" class="banner" hidden></div>
 
 <div class="layout">
   <nav id="tabs">
-    <a data-tab="status" class="active">Status</a>
-    <a data-tab="live">Live</a>
-    <a data-tab="Video">Video</a>
-    <a data-tab="Camera">Camera</a>
-    <a data-tab="image">Image</a>
-    <a data-tab="Radio">Radio</a>
-    <a data-tab="Telemetry">Telemetry</a>
-    <a data-tab="dvr">DVR</a>
-    <a data-tab="presets">Presets</a>
-    <a data-tab="logs">Logs</a>
-    <a data-tab="cli">CLI</a>
+    <a data-tab="status" class="active" data-i18n="tab.status"></a>
+    <a data-tab="live" data-i18n="tab.live"></a>
+    <a data-tab="Video" data-i18n="group.Video"></a>
+    <a data-tab="Camera" data-i18n="group.Camera"></a>
+    <a data-tab="image" data-i18n="tab.image"></a>
+    <a data-tab="Radio" data-i18n="group.Radio"></a>
+    <a data-tab="Telemetry" data-i18n="group.Telemetry"></a>
+    <a data-tab="dvr" data-i18n="tab.dvr"></a>
+    <a data-tab="presets" data-i18n="tab.presets"></a>
+    <a data-tab="logs" data-i18n="tab.logs"></a>
+    <a data-tab="cli" data-i18n="tab.cli"></a>
   </nav>
 
   <!-- wide screens: on the right, stays while switching tabs; portrait: at the top -->
   <aside id="previewDock" hidden>
     <div class="pvHead">
-      <b>Preview</b> <span id="pvInfo" class="muted"></span>
+      <b data-i18n="preview.title"></b> <span id="pvInfo" class="muted"></span>
       <span class="spacer"></span>
-      <button id="pvSize" class="ghost" title="Larger / smaller">⤢</button>
-      <button id="pvStop" class="ghost" title="Stop the preview">✕</button>
+      <button id="pvSize" class="ghost" data-i18n-title="preview.size.title">⤢</button>
+      <button id="pvStop" class="ghost" data-i18n-title="preview.stop.title">✕</button>
     </div>
     <div id="pvSlot"><canvas id="pvCanvas" width="1280" height="720"></canvas></div>
     <div id="pvMsg" class="sub"></div>
-    <div class="row"><button id="pvFfplay" class="ghost" hidden>Open in ffplay instead</button></div>
-    <p class="sub pvNote">The link stream itself: same encoder, resolution, bitrate, GOP and OSD as what goes
-      over the air. Only radio effects (packet loss, MCS) are missing. Live settings (Image tab, bitrate) show
-      at once; settings that restart the video reconnect by themselves.</p>
+    <div class="row"><button id="pvFfplay" class="ghost" data-i18n="preview.ffplay" hidden></button></div>
+    <p class="sub pvNote" data-i18n="preview.note"></p>
   </aside>
 
   <main>
     <div id="notConnected" class="empty">
       <div id="ncLocal">
-        <h2>Connect to the board</h2>
+        <h2 data-i18n="nc.local.title"></h2>
         <ol>
-          <li>Plug the board's USB into this PC <em>without</em> the WiFi adapter and power it up.
-            It boots into debug mode and ADB appears after ~15&nbsp;s.</li>
-          <li>Pick the device above and press <b>Connect</b>.</li>
+          <li data-i18n-html="nc.local.step1.html"></li>
+          <li data-i18n-html="nc.local.step2.html"></li>
         </ol>
-        <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
-          FPV boot. Or use the board's WiFi hotspot (hold BOOT 2 s) and pick <b>WiFi hotspot</b> above.</p>
+        <p class="muted" data-i18n-html="nc.local.note.html"></p>
       </div>
       <div id="ncUsb" hidden>
-        <h2>Connect over USB</h2>
+        <h2 data-i18n="nc.usb.title"></h2>
         <ol>
-          <li>Plug the board's USB into this PC (or an Android phone with an OTG cable) <em>without</em> the
-            WiFi adapter and power it up. It boots into debug mode after ~15&nbsp;s.</li>
-          <li>Press <b>Connect</b> and pick the board (Rockchip / rkfpv) in the browser's list.</li>
+          <li data-i18n-html="nc.usb.step1.html"></li>
+          <li data-i18n-html="nc.usb.step2.html"></li>
         </ol>
-        <p class="muted">Only one program can use the board at a time: if <code>adb</code> runs on this PC,
-          run <code>adb kill-server</code> first. Everything works over USB, including installing the board
-          scripts, IQ files, recordings and the live picture. Disconnect lets go of the board again.</p>
+        <p class="muted" data-i18n-html="nc.usb.note.html"></p>
         <details>
-          <summary>First time on Linux or Windows</summary>
-          <p><b>Linux:</b> a normal user may not open USB devices. Run once, then replug the board:</p>
+          <summary data-i18n="nc.usb.first"></summary>
+          <p data-i18n-html="nc.usb.linux.html"></p>
           <pre>echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-rkfpv.rules
 sudo udevadm control --reload-rules</pre>
-          <p><b>Windows:</b> the board's ADB interface needs the WinUSB driver (the Google USB driver, or Zadig
-            → WinUSB). If Connect says access is denied, install it and replug.</p>
+          <p data-i18n-html="nc.usb.windows.html"></p>
         </details>
       </div>
       <div id="ncHotspot" hidden>
-        <h2>Connect over the board's WiFi</h2>
+        <h2 data-i18n="nc.hs.title"></h2>
         <ol>
-          <li>Power the air unit with its WiFi card. After boot, <b>hold the BOOT button for about 2&nbsp;s</b>:
-            the card becomes a WiFi hotspot named <b>rkfpv-XXXX</b>.</li>
-          <li>Join that WiFi on this device. If the phone says it has no internet, choose
-            <b>stay connected</b> (or turn mobile data off).</li>
-          <li>Come back here and press <b>Connect</b>. Chrome asks to allow access to devices on the
-            <b>local network</b>: allow it.</li>
+          <li data-i18n-html="nc.hs.step1.html"></li>
+          <li data-i18n-html="nc.hs.step2.html"></li>
+          <li data-i18n-html="nc.hs.step3.html"></li>
         </ol>
-        <p class="muted">Settings, the live picture and recordings all work over the hotspot. Hold BOOT again to go
-          back to FPV. Install this page (browser menu → <b>Install app</b> / <b>Add to Home screen</b>) while you
-          have internet; it then opens without internet on the hotspot.</p>
+        <p class="muted" data-i18n-html="nc.hs.note.html"></p>
       </div>
     </div>
 
     <section id="tab-status" class="tab" hidden>
       <div class="grid">
-        <div class="box"><h3>Mode</h3><div class="big" id="stMode">–</div><div class="sub" id="stModeSub"></div></div>
-        <div class="box"><h3>Video stream</h3><div class="big" id="stStream">–</div><div class="sub" id="stStreamSub"></div></div>
-        <div class="box"><h3>Radio</h3><div class="big" id="stRadio">–</div><div class="sub" id="stRadioSub"></div></div>
-        <div class="box"><h3>Board</h3><div class="big" id="stBoard">–</div><div class="sub" id="stBoardSub"></div></div>
+        <div class="box"><h3 data-i18n="status.mode"></h3><div class="big" id="stMode">–</div><div class="sub" id="stModeSub"></div></div>
+        <div class="box"><h3 data-i18n="status.stream"></h3><div class="big" id="stStream">–</div><div class="sub" id="stStreamSub"></div></div>
+        <div class="box"><h3 data-i18n="status.radio"></h3><div class="big" id="stRadio">–</div><div class="sub" id="stRadioSub"></div></div>
+        <div class="box"><h3 data-i18n="status.board"></h3><div class="big" id="stBoard">–</div><div class="sub" id="stBoardSub"></div></div>
       </div>
       <div class="box">
-        <h3>Boot mode</h3>
-        <p class="muted">What the board does at power-up. <b>Auto</b>: debug mode (ADB) when a PC is on USB,
-          otherwise FPV.</p>
+        <h3 data-i18n="boot.title"></h3>
+        <p class="muted" data-i18n-html="boot.note.html"></p>
         <div class="seg" id="bootMode">
-          <button data-mode="auto">Auto</button>
-          <button data-mode="debug">Always debug</button>
-          <button data-mode="fpv">Always FPV</button>
+          <button data-mode="auto" data-i18n="boot.auto"></button>
+          <button data-mode="debug" data-i18n="boot.debug"></button>
+          <button data-mode="fpv" data-i18n="boot.fpv"></button>
         </div>
       </div>
       <div class="box">
-        <h3>WiFi hotspot</h3>
-        <p class="muted">Hold the board's <b>BOOT</b> button for about 2 s (after boot has finished) and the WiFi card
-          becomes an access point: join it, then change settings, watch the live picture and download recordings
-          without USB. Hold BOOT again to go back to FPV.</p>
+        <h3 data-i18n="hs.title"></h3>
+        <p class="muted" data-i18n-html="hs.note.html"></p>
         <div class="row" id="hsState"></div>
         <div id="hsSettings"></div>
       </div>
       <div class="box" id="installBox">
-        <h3>Board scripts</h3>
-        <p class="muted">Copy <code>fpv</code>, <code>S99fpv</code> and <code>wfb.sh</code> from this repo to the board
-          (until the next image is flashed).</p>
-        <button id="install">Install / update on board</button>
+        <h3 data-i18n="install.title"></h3>
+        <p class="muted" data-i18n-html="install.note.html"></p>
+        <button id="install" data-i18n="install.btn"></button>
       </div>
     </section>
 
@@ -182,7 +155,7 @@ sudo udevadm control --reload-rules</pre>
       <div class="row liveBar">
         <span id="liveInfo" class="sub"></span>
         <span class="spacer"></span>
-        <button id="liveFull" class="ghost">⛶ Full screen</button>
+        <button id="liveFull" class="ghost" data-i18n="live.full"></button>
       </div>
       <div id="liveMsg" class="sub"></div>
       <div id="liveControls"></div>
@@ -194,35 +167,31 @@ sudo udevadm control --reload-rules</pre>
 
     <section id="tab-image" class="tab" hidden>
       <div class="box note">
-        <h3>Image (ISP)</h3>
-        Changes apply live while the video runs. <b>iq</b> keeps the value from the IQ file. For FPV, the settings
-        that matter most are, in order: the <b>longest exposure</b> (motion blur), <b>temporal noise
-        reduction</b> (ghosting on fast moves), the <b>gain cap</b> (noise at night), and the AE delay
-        (bright to dark). Change one setting at a time and compare.
+        <h3 data-i18n="image.title"></h3>
+        <span data-i18n-html="image.note.html"></span>
       </div>
       <div id="imgPicture"></div>
       <div id="imgExposure"></div>
       <div id="imgNoise"></div>
       <div class="box">
-        <h3>IQ file (sensor tuning)</h3>
+        <h3 data-i18n="iq.title"></h3>
         <div class="row" id="iqState"></div>
-        <p class="sub">The stock files are never changed. Edits go to a copy in /userdata/iq; every replaced
-          version is kept, and a custom file that does not start falls back to stock automatically.</p>
+        <p class="sub" data-i18n="iq.note"></p>
         <div class="row">
-          <button id="iqUseStock">Use stock</button>
-          <button id="iqUseCustom">Use custom</button>
-          <button id="iqCopy" class="ghost">Copy stock to custom</button>
+          <button id="iqUseStock" data-i18n="iq.useStock"></button>
+          <button id="iqUseCustom" data-i18n="iq.useCustom"></button>
+          <button id="iqCopy" class="ghost" data-i18n="iq.copy"></button>
           <span class="spacer"></span>
-          <button id="iqUpload" class="primary">Upload edited JSON…</button>
+          <button id="iqUpload" class="primary" data-i18n="iq.upload"></button>
           <input type="file" id="iqFile" accept=".json,application/json" hidden>
         </div>
         <p id="iqHint" class="sub"></p>
         <table class="diff files">
-          <thead><tr><th>where</th><th>file</th><th>size</th><th></th></tr></thead>
+          <thead><tr><th data-i18n="iq.col.where"></th><th data-i18n="iq.col.file"></th><th data-i18n="iq.col.size"></th><th></th></tr></thead>
           <tbody id="iqFiles"></tbody>
         </table>
         <div id="iqHistBox" hidden>
-          <h4>Earlier versions of the custom file</h4>
+          <h4 data-i18n="iq.history"></h4>
           <table class="diff files"><tbody id="iqHistory"></tbody></table>
         </div>
       </div>
@@ -230,7 +199,7 @@ sudo udevadm control --reload-rules</pre>
 
     <section id="tab-dvr" class="tab" hidden>
       <div class="box dvrstate">
-        <h3>Recording</h3>
+        <h3 data-i18n="dvr.title"></h3>
         <div class="row">
           <span id="dvrBadge" class="recbadge">–</span>
           <div class="dvrinfo">
@@ -238,24 +207,24 @@ sudo udevadm control --reload-rules</pre>
             <div id="dvrSub" class="sub"></div>
           </div>
           <span class="spacer"></span>
-          <button id="dvrToggle" class="primary bigbtn">Start recording</button>
+          <button id="dvrToggle" class="primary bigbtn" data-i18n="dvr.start"></button>
         </div>
         <div class="space"><div id="dvrBar"></div></div>
         <div id="dvrSpace" class="sub"></div>
       </div>
       <div class="box">
-        <h3>Recordings on the card</h3>
+        <h3 data-i18n="dvr.files"></h3>
         <div class="row">
-          <button id="dvrRefresh" class="ghost">Refresh</button>
-          <button id="dvrAll">Download all</button>
-          <button id="dvrOpen" class="ghost">Open folder</button>
+          <button id="dvrRefresh" class="ghost" data-i18n="dvr.refresh"></button>
+          <button id="dvrAll" data-i18n="dvr.all"></button>
+          <button id="dvrOpen" class="ghost" data-i18n="dvr.open"></button>
           <span class="spacer"></span>
-          <button id="dvrDelAll" class="ghost danger">Delete all</button>
-          <button id="dvrFormat" class="ghost danger" hidden>Format card</button>
+          <button id="dvrDelAll" class="ghost danger" data-i18n="dvr.delAll"></button>
+          <button id="dvrFormat" class="ghost danger" data-i18n="dvr.format" hidden></button>
         </div>
         <p id="dvrHint" class="sub"></p>
         <table class="diff files">
-          <thead><tr><th>file</th><th>size</th><th></th></tr></thead>
+          <thead><tr><th data-i18n="dvr.col.file"></th><th data-i18n="dvr.col.size"></th><th></th></tr></thead>
           <tbody id="dvrFiles"></tbody>
         </table>
       </div>
@@ -264,36 +233,34 @@ sudo udevadm control --reload-rules</pre>
 
     <section id="tab-presets" class="tab" hidden>
       <div class="box">
-        <h3>Backup &amp; restore</h3>
-        <p class="muted">Save every setting to a file on this device, or load one back. Restoring shows what
-          would change first; nothing is written until you apply.</p>
+        <h3 data-i18n="backup.title"></h3>
+        <p class="muted" data-i18n="backup.note"></p>
         <div class="row">
-          <button id="backup" class="primary">Save backup</button>
-          <button id="restore">Restore from file…</button>
+          <button id="backup" class="primary" data-i18n="backup.save"></button>
+          <button id="restore" data-i18n="backup.restore"></button>
           <input type="file" id="restoreFile" accept=".json,application/json" hidden>
         </div>
       </div>
       <div class="box" id="diffBox" hidden>
         <h3 id="diffTitle"></h3>
         <p id="diffDesc" class="muted"></p>
-        <p id="diffEmpty" class="muted">Nothing to change: the board already has these values.</p>
+        <p id="diffEmpty" class="muted" data-i18n="diff.empty"></p>
         <table id="diffTable" class="diff">
-          <thead><tr><th></th><th>setting</th><th>board now</th><th></th><th>new</th><th></th></tr></thead>
+          <thead><tr><th></th><th data-i18n="diff.col.setting"></th><th data-i18n="diff.col.now"></th><th></th><th data-i18n="diff.col.new"></th><th></th></tr></thead>
           <tbody></tbody>
         </table>
         <p id="diffExtra" class="sub"></p>
         <div class="row">
-          <button id="diffAll" class="ghost">Tick all</button>
-          <button id="diffNone" class="ghost">Untick all</button>
+          <button id="diffAll" class="ghost" data-i18n="diff.all"></button>
+          <button id="diffNone" class="ghost" data-i18n="diff.none"></button>
           <span class="spacer"></span>
-          <button id="diffCancel" class="ghost">Cancel</button>
-          <button id="diffApply" class="primary">Apply</button>
+          <button id="diffCancel" class="ghost" data-i18n="diff.cancel"></button>
+          <button id="diffApply" class="primary" data-i18n="diff.apply"></button>
         </div>
       </div>
       <div class="box">
-        <h3>Presets</h3>
-        <p class="muted">Starting points for common setups. Link settings (channel, link ID) are never
-          in a preset; TX power only where the preset says so.</p>
+        <h3 data-i18n="presets.title"></h3>
+        <p class="muted" data-i18n="presets.note"></p>
         <div id="presetList" class="presets"></div>
       </div>
     </section>
@@ -302,13 +269,13 @@ sudo udevadm control --reload-rules</pre>
       <div class="box">
         <div class="row">
           <div class="seg" id="logSel">
-            <button data-log="rkfpv" class="on">rkfpv</button>
-            <button data-log="rkfpv-prev">rkfpv (previous boot)</button>
-            <button data-log="fpv">boot / fpv</button>
-            <button data-log="kernel">kernel</button>
+            <button data-log="rkfpv" class="on" data-i18n="logs.rkfpv"></button>
+            <button data-log="rkfpv-prev" data-i18n="logs.rkfpvPrev"></button>
+            <button data-log="fpv" data-i18n="logs.fpv"></button>
+            <button data-log="kernel" data-i18n="logs.kernel"></button>
           </div>
           <span class="spacer"></span>
-          <button id="logReload" class="ghost">Reload</button>
+          <button id="logReload" class="ghost" data-i18n="logs.reload"></button>
         </div>
         <pre id="logText" class="log"></pre>
       </div>
@@ -319,9 +286,8 @@ sudo udevadm control --reload-rules</pre>
         <pre id="cliOut" class="log"></pre>
         <form id="cliForm" class="row">
           <span class="prompt">#</span>
-          <input id="cliIn" autocomplete="off" autocapitalize="off" spellcheck="false"
-                 placeholder="fpv help · fpv get · fpv set bitrate 4000">
-          <button class="primary">Send</button>
+          <input id="cliIn" autocomplete="off" autocapitalize="off" spellcheck="false" data-i18n-placeholder="cli.placeholder">
+          <button class="primary" data-i18n="cli.send"></button>
         </form>
       </div>
     </section>
@@ -331,11 +297,11 @@ sudo udevadm control --reload-rules</pre>
 <footer id="saveBar" hidden>
   <span id="saveInfo"></span>
   <span class="spacer"></span>
-  <button id="revert" class="ghost">Revert</button>
-  <button id="save" class="primary">Save</button>
+  <button id="revert" class="ghost" data-i18n="save.revert"></button>
+  <button id="save" class="primary" data-i18n="save.save"></button>
 </footer>
 
 <div id="toast" hidden></div>
-<script type="module" src="app.js?v=08b85a123335"></script>
+<script type="module" src="app.js?v=fdf5e03f17f4"></script>
 </body>
 </html>

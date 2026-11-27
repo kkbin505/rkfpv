@@ -4,13 +4,14 @@
 //
 // The deploy build (configurator/build_site.py) puts the commit in the cache name, so every deploy
 // gets a new cache and old ones are dropped.
-const CACHE = "rkfpv-08b85a123335";
+const CACHE = "rkfpv-fdf5e03f17f4";
 // The deploy workflow replaces the list with every file of the site (the
 // vendored ADB modules too); this one is what a plain copy of web/ needs.
 const FILES = [
   "./",
   "app.js",
   "board.js",
+  "i18n.js",
   "index.html",
   "manifest.webmanifest",
   "md5.js",
@@ -156,6 +157,8 @@ const FILES = [
   "vendor/@yume-chan/struct/esm/field/index.js",
   "vendor/@yume-chan/struct/esm/field/serialize.js",
   "vendor/@yume-chan/struct/esm/field/types.js",
+  "i18n/en.json",
+  "i18n/zh.json",
 ];
 
 self.addEventListener("install", (e) => {

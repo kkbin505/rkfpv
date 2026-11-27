@@ -22,6 +22,7 @@
 
 import * as usb from "./usb.js";
 import { md5 } from "./md5.js";
+import { t } from "./i18n.js";
 
 const TOKEN = window.FPV_TOKEN;
 export const hosted = !(TOKEN && TOKEN !== "__TOKEN__");
@@ -37,9 +38,9 @@ export let kind = hosted ? (usb.supported() ? "usb" : "hotspot") : "local";
 export let caps = CAPS[kind];
 
 // hosted page: "usb" or "hotspot"
-export function setTransport(t) {
+export function setTransport(tr) {
   if (!hosted) return;
-  kind = t === "usb" ? "usb" : "hotspot";
+  kind = tr === "usb" ? "usb" : "hotspot";
   caps = CAPS[kind];
 }
 export const usbSupported = usb.supported;
@@ -70,14 +71,13 @@ const CONFIRM = { "X-FPV-Confirm": "1" };
 function netError(e) {
   return {
     ok: false, transport_error: true,
-    error: `board not reachable at ${boardUrl()} (${e.message || e}). ` +
-      "Is this device on the board's WiFi hotspot, and was the local-network permission allowed?",
+    error: t("err.netUnreachable", { url: boardUrl(), e: e.message || e }),
   };
 }
 
 // POST to the PC configurator server (local backend only)
 export async function post(path, body) {
-  if (kind !== "local") return { ok: false, error: "needs the PC configurator (ADB)" };
+  if (kind !== "local") return { ok: false, error: t("err.needsPc") };
   const r = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Token": TOKEN },
@@ -96,7 +96,7 @@ export const usbDeviceName = usb.deviceName;
 export function onUsbGone(fn) { usb.onDisconnected(fn); }
 
 function usbError(e) {
-  return { ok: false, transport_error: true, error: usb.explain(e) || `USB: ${e?.message || e}` };
+  return { ok: false, transport_error: true, error: usb.explain(e) || t("err.usb", { e: e?.message || e }) };
 }
 
 // same quoting as Python's shlex.quote
@@ -113,7 +113,7 @@ async function usbFpv(args) {
   }
   const text = r.out.trim();
   if (/not found/.test(text) && !text.startsWith("{")) {
-    return { ok: false, error: "fpv is not installed on the board", missing_fpv: true };
+    return { ok: false, error: t("err.noFpv"), missing_fpv: true };
   }
   for (const line of text.split("\n").reverse()) {
     const l = line.trim();
@@ -153,7 +153,7 @@ export async function cli(line) {
   }
   const words = line.trim().split(/\s+/);
   if (words[0] !== "fpv" || words.length < 2) {
-    return { ok: true, output: "over the hotspot only `fpv <command>` works, e.g. fpv get" };
+    return { ok: true, output: t("cli.hotspotOnly") };
   }
   const r = await fpv(...words.slice(1).filter((w) => w !== "--json"));
   if (r.ok && "text" in r) return { ok: true, output: r.text.replace(/\n$/, "") };
@@ -241,7 +241,7 @@ const DEFAULT_FILES = ["rkfpv.conf", "wfb.yaml"];   // only if the image did not
 
 async function boardFile(name) {
   const r = await fetch(`board-files/${name}`, { cache: "no-cache" });
-  if (!r.ok) throw new Error(`board-files/${name}: HTTP ${r.status} (this site has no copy of the board scripts)`);
+  if (!r.ok) throw new Error(t("err.boardFile", { name, status: r.status }));
   // LF only: the board's shell cannot run a script with CR in it
   return new TextEncoder().encode((await r.text()).replace(/\r\n/g, "\n"));
 }
@@ -280,7 +280,7 @@ export async function iqPull(name, where) {
     if (r.ok) r.bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
     return r;
   }
-  if (!IQ_NAME.test(name) || !["stock", "custom"].includes(where)) return { ok: false, error: `bad IQ file: ${name}` };
+  if (!IQ_NAME.test(name) || !["stock", "custom"].includes(where)) return { ok: false, error: t("err.iqBad", { name }) };
   try {
     const bytes = await usb.pull(`${where === "stock" ? IQ_STOCK_DIR : IQ_CUSTOM_DIR}/${name}`);
     return { ok: true, name, size: bytes.length, bytes };
@@ -298,24 +298,23 @@ export async function iqPush(name, bytes) {
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return post("/api/iq/push", { name, data: btoa(bin) });
   }
-  if (!IQ_NAME.test(name)) return { ok: false, error: `not an IQ file name: ${name}` };
+  if (!IQ_NAME.test(name)) return { ok: false, error: t("err.iqName", { name }) };
   if (bytes.length < 1000 || bytes.length > IQ_MAX) {
-    return { ok: false, error: `${name}: ${bytes.length} bytes is not a plausible IQ file` };
+    return { ok: false, error: t("err.iqSize", { name, n: bytes.length }) };
   }
   let doc;
   try {
     doc = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, ""));
   } catch (e) {
-    return { ok: false, error: `${name} is not valid JSON: ${e.message}` };
+    return { ok: false, error: t("err.iqJson", { name, e: e.message }) };
   }
   const missing = IQ_KEYS.filter((k) => !doc || typeof doc !== "object" || !(k in doc));
-  if (missing.length) return { ok: false, error: `${name} is missing ${missing.join(", ")}: not an rkaiq IQ file` };
+  if (missing.length) return { ok: false, error: t("err.iqKeys", { name, keys: missing.join(", ") }) };
   const st = await fpv("iq", "list");
   if (!st.ok) return st;
   const stock = (st.stock || []).map((f) => f.name);
   if (!stock.includes(name)) {
-    return { ok: false, error: `${name} does not match a stock IQ file name; rkaiq picks the file by name ` +
-      `(stock: ${stock.join(", ")})` };
+    return { ok: false, error: t("err.iqStock", { name, stock: stock.join(", ") }) };
   }
   try {
     await usb.shell(`mkdir -p ${IQ_CUSTOM_DIR}`);
@@ -341,7 +340,7 @@ export async function pickDvrFolder() {
 // (Android) get an in-memory download instead.
 export async function dvrSave(name, { folder = null, onBytes = () => {} } = {}) {
   if (kind !== "usb") return post("/api/dvr/pull", { name });
-  if (!/^[A-Za-z0-9_.-]+$/.test(name)) return { ok: false, error: `not a recording name: ${name}` };
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) return { ok: false, error: t("err.recName", { name }) };
   const t0 = performance.now();
   try {
     let handle = null;
@@ -350,7 +349,7 @@ export async function dvrSave(name, { folder = null, onBytes = () => {} } = {}) 
       try {
         handle = await window.showSaveFilePicker({ id: "rkfpv-dvr", suggestedName: name });
       } catch (e) {
-        if (e.name === "AbortError") return { ok: false, cancelled: true, error: "cancelled" };
+        if (e.name === "AbortError") return { ok: false, cancelled: true, error: t("err.cancelled") };
         throw e;
       }
     }
@@ -368,7 +367,7 @@ export async function dvrSave(name, { folder = null, onBytes = () => {} } = {}) 
     }
     const secs = Math.max((performance.now() - t0) / 1000, 0.001);
     return { ok: true, size, seconds: +secs.toFixed(1), mbps: +(size / secs / 1e6).toFixed(1),
-      path: handle ? (folder ? `${folder.name}/${name}` : name) : "browser downloads" };
+      path: handle ? (folder ? `${folder.name}/${name}` : name) : t("dvr.browserDownloads") };
   } catch (e) {
     return { ok: false, error: usb.explain(e) || String(e?.message || e) };
   }

@@ -9,6 +9,7 @@
 import { Adb, AdbDaemonTransport } from "@yume-chan/adb";
 import { AdbDaemonWebUsbDeviceManager } from "@yume-chan/adb-daemon-webusb";
 import AdbWebCredentialStore from "@yume-chan/adb-credential-web";
+import { t } from "./i18n.js";
 
 const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
 const credentials = new AdbWebCredentialStore("rkfpv");
@@ -28,28 +29,26 @@ export function explain(e) {
   const name = e?.name || "";
   const text = String(e?.message || e);
   if (e?.constructor?.name === "DeviceBusyError" || /already in use/i.test(text) || name === "NetworkError") {
-    return "The board is in use by another program. If adb runs on this PC, run `adb kill-server` " +
-      "and close the PC configurator, Android Studio or scrcpy, then press Connect again.";
+    return t("usb.busy");
   }
   if (name === "SecurityError" || /access denied/i.test(text)) {
     const ua = navigator.userAgent;
     if (/Windows/.test(ua)) {
-      return "Windows does not let the browser open this device: the board's ADB interface needs the WinUSB " +
-        "driver (Google USB driver or Zadig). Replug the board after installing it.";
+      return t("usb.windows");
     }
     if (/Linux/.test(ua) && !/Android/.test(ua)) {
-      return "No permission for the USB device. Run once, then replug the board:\n" +
+      return t("usb.linux") + "\n" +
         "echo 'SUBSYSTEM==\"usb\", ATTR{idVendor}==\"2207\", TAG+=\"uaccess\"' | " +
         "sudo tee /etc/udev/rules.d/70-rkfpv.rules && sudo udevadm control --reload-rules";
     }
-    return "The browser has no permission for this device. Replug the board and try again.";
+    return t("usb.noPermission");
   }
   return null;
 }
 
 // Opens the browser's device chooser. Must run from a click.
 export async function connect() {
-  if (!supported()) throw new Error("this browser has no WebUSB (use Chrome or Edge)");
+  if (!supported()) throw new Error(t("usb.unsupported"));
   const device = await manager.requestDevice();
   if (!device) return false;                         // chooser cancelled
   const connection = await device.connect();
@@ -76,7 +75,7 @@ export async function disconnect() {
 }
 
 function need() {
-  if (!adb) throw new Error("board not connected (USB)");
+  if (!adb) throw new Error(t("usb.notConnected"));
   return adb;
 }
 
