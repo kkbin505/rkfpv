@@ -132,6 +132,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     private var connecting = false
     private val downloadJobs = mutableMapOf<String, Job>()
     private var player: PreviewPlayer? = null
+    private var playerSurface: Surface? = null
     private var previewPort = 5602
 
     val dvrDir: File
@@ -455,7 +456,9 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     /** A preview surface appeared: decode the board's stream onto it. */
     fun startPreview(surface: Surface) {
         val b = board ?: return
-        stopPreview()
+        // a player on another surface (switching to / from full screen): release
+        // its decoder before that surface goes away
+        stopPreview(wait = true)
         val (w, h) = (_state.value.values["size"] ?: "").split("x").mapNotNull { it.toIntOrNull() }
             .takeIf { it.size == 2 } ?: listOf(1280, 720)
         _state.update { it.copy(preview = PreviewState.Waiting) }
@@ -466,6 +469,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         }
         self = p
         player = p
+        playerSurface = surface
         p.start()
     }
 
@@ -473,9 +477,12 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
      * [wait] = true when the surface is about to go away: the decoder must be
      * released first (stop() joins its thread, normally a few ms).
      */
-    fun stopPreview(wait: Boolean = false) {
+    fun stopPreview(wait: Boolean = false, surface: Surface? = null) {
+        // [surface] going away is not the one playing: the new view's surface came first
+        if (surface != null && surface !== playerSurface) return
         val p = player ?: return
         player = null
+        playerSurface = null
         if (wait) p.stop() else Thread { p.stop() }.start()
         _state.update { it.copy(preview = null) }
     }

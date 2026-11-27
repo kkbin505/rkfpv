@@ -102,4 +102,7 @@
     <string name="video_stopped_hotspot">关闭（热点模式）</string>
     <string name="rec_hint_hotspot">热点模式下不录像：WiFi 网卡正在当热点。</string>
     <string name="saved_hotspot_mode">FPV 没有运行（热点模式）：下次 FPV 启动时生效。</string>
+    <string name="fullscreen">全屏</string>
+    <string name="exit_fullscreen">退出全屏</string>
+    <string name="fullscreen_hint">把手机横过来，或点画面下方的全屏按钮，就会全屏。全屏时点一下画面显示控制按钮，按返回键退出全屏。</string>
 </resources>

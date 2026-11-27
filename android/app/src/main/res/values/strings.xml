@@ -103,4 +103,7 @@
     <string name="video_stopped_hotspot">Off (hotspot mode)</string>
     <string name="rec_hint_hotspot">Hotspot mode never records: the WiFi card is busy being the access point.</string>
     <string name="saved_hotspot_mode">FPV is off (hotspot mode): used at the next FPV start.</string>
+    <string name="fullscreen">Full screen</string>
+    <string name="exit_fullscreen">Exit full screen</string>
+    <string name="fullscreen_hint">Turn the phone sideways, or tap the full screen button under the picture. In full screen, tap the picture for the controls; Back leaves it.</string>
 </resources>
