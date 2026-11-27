@@ -154,6 +154,7 @@ host 模式下 RTL8812AU 的 5V 取自板子 USB-C 的 VBUS，板上没有开关
 | `files/fpv` | 板子上的设置命令（get / set / status …） |
 | `configurator/` | 电脑上的配置界面 |
 | `test/` | 主机端单元测试；`send_file` 用来和 GStreamer 做端到端测试 |
+| `rk356x/imx462/` | Radxa ZERO 3W（RK3566）上 IMX462 摄像头的内核驱动和 overlay，GPL-2.0，见其中的 README |
 
 ## 画质（ISP）和 IQ 文件
 
@@ -225,6 +226,6 @@ H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEV
 
 ## 许可证
 
-本仓库自己的代码使用 [MIT](LICENSE) 许可证。从第三方项目改编的文件、第三方补丁、构建时下载的组件，以及各自的许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库自己的代码使用 [MIT](LICENSE) 许可证；`rk356x/imx462/` 目录例外，是 GPL-2.0（内核驱动，从 GPL 代码改编）。从第三方项目改编的文件、第三方补丁、构建时下载的组件，以及各自的许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 如果要分发编译好的固件镜像，注意镜像里包含 GPL 软件（内核、网卡驱动、wfb-ng），必须同时提供对应的源码，详见 THIRD_PARTY_NOTICES.md。

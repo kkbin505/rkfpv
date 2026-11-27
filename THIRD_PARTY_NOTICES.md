@@ -57,6 +57,15 @@ Each patch file is a derivative of the project it patches and stays under that p
 | `luckfox/patches/rtl88x2eu/` | libc0607/rtl88x2eu-20230815 (RTL8812EU driver) | GPL-2.0 |
 | `luckfox/patches/buildroot/libffi/` | libffi 3.4.4 (host build fix for GCC 14) | MIT (libffi) |
 
+### RK3566 camera support: `rk356x/imx462/` (GPL-2.0)
+Everything under `rk356x/imx462/` is under **GPL-2.0**, not MIT. It has its own `LICENSE` file. It is built only for Radxa ZERO 3 boards, as a separate kernel module and overlay, and rkfpv's own programs don't link against it.
+
+| File | Derived from | License |
+|---|---|---|
+| `imx462.c` | Rockchip's `drivers/media/i2c/imx327.c` (Copyright (C) 2020 Rockchip Electronics Co., Ltd.) and the mainline Linux `drivers/media/i2c/imx290.c` (Copyright (C) 2019 FRAMOS GmbH, Copyright (C) 2019 Linaro Ltd.; IMX462 settings from Raspberry Pi) | GPL-2.0 |
+| `radxa-zero3-imx462.dts` | `radxa-zero3-rpi-camera-v2.dts` from radxa-pkg/radxa-overlays | GPL-2.0 |
+| `Makefile`, `install.sh`, `check.sh`, `README.md` | written for rkfpv, GPL-2.0 like the rest of the folder | GPL-2.0 |
+
 ## Downloaded at build time (not in this repository)
 `luckfox/build-deps.sh` and `gs/build.sh` fetch these at pinned revisions and build them. They are separate programs and kernel modules: rkfpv talks to wfb-ng over UDP and does not link against any of them.
 
