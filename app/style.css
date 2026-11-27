@@ -1,22 +1,32 @@
+/* light: the configurator app's warm off-white (web/style.css), no pure white */
 :root {
-  --bg: #faf7f2;
-  --surface: #ffffff;
-  --text: #1d1b19;
-  --muted: #5c5752;
-  --line: #e7e1d8;
+  color-scheme: light;
+  --bg: #f5f3ee;
+  --surface: #faf8f4;
+  --text: #26231f;
+  --muted: #77716a;
+  --line: #e2ddd3;
   --accent: #f54700;
-  --accent-soft: #fff0e8;
-  --code-bg: #f3efe8;
-  --warn-bg: #fff6e5;
-  --warn: #8a5300;
-  --info-bg: #eef5ff;
+  --accent-soft: #fde9df;
+  --code-bg: #eeebe4;
+  --warn-bg: #fbf0dc;
+  --warn: #b77900;
+  --info-bg: #e9eff7;
 }
+/* dark: follows the system unless the toggle picked light; or picked dark */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #161412; --surface: #1f1c19; --text: #f2eee9; --muted: #b3aca4; --line: #34302b;
     --accent: #ff6a2b; --accent-soft: #2b1d15; --code-bg: #26221e;
     --warn-bg: #2b2213; --warn: #e2a64a; --info-bg: #17212e;
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161412; --surface: #1f1c19; --text: #f2eee9; --muted: #b3aca4; --line: #34302b;
+  --accent: #ff6a2b; --accent-soft: #2b1d15; --code-bg: #26221e;
+  --warn-bg: #2b2213; --warn: #e2a64a; --info-bg: #17212e;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -72,3 +82,9 @@ pre { background: var(--code-bg); border-radius: 6px; padding: 10px 12px; overfl
 }
 .out { min-height: 60px; max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
 .log { max-height: 180px; color: var(--muted); }
+
+.theme {
+  font: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 6px 9px; border-radius: 7px;
+  border: 1px solid var(--line); background: transparent; color: var(--text);
+}
+.theme:hover { border-color: var(--accent); }

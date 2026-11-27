@@ -6,6 +6,10 @@
 <title>rkfpv 设置器</title>
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<script>
+  // saved light/dark choice, set before first paint (no flash); none = follow the system
+  try { const t = localStorage.getItem("rkfpv-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
 <!-- Tango ADB (MIT), vendored in ./vendor: no CDN, no build step. Versions in vendor/VERSIONS. -->
 <script type="importmap">
 {
@@ -29,6 +33,7 @@
   <span class="sub">设置器 · 网页版（原型）</span>
   <div class="spacer"></div>
   <span id="devName" class="dev"></span>
+  <button id="btnTheme" class="theme" type="button" title="浅色 / 深色"></button>
   <button id="btnConnect" class="btn">连接板子</button>
   <button id="btnDisconnect" class="btn ghost" hidden>断开</button>
 </header>

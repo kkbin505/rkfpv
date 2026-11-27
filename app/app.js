@@ -203,6 +203,33 @@ async function runCli(ev) {
   $("#cliOut").scrollTop = $("#cliOut").scrollHeight;
 }
 
+// ---------------------------------------------------------------- theme
+// Toggle between light and dark; the first visit follows the system.
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function isDark() {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === "dark" : darkQuery.matches;
+}
+
+function showThemeButton() {
+  const b = $("#btnTheme");
+  b.textContent = isDark() ? "☀" : "☾";
+  b.title = isDark() ? "切换到浅色" : "切换到深色";
+}
+
+function toggleTheme() {
+  const t = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("rkfpv-theme", t); } catch {}
+  showThemeButton();
+}
+
+$("#btnTheme").addEventListener("click", toggleTheme);
+darkQuery.addEventListener("change", showThemeButton);
+showThemeButton();
+
 // ---------------------------------------------------------------- start
 
 if (!manager || !window.isSecureContext) {
