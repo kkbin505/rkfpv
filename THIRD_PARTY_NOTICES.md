@@ -58,6 +58,16 @@ a trademark of Bitstream, Inc. DejaVu changes are in public domain.
 
 The Bitstream Vera license allows the font to be redistributed bundled with software, provided this copyright and permission notice is included. Full text: https://dejavu-fonts.github.io/License.html
 
+### Tango ADB (ya-webadb): `web/vendor/@yume-chan/`
+
+The web configurator talks ADB over WebUSB with these packages, copied
+unmodified from npm (versions in `web/vendor/VERSIONS`):
+
+- `@yume-chan/adb`, `adb-daemon-webusb`, `adb-credential-web`, `async`,
+  `event`, `no-data-view`, `stream-extra`, `struct`
+- Source: https://github.com/yume-chan/ya-webadb
+- License: MIT. Each package's `LICENSE` file is next to it in `web/vendor/`.
+
 ### Patches in `luckfox/patches/`
 Each patch file is a derivative of the project it patches and stays under that project's license:
 

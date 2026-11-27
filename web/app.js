@@ -1,7 +1,7 @@
 // rkfpv configurator UI, one page for the PC (wide layout) and phones
 // (portrait). Every board action is an `fpv ... --json` call; board.js
-// sends it through the PC configurator (rkfpvconf.py) or straight to the
-// board over its WiFi hotspot.
+// sends it through the PC configurator (rkfpvconf.py), straight to the
+// board over its WiFi hotspot, or over USB from the browser (WebUSB).
 import * as board from "./board.js";
 import { Preview } from "./preview.js";
 
@@ -38,7 +38,7 @@ const APPLY_TAG = {
 
 function conn() {
   return {
-    transport: board.kind === "hotspot" ? "hotspot" : $("#transport").value,
+    transport: $("#transport").value,
     device: $("#device").value,
     host: $("#host").value.trim(),
   };
@@ -47,8 +47,8 @@ board.setConnection(conn);
 
 const post = board.post;
 const fpv = board.fpv;
-// wired preview through the PC configurator needs ADB; on the hotspot it always works
-const previewPossible = () => board.kind === "hotspot" || conn().transport === "adb";
+// wired preview through the PC configurator needs ADB; on the hotspot and over WebUSB it always works
+const previewPossible = () => board.kind !== "local" || conn().transport === "adb";
 
 // ---------------------------------------------------------------- ui helpers
 
@@ -124,11 +124,20 @@ async function connect() {
   $("#connect").disabled = true;
   $("#connect").textContent = "Connecting…";
   try {
+    if (board.kind === "usb" && !board.usbConnected()) {
+      // the browser's device chooser: has to start from this click
+      try {
+        if (!(await board.usbConnect())) return;          // chooser cancelled
+      } catch (e) {
+        toast(board.usbExplain(e) || `USB: ${e.message || e}`, "err");
+        return;
+      }
+    }
     const r = await fpv("schema");
     if (!r.ok) {
       if (r.missing_fpv && board.caps.install) {
         toast("fpv is not on the board yet.", "err", [["Install it now", async () => {
-          const i = await post("/api/install", {});
+          const i = await board.install();
           i.ok ? (toast("Installed: " + i.installed.join(", "), "ok"), connect()) : toast(i.error, "err");
         }]]);
       } else toast(r.error, "err");
@@ -151,12 +160,19 @@ async function connect() {
     toast((board.kind === "local" ? "Configurator server not reachable: " : "Board not reachable: ") + e, "err");
   } finally {
     $("#connect").disabled = false;
-    if (!state.connected) $("#connect").textContent = "Connect";
+    if (!state.connected) {
+      $("#connect").textContent = "Connect";
+      // free the device for adb / another tab when the board did not answer
+      if (board.kind === "usb") board.usbDisconnect();
+    }
   }
 }
 
 function disconnect() {
-  if (pv.on) previewStop();
+  // over USB: stop the preview on the board, then let go of the device
+  if (board.kind === "usb" && board.usbConnected()) {
+    (pv.on ? previewStop() : Promise.resolve()).finally(() => board.usbDisconnect());
+  } else if (pv.on) previewStop();
   $("#previewBtn").disabled = true;
   state.connected = false;
   clearInterval(state.pollTimer);
@@ -536,7 +552,7 @@ async function loadIq() {
   $("#iqUseStock").disabled = !custom;
   $("#iqUseCustom").disabled = custom || !r.custom.length;
 
-  const adb = board.caps.iqFiles && conn().transport === "adb";
+  const adb = board.caps.iqFiles && (board.kind === "usb" || conn().transport === "adb");
   const tb = $("#iqFiles");
   tb.innerHTML = "";
   const rows = [...r.custom.map((f) => ({ ...f, where: "custom" })), ...r.stock.map((f) => ({ ...f, where: "stock" }))];
@@ -556,7 +572,7 @@ async function loadIq() {
   }
   $("#iqHint").textContent = adb ? "" : board.kind === "local"
     ? "Download and upload need the ADB (USB) connection."
-    : "Download and upload of IQ files need the PC configurator (board on USB).";
+    : "Download and upload of IQ files need the board on USB (pick USB above).";
   $("#iqUpload").disabled = !adb;
 
   const hb = $("#iqHistory");
@@ -594,11 +610,10 @@ async function useIq(dir) {
 }
 
 async function iqDownload(name, where) {
-  const r = await post("/api/iq/pull", { name, where });
+  const r = await board.iqPull(name, where);
   if (!r.ok) return toast(r.error, "err");
-  const bytes = Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0));
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/json" }));
+  a.href = URL.createObjectURL(new Blob([r.bytes], { type: "application/json" }));
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -606,10 +621,8 @@ async function iqDownload(name, where) {
 
 async function iqUpload(file) {
   const buf = new Uint8Array(await file.arrayBuffer());
-  let bin = "";
-  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   toast(`Checking and uploading ${file.name}…`);
-  const r = await post("/api/iq/push", { name: file.name, data: btoa(bin) });
+  const r = await board.iqPush(file.name, buf);
   if (!r.ok) return toast(r.error, "err");
   const custom = iqInfo && iqInfo.configured === IQ_CUSTOM;
   toast(`${file.name} installed in ${IQ_CUSTOM} (md5 verified; the previous version is in history).` +
@@ -667,9 +680,10 @@ async function loadDvrFiles() {
   if (!r.ok) { $("#dvrHint").textContent = r.error; dvrFiles = []; return; }
   dvrFiles = r.files;
   const direct = board.kind === "hotspot";
-  const adb = direct || ["adb", "hotspot"].includes(conn().transport);
+  const adb = direct || board.kind === "usb" || ["adb", "hotspot"].includes(conn().transport);
   $("#dvrHint").textContent = !r.files.length ? "No recordings on the card."
     : direct ? "Download saves the file with the browser; Play opens it in a new tab."
+    : board.kind === "usb" ? "Download asks where to save the file and copies it over USB."
     : adb ? `Files are saved on this PC in the folder 'Open folder' shows.`
     : "Downloading needs the ADB (USB) or WiFi hotspot connection.";
   for (const f of r.files) {
@@ -703,7 +717,7 @@ async function loadDvrFiles() {
   }
 }
 
-async function pull(name, btn) {
+async function pull(name, btn, folder = null) {
   if (board.kind === "hotspot") {
     // the board sends it as an attachment: the browser saves it, the page stays
     const a = document.createElement("a");
@@ -717,19 +731,29 @@ async function pull(name, btn) {
   }
   const old = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "downloading…"; }
-  const r = await post("/api/dvr/pull", { name });
+  const total = (dvrFiles.find((f) => f.name === name) || {}).size || 0;
+  const onBytes = (n) => {
+    if (btn && total) btn.textContent = `${Math.floor(100 * n / total)} %`;
+  };
+  const r = await board.dvrSave(name, { folder, onBytes });
   if (btn) { btn.disabled = false; btn.textContent = old; }
+  if (r.cancelled) return false;
   if (!r.ok) { toast(r.error, "err"); return false; }
   toast(`${name}: ${fmtMB(r.size)} in ${r.seconds} s (${r.mbps} MB/s)\n${r.path}`, "ok",
-        [["Open folder", () => post("/api/dvr/open", {})]]);
+        board.caps.savesOnPc ? [["Open folder", () => post("/api/dvr/open", {})]] : []);
   return true;
 }
 
 async function pullAll() {
   const todo = dvrFiles.filter((f) => !f.recording);
+  // over USB: one folder for all of them (asked once) instead of a dialog per file
+  let folder = null;
+  if (todo.length && board.kind === "usb") {
+    try { folder = await board.pickDvrFolder(); } catch (e) { if (e.name === "AbortError") return; toast(String(e), "err"); return; }
+  }
   for (let i = 0; i < todo.length; i++) {
     toast(`Downloading ${i + 1}/${todo.length}: ${todo[i].name}…`);
-    if (!(await pull(todo[i].name, null))) return;
+    if (!(await pull(todo[i].name, null, folder))) return;
   }
   if (todo.length) toast(`Downloaded ${todo.length} recording(s)`, "ok",
     board.caps.savesOnPc ? [["Open folder", () => post("/api/dvr/open", {})]] : []);
@@ -949,7 +973,7 @@ async function previewStop() {
   const r = await pv.stop();
   $("#previewBtn").classList.remove("on");
   placeCanvas();
-  if (r && !r.ok) toast(r.error, "err");
+  if (r && !r.ok && state.connected) toast(r.error, "err");
   if (state.connected) refreshStatus();
 }
 
@@ -974,6 +998,7 @@ function liveFullscreen() {
 const DEFAULT_HOST = { fpvd: "172.32.0.93", ssh: "10.5.0.10", hotspot: "10.0.0.1" };
 $("#transport").onchange = () => {
   const t = $("#transport").value;
+  if (board.hosted) return hostedTransport(t);
   const net = t !== "adb";
   $("#host").hidden = !net;
   $("#device").hidden = net;
@@ -989,7 +1014,7 @@ $("#connect").onclick = connect;
 $$("#tabs a").forEach((a) => (a.onclick = () => showTab(a.dataset.tab)));
 $$("#bootMode button").forEach((b) => (b.onclick = () => setBootMode(b.dataset.mode)));
 $("#install").onclick = async () => {
-  const r = await post("/api/install", {});
+  const r = await board.install();
   r.ok ? toast("Installed: " + r.installed.join(", "), "ok") : toast(r.error, "err");
 };
 $$("#logSel button").forEach((b) => (b.onclick = () => {
@@ -1043,26 +1068,53 @@ window.onbeforeunload = () => (Object.keys(state.edits).length ? "unsaved change
 $("#liveFull").onclick = liveFullscreen;
 $("#liveStage").ondblclick = liveFullscreen;
 
-// hosted page on the board's hotspot: no transports, no PC-only tools
-if (board.kind === "hotspot") {
+// hosted page: USB (WebUSB) or the board's hotspot; no PC-only tools
+function hostedTransport(t) {
+  if (state.connected) disconnect();
+  board.setTransport(t);
+  try { localStorage.setItem("rkfpv.transport", t); } catch (e) { /* private mode */ }
+  const usb = board.kind === "usb";
+  $("#host").hidden = usb;
+  $("#ncUsb").hidden = !usb;
+  $("#ncHotspot").hidden = usb;
+  $("#browserNote").hidden = board.hotspotSupported();
+  $("#browserNote").innerHTML = usb ? $("#usbNoteText").innerHTML : $("#hotspotNoteText").innerHTML;
+  $("#installBox").hidden = !board.caps.install;
+  $("#dvrOpen").hidden = !board.caps.savesOnPc;
+}
+
+if (board.hosted) {
   document.body.classList.add("hosted");
-  $("#transport").hidden = $("#device").hidden = $("#refresh").hidden = true;
-  $("#host").hidden = false;
+  $("#device").hidden = $("#refresh").hidden = true;
+  for (const o of [...$("#transport").options]) if (!["usb", "hotspot"].includes(o.value)) o.remove();
   try { $("#host").value = localStorage.getItem("rkfpv.host") || "10.0.0.1"; } catch (e) { $("#host").value = "10.0.0.1"; }
   $("#host").onchange = () => { try { localStorage.setItem("rkfpv.host", $("#host").value.trim()); } catch (e) { /* private mode */ } };
   $("#ncLocal").hidden = true;
-  $("#ncHotspot").hidden = false;
-  $("#browserNote").hidden = board.hotspotSupported();
+  let t = board.kind;
+  try { t = localStorage.getItem("rkfpv.transport") || t; } catch (e) { /* private mode */ }
+  if (t === "usb" && !board.usbSupported()) t = "hotspot";
+  $("#transport").value = t;
+  hostedTransport(t);
+  // unplugged, or the board rebooted
+  board.onUsbGone(() => {
+    if (!state.connected) return;
+    disconnect();
+    toast("The board went away on USB (unplugged or rebooted). Press Connect again.", "err");
+  });
   // a phone puts the page in the background: free the board's encoder for nobody
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && pv.on) previewStop();
   });
-  window.addEventListener("pagehide", () => { if (pv.on) board.previewStop(); });
+  window.addEventListener("pagehide", () => {
+    if (pv.on) board.previewStop();
+    if (board.kind === "usb") board.usbDisconnect();
+  });
   // offline copy for use on the hotspot (no internet there)
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 }
+if (!board.hosted) $("#transport").querySelector('option[value="usb"]').remove();   // the PC server has its own ADB
 $("#installBox").hidden = !board.caps.install;
 $("#dvrOpen").hidden = !board.caps.savesOnPc;
 

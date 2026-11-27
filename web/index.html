@@ -9,14 +9,30 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
-<!-- rkfpvconf.py fills in the token; with the placeholder left in, this is the hosted (hotspot) page -->
+<!-- rkfpvconf.py fills in the token; with the placeholder left in, this is the hosted page (USB or hotspot) -->
 <script>window.FPV_TOKEN = "__TOKEN__";</script>
+<!-- Tango ADB (MIT) for WebUSB, vendored in ./vendor: no CDN, no build step. Versions in vendor/VERSIONS. -->
+<script type="importmap">
+{
+  "imports": {
+    "@yume-chan/adb": "./vendor/@yume-chan/adb/esm/index.js",
+    "@yume-chan/adb-daemon-webusb": "./vendor/@yume-chan/adb-daemon-webusb/esm/index.js",
+    "@yume-chan/adb-credential-web": "./vendor/@yume-chan/adb-credential-web/esm/index.js",
+    "@yume-chan/async": "./vendor/@yume-chan/async/esm/index.js",
+    "@yume-chan/event": "./vendor/@yume-chan/event/esm/index.js",
+    "@yume-chan/no-data-view": "./vendor/@yume-chan/no-data-view/esm/index.js",
+    "@yume-chan/stream-extra": "./vendor/@yume-chan/stream-extra/esm/index.js",
+    "@yume-chan/struct": "./vendor/@yume-chan/struct/esm/index.js"
+  }
+}
+</script>
 </head>
 <body>
 <header class="top">
   <div class="brand">rk<b>fpv</b> <span>configurator</span></div>
   <div class="conn">
     <select id="transport" title="How to reach the board">
+      <option value="usb">USB</option>
       <option value="adb">ADB (USB)</option>
       <option value="hotspot">WiFi hotspot</option>
       <option value="fpvd">fpvd (UDP)</option>
@@ -36,6 +52,14 @@
   This browser cannot reach the board from this page. Use <b>Chrome</b>, <b>Edge</b> or <b>Samsung Internet</b>
   (they allow a web page to talk to devices on the local network after asking you).
 </div>
+<template id="hotspotNoteText">
+  This browser cannot reach the board from this page. Use <b>Chrome</b>, <b>Edge</b> or <b>Samsung Internet</b>
+  (they allow a web page to talk to devices on the local network after asking you).
+</template>
+<template id="usbNoteText">
+  This browser cannot talk to USB devices (WebUSB). Use <b>Chrome</b> or <b>Edge</b> on a PC or an Android phone;
+  Firefox, Safari and every browser on iPhone / iPad cannot. Or pick <b>WiFi hotspot</b> above.
+</template>
 
 <div class="layout">
   <nav id="tabs">
@@ -79,6 +103,25 @@
         </ol>
         <p class="muted">In debug mode the video link is off, so settings are saved and used on the next
           FPV boot. Or use the board's WiFi hotspot (hold BOOT 2 s) and pick <b>WiFi hotspot</b> above.</p>
+      </div>
+      <div id="ncUsb" hidden>
+        <h2>Connect over USB</h2>
+        <ol>
+          <li>Plug the board's USB into this PC (or an Android phone with an OTG cable) <em>without</em> the
+            WiFi adapter and power it up. It boots into debug mode after ~15&nbsp;s.</li>
+          <li>Press <b>Connect</b> and pick the board (Rockchip / rkfpv) in the browser's list.</li>
+        </ol>
+        <p class="muted">Only one program can use the board at a time: if <code>adb</code> runs on this PC,
+          run <code>adb kill-server</code> first. Everything works over USB, including installing the board
+          scripts, IQ files, recordings and the live picture. Disconnect lets go of the board again.</p>
+        <details>
+          <summary>First time on Linux or Windows</summary>
+          <p><b>Linux:</b> a normal user may not open USB devices. Run once, then replug the board:</p>
+          <pre>echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-rkfpv.rules
+sudo udevadm control --reload-rules</pre>
+          <p><b>Windows:</b> the board's ADB interface needs the WinUSB driver (the Google USB driver, or Zadig
+            → WinUSB). If Connect says access is denied, install it and replug.</p>
+        </details>
       </div>
       <div id="ncHotspot" hidden>
         <h2>Connect over the board's WiFi</h2>

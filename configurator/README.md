@@ -4,13 +4,13 @@
 
 同一套界面（仓库里的 `web/`）有两种用法：
 
-| | 网页版（推荐手机用） | 电脑版 `rkfpvconf.py` |
+| | 网页版（推荐） | 电脑版 `rkfpvconf.py` |
 |---|---|---|
-| 打开方式 | 浏览器打开 https://kkbin505.github.io/rkfpv/ | `python3 configurator/rkfpvconf.py` |
-| 怎么连板子 | 手机/电脑连上板子的 WiFi 热点，直接访问 `http://10.0.0.1` | ADB（USB）、fpvd、热点，经过本机的 Python 服务 |
+| 打开方式 | 浏览器打开 https://kkbin505.github.io/rkfpv/app/ | `python3 configurator/rkfpvconf.py` |
+| 怎么连板子 | **USB**：浏览器直接用 WebUSB 走 ADB，电脑上不用装 adb 和 Python；或者连上板子的 **WiFi 热点**，直接访问 `http://10.0.0.1` | ADB（USB）、fpvd、热点，经过本机的 Python 服务 |
 | 布局 | 手机竖屏：标签在底部，预览在顶部；电脑横屏：和电脑版一样 | 横屏 |
-| 能做什么 | 所有设置、实时画面、录像下载、预设、备份、日志、`fpv` 命令 | 以上全部，另外还有安装脚本、IQ 文件上传下载、任意 shell 命令 |
-| 浏览器 | Chrome、Edge、三星浏览器（见下面“网页版”） | Chrome 或 Edge |
+| 能做什么 | USB：和电脑版一样，包括安装脚本、IQ 文件上传下载、任意 shell 命令、有线预览、录像下载。热点：所有设置、实时画面、录像下载、预设、备份、日志、`fpv` 命令 | 全部功能，另外还能用 ffplay 播放预览、fpvd 和 SSH 连接 |
+| 浏览器 | USB：电脑或安卓手机上的 Chrome、Edge。热点：Chrome、Edge、三星浏览器（见下面“网页版”） | Chrome 或 Edge |
 
 ## 运行
 
@@ -93,11 +93,32 @@ URL 加上 `?connect&tab=Radio`，打开页面时会自动连接第一个设备�
 
 服务只监听 127.0.0.1。每次启动生成一个随机 token，只嵌在服务自己返回的页面里，所有 API 请求都要带上它。这样别的网站不能借你的浏览器向板子发命令。
 
-## 网页版（手机，不用装 App）
+## 网页版：USB（WebUSB）
 
-网页放在 GitHub Pages 上（`https://kkbin505.github.io/rkfpv/`，由 `.github/workflows/pages.yml` 从 `web/` 发布）。
+网页放在 GitHub Pages 上：`https://kkbin505.github.io/rkfpv/app/`。合并到 main 后由 `.github/workflows/pages.yml` 用 `configurator/build_site.py` 从 `web/` 生成，发布到 `gh-pages` 分支的 `app/` 目录。
 
-1. **先在有网的时候**用手机 Chrome 打开上面的地址，菜单里选 **安装应用 / 添加到主屏幕**。以后在热点上没有网也能打开（离线缓存）。
+1. 板子**不接 WiFi 网卡**，用数据线插电脑（或用 OTG 线插安卓手机），上电，约 15 秒进入调试模式。
+2. 用 **Chrome 或 Edge** 打开网页，上面选 **USB**，点 **Connect**，在浏览器弹出的列表里选中板子。
+3. 之后和电脑版一样用：设置、Live 预览、Image 页的 IQ 文件、DVR 下载、Status 页的 **Install / update on board**、CLI 里的任意 shell 命令。
+
+注意：
+
+- **同一时间只有一个程序能连板子。** 电脑上开着 `adb` 时先运行 `adb kill-server`，也要关掉电脑版配置工具、Android Studio、scrcpy。点 **Disconnect** 后网页会放开板子，adb 又能用了。
+- **Linux**：普通用户默认没有权限打开 USB 设备，运行一次下面的命令，然后重新插拔板子：
+  ```sh
+  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-rkfpv.rules
+  sudo udevadm control --reload-rules
+  ```
+- **Windows**：板子的 ADB 接口要用 WinUSB 驱动（Google USB 驱动，或者用 Zadig 装 WinUSB）。提示没有权限时装上驱动，再插拔一次。
+- **不支持的浏览器**：Firefox、Safari，以及 iPhone / iPad 上的所有浏览器都没有 WebUSB。
+- **工作原理**：网页里带了 Tango ADB（MIT，`web/vendor/`）。板子的 adbd 比较老，没有 `exec:` 服务，所以每条命令都走 `shell:`，和电脑上的 `adb shell` 一样。预览直接通过 adbd 打开板子上的 `127.0.0.1:5602`，不需要 `adb forward`。下载录像时，Chrome / Edge 电脑版会问保存位置，边收边写进文件，大文件也不占内存。安卓上收完后作为一次浏览器下载保存。**Install / update on board** 推送的脚本是网页发布时打包的那一版（`board-files/`）。
+- **试新版本**：`python3 configurator/build_site.py /tmp/site && cd /tmp/site && python3 -m http.server 8000`，然后打开 `http://localhost:8000/`。WebUSB 在 localhost 上也能用。
+
+## 网页版：热点（手机，不用装 App）
+
+同一个网页，上面选 **WiFi hotspot**。
+
+1. **先在有网的时候**用手机 Chrome 打开网页，菜单里选 **安装应用 / 添加到主屏幕**。以后在热点上没有网也能打开（离线缓存）。
 2. 板子（接着 WiFi 网卡）正常开机后，**按住 BOOT 约 2 秒**，WiFi 网卡变成热点 `rkfpv-XXXX`（名称和密码见 `fpv hotspot`）。
 3. 手机连上这个热点。提示“无法上网”时选 **保持连接**，或者关掉手机流量。
 4. 打开刚才安装的应用，点 **Connect**。Chrome 会问是否允许访问**本地网络上的设备**：选允许。
