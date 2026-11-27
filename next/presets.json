@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "presets": [
+  {
+   "file": "1-bench.json",
+   "name": "Bench",
+   "description": "Desk testing with air unit and ground station close together: low TX power on every card (no receiver overload, less heat on a bare board), default link and video.",
+   "values": {
+    "txpower_8812au": "10",
+    "txpower_8812cu": "10",
+    "txpower_8812eu": "10",
+    "mcs_index": "2",
+    "fec_k": "8",
+    "fec_n": "12",
+    "bitrate": "3500",
+    "gop": "30"
+   }
+  },
+  {
+   "file": "2-long-range.json",
+   "name": "Long range",
+   "description": "More robust radio: MCS 1 (QPSK 1/2) and more FEC recovery packets (8/14), with the bitrate lowered to 2.5 Mbit/s so the stream still fits. TX power is not changed: set it for your card on the Radio tab.",
+   "values": {
+    "mcs_index": "1",
+    "fec_k": "8",
+    "fec_n": "14",
+    "rc": "cbr",
+    "bitrate": "2500",
+    "gop": "30",
+    "stat_time": "1"
+   }
+  },
+  {
+   "file": "3-low-latency.json",
+   "name": "Low latency",
+   "description": "Smaller FEC blocks (4/6) so the ground station waits for fewer packets before it can decode, and MCS 3 for headroom at 4.5 Mbit/s. Needs a strong signal: use at short range.",
+   "values": {
+    "mcs_index": "3",
+    "fec_k": "4",
+    "fec_n": "6",
+    "rc": "cbr",
+    "bitrate": "4500",
+    "gop": "30",
+    "stat_time": "1"
+   }
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+wireless:
+  # TX power per adapter, OpenIPC scale 1-63, about 0.5 dB per step.
+  #   8812AU: power index (63 = max). 8812CU, 8822CU, 8812EU: level / 2 = dBm.
+  # Unset = adapter default (8812AU 20, 8812CU 20, 8812EU 40). Each card
+  # keeps its own value, so swapping cards never over-drives the new one.
+  # txpower_8812au: 20
+  # txpower_8812cu: 20
+  # txpower_8812eu: 40
+  channel: 161
+  width: 20
+broadcast:
+  mcs_index: 2
+  fec_k: 8
+  fec_n: 12
+  stbc: 0
+  ldpc: 0
+  link_id: 7669206
+  video_port: 5600
+  tun_index: 1
+telemetry:
+  telemetry_enabled: true
+  serial: ttyS3
+  baud: 115200
+  # MAVLink for programs on the board (127.0.0.1 only): send to this UDP
+  # port to reach the flight controller, get its stream back. 0 = off.
+  mav_local_port: 0
+hotspot:
+  # WiFi access point when the hotspot switch (GPIO to GND) is closed.
+  # ssid / pass are generated on first boot; change them with fpv set.
+  hotspot_channel: 36
+  hotspot_country: US
