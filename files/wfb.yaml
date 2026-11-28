@@ -24,6 +24,10 @@ telemetry:
   # MAVLink for programs on the board (127.0.0.1 only): send to this UDP
   # port to reach the flight controller, get its stream back. 0 = off.
   mav_local_port: 0
+  # Ask the flight controller for the OSD's battery and RC messages at this
+  # rate (Hz) while they do not arrive: ArduPilot / PX4 send them only when
+  # a ground station asks. Kept in the FC's RAM only. 0 = off.
+  mav_request_hz: 2
 hotspot:
   # WiFi access point when the hotspot switch (GPIO to GND) is closed.
   # ssid / pass are generated on first boot; change them with fpv set.

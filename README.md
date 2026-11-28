@@ -69,6 +69,11 @@ UART3 ← mavbridge ← udp:14550 ← wfb_rx -p 144 ◀──无线── 地面
 
 `mavbridge` 按 MAVLink 帧边界切分，把最多 15 帧、不超过 1000 字节打成一个 UDP 包，最多攒 30 ms 就发。这样丢一个无线包只会丢掉几条完整消息，不会出现半帧数据。遥测的 FEC 用 1/2（每包发两份），不用等攒满一组。
 
+**OSD 的电压、电流、mAh 和遥控链路质量**来自飞控的 SYS_STATUS、BATTERY_STATUS 和 RC_CHANNELS。ArduPilot 和 PX4 只有地面站请求时才发这些消息，没连地面站时只发心跳，OSD 上就没有电压。所以 `mavbridge` 发现飞控心跳、但这几条消息 3 秒没来时，会用 MAV_CMD_SET_MESSAGE_INTERVAL 向飞控要（`mav_request_hz`，默认 2 Hz，0 = 关）：
+- 只存在飞控内存里，不改飞控参数，飞控重启就忘了（`mavbridge` 会再要）；
+- 消息来了就不再要，地面站自己设的频率优先；
+- 连要 5 次没有就放弃，直到飞控重启；Betaflight / INAV 本来就主动发，不受影响。
+
 ## 改设置：`fpv` 命令和电脑上的配置工具
 
 板子上的 `fpv` 命令统一管理 `/etc/rkfpv.conf` 和 `/etc/wfb.yaml`。通过 `adb shell` 和 `ssh` 用法完全一样：

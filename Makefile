@@ -128,6 +128,7 @@ test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/f
 	./build-host/test_osd_ext > build-host/osd_ext.log || { cat build-host/osd_ext.log; exit 1; }; tail -1 build-host/osd_ext.log
 	python3 -I test/test_telem.py build-host/test_telem | tail -1
 	python3 -I test/test_mavbridge.py build-host/mavbridge
+	python3 -I test/test_mavbridge_req.py build-host/mavbridge | tail -1
 	test/test_fpv.sh
 	python3 -I test/test_fpvd.py build-host/fpvd files/fpv
 	python3 -I test/test_switch.py build-host/fpvd | tail -1

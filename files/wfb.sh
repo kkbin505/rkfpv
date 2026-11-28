@@ -103,17 +103,24 @@ load_interface() {
 #   UART3 -> mavbridge -> udp:14551 -> wfb_tx -p 16
 #   wfb_rx -p 144 -> udp:14550 -> mavbridge -> UART3
 # -j: MAVLink for programs on the board (mav_local_port, 0 = off)
+# -q: ask the FC for the OSD messages it does not send unasked
+#     (mav_request_hz, default 2 also for a wfb.yaml from before the key)
 mav_local() {
 	case "${mav_local_port:-0}" in
 	''|0|*[!0-9]*) ;;
 	*) echo "-j $mav_local_port" ;;
+	esac
+	hz=${mav_request_hz-2}
+	case "$hz" in
+	''|0|*[!0-9]*) ;;
+	*) echo "-q $hz" ;;
 	esac
 }
 
 start_telemetry() {
 	[ "$telemetry_enabled" = "true" ] || return 0
 	: "${serial:=ttyS3}" "${baud:=115200}" "${tun_index:=1}"
-	log "telemetry: /dev/$serial @ $baud$(mav_local | sed 's/^-j /, local MAVLink port /')"
+	log "telemetry: /dev/$serial @ $baud$(mav_local | sed -e 's/^-j /, local MAVLink port /' -e 's/^-q \(.*\)/, OSD requests \1 Hz/' | tr '\n' ' ' | sed 's/ $//')"
 	# -R: libpcap's default 2 MB capture ring is resident memory; the uplink
 	# carries a few hundred bytes/s, 128 KB is plenty (VmRSS 4.4 -> 2.8 MB)
 	# uplink stats once a second -> /tmp/wfb_uplink.status (rkfpv OSD):
@@ -131,8 +138,15 @@ start_telemetry() {
 	wfb_tx -K "$wfb_key" -M "$tun_index" -B "$width" -k 1 -n 2 \
 		-S "$stbc" -L "$ldpc" -i "$link_id" -p 16 -u 14551 "$wfb_dev" > /dev/null 2>&1 &
 	# -c: a copy of the FC stream for rkfpv's OSD (UDP 14560)
-	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
+	start_mavbridge
+}
+
+# detached (start-stop-daemon -b, like rkfpv): started from `adb shell fpv
+# preview on`, a plain `&` child dies when that adb shell exits, and the
+# OSD loses the FC a moment later
+start_mavbridge() {
+	start-stop-daemon -S -q -b -x /usr/bin/mavbridge -- -d /dev/"$serial" -b "$baud" \
+		-o 127.0.0.1:14551 -i 14550 -a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local)
 }
 
 # preview on a PC (debug mode, no radio): only the FC copy for rkfpv's OSD
@@ -140,8 +154,8 @@ start_osd_telemetry() {
 	[ "$telemetry_enabled" = "true" ] || return 0
 	: "${serial:=ttyS3}" "${baud:=115200}"
 	killall -q mavbridge
-	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
+	n=0; while pidof mavbridge > /dev/null && [ $n -lt 20 ]; do usleep 100000; n=$((n + 1)); done
+	start_mavbridge
 }
 
 start() {
