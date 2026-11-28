@@ -247,6 +247,7 @@ H.265 的 MP4 用 VLC 能直接播放；Windows 自带播放器需要安装 "HEV
 自己的程序（识别、控制、第三方 OSD 等）不用改 rkfpv 的代码，作为单独的进程跑，通过下面的接口接进来。全部默认关闭，详见 [docs/extending.md](docs/extending.md)。
 
 - **插件目录**：`/etc/fpv/plugins.d/S<NN>名字`，和 init.d 脚本一样收 `start` / `stop` / `status`，跟着视频一起启停。`fpv plugins` 查看状态。
+- **打进镜像**：`EXTRA_OVERLAY=目录 luckfox/mkoverlay.sh`，把自己的程序和插件脚本一起放进镜像；`push-update.sh` 也支持。
 
 ## 致谢
 

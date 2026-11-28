@@ -3,7 +3,13 @@
 # SDK from rkfpv build outputs, and adds it to the board config.
 # Run after `make` here and after luckfox/build-deps.sh.
 #
-#   DRONE_KEY=/path/to/drone.key [BOARD=mini|pro] luckfox/mkoverlay.sh [SDK]
+#   DRONE_KEY=/path/to/drone.key [BOARD=mini|pro] [EXTRA_OVERLAY=dir[:dir...]] \
+#       luckfox/mkoverlay.sh [SDK]
+#
+#   EXTRA_OVERLAY: directories laid over the image root after rkfpv's own
+#                  files, e.g. add-on programs and their
+#                  etc/fpv/plugins.d/ scripts (docs/extending.md).
+#                  Replacing an rkfpv file is allowed but printed.
 #
 #   mini (default): Pico Mini, RV1103, boots from the TF card, recordings on
 #                   the card's "dvr" partition
@@ -44,6 +50,12 @@ need "$KEY"
 need "$WFB/wfb_tx"
 need "$WFB/wfb_rx"
 need "$KO"
+# check the extra directories before anything is changed
+IFS_OLD=$IFS; IFS=:
+for x in ${EXTRA_OVERLAY:-}; do
+	[ -d "$x" ] || { echo "EXTRA_OVERLAY: not a directory: $x" >&2; exit 1; }
+done
+IFS=$IFS_OLD
 
 rm -rf "$OV"
 install -d "$OV/usr/bin" "$OV/etc/init.d" "$OV/etc/fpv/plugins.d" "$OV/oem/usr/ko" "$OV/mnt/dvr"
@@ -114,6 +126,19 @@ else
 	grep -E '^export (RK_PARTITION_CMD_IN_ENV|RK_PARTITION_FS_TYPE_CFG|RK_BOOTARGS_CMA_SIZE)' "$BOARD_CFG"
 fi
 grep '^export RK_PARTITION_CMD_IN_ENV' "$BOARD_CFG"
+
+# add-on files last, so they can also replace a stub or a config above
+IFS=:
+for x in ${EXTRA_OVERLAY:-}; do
+	IFS=$IFS_OLD
+	(cd "$x" && find . ! -type d) | sed 's|^\./||' | while read -r f; do
+		if [ -e "$OV/$f" ]; then echo "EXTRA_OVERLAY: $x replaces /$f" >&2; fi
+	done
+	cp -a "$x/." "$OV/"
+	echo "extra overlay: $x ($(cd "$x" && find . ! -type d | wc -l) files)"
+	IFS=:
+done
+IFS=$IFS_OLD
 
 # hook the overlay into the board config once
 if ! grep -q 'overlay-rkfpv' "$BOARD_CFG"; then
