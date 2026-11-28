@@ -40,10 +40,13 @@ detect_driver() {
 
 load_modules() {
 	# the adapter needs a moment to enumerate after the switch to host mode
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# (polled every 0.2 s, up to 10 s)
+	i=0
+	while [ $i -lt 50 ]; do
 		detect_driver
 		[ -n "$driver" ] && break
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	if [ -z "$driver" ]; then
 		log "no supported WiFi adapter (8812AU/8812CU/8822CU/8812EU) detected (is USB in host mode?)"
@@ -57,9 +60,11 @@ load_modules() {
 	opts=""
 	[ "$driver" != 88XXau ] && opts="rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0 MaxTxBufLen=32"
 	insmod "$ko_dir/$driver.ko" $opts || return 1
-	for i in 1 2 3 4 5; do
+	i=0
+	while [ $i -lt 25 ]; do
 		[ -e /sys/class/net/"$wfb_dev" ] && return 0
-		sleep 1
+		usleep 200000
+		i=$((i + 1))
 	done
 	log "$wfb_dev did not appear"
 	return 1
@@ -97,15 +102,46 @@ load_interface() {
 # no change: downlink radio port 16 (FC -> GS), uplink radio port 144.
 #   UART3 -> mavbridge -> udp:14551 -> wfb_tx -p 16
 #   wfb_rx -p 144 -> udp:14550 -> mavbridge -> UART3
+# -j: MAVLink for programs on the board (mav_local_port, 0 = off)
+mav_local() {
+	case "${mav_local_port:-0}" in
+	''|0|*[!0-9]*) ;;
+	*) echo "-j $mav_local_port" ;;
+	esac
+}
+
 start_telemetry() {
 	[ "$telemetry_enabled" = "true" ] || return 0
 	: "${serial:=ttyS3}" "${baud:=115200}" "${tun_index:=1}"
-	log "telemetry: /dev/$serial @ $baud"
-	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -u 14550 "$wfb_dev" > /dev/null 2>&1 &
+	log "telemetry: /dev/$serial @ $baud$(mav_local | sed 's/^-j /, local MAVLink port /')"
+	# -R: libpcap's default 2 MB capture ring is resident memory; the uplink
+	# carries a few hundred bytes/s, 128 KB is plenty (VmRSS 4.4 -> 2.8 MB)
+	# uplink stats once a second -> /tmp/wfb_uplink.status (rkfpv OSD):
+	#   RX_ANT  <freq:mcs:bw> <ant> <count:rssi_min:rssi_avg:rssi_max:snr_min:snr_avg:snr_max>
+	#   PKT     all:bytes:dec_err:session:data:uniq:fec_rec:lost:bad:out:out_bytes
+	wfb_rx -K "$wfb_key" -i "$link_id" -p 144 -R 131072 -u 14550 -l 1000 "$wfb_dev" 2>/dev/null | awk '
+		$2 == "RX_ANT" { split($5, a, ":"); if (!n || a[3] > best) best = a[3]; n++ }
+		$2 == "PKT" {
+			split($3, p, ":")
+			f = "/tmp/wfb_uplink.status"
+			printf "rssi=%s uniq=%d lost=%d\n", (n ? best : "none"), p[6], p[8] > f
+			close(f)
+			n = 0
+		}' &
 	wfb_tx -K "$wfb_key" -M "$tun_index" -B "$width" -k 1 -n 2 \
 		-S "$stbc" -L "$ldpc" -i "$link_id" -p 16 -u 14551 "$wfb_dev" > /dev/null 2>&1 &
+	# -c: a copy of the FC stream for rkfpv's OSD (UDP 14560)
 	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
-		-a 15 -m 1000 -t 30 > /dev/null 2>&1 &
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
+}
+
+# preview on a PC (debug mode, no radio): only the FC copy for rkfpv's OSD
+start_osd_telemetry() {
+	[ "$telemetry_enabled" = "true" ] || return 0
+	: "${serial:=ttyS3}" "${baud:=115200}"
+	killall -q mavbridge
+	mavbridge -d /dev/"$serial" -b "$baud" -o 127.0.0.1:14551 -i 14550 \
+		-a 15 -m 1000 -t 30 -c 127.0.0.1:14560 $(mav_local) > /dev/null 2>&1 &
 }
 
 start() {
@@ -123,6 +159,19 @@ start() {
 
 stop() {
 	killall -q mavbridge wfb_tx wfb_rx
+	rm -f /tmp/wfb_uplink.status
+}
+
+# detect [seconds]: is a supported adapter on the bus? (S99fpv's boot test)
+detect() {
+	n=$(( ${1:-3} * 5 )); i=0
+	while [ $i -lt $n ]; do
+		detect_driver
+		[ -n "$driver" ] && { echo "$driver"; return 0; }
+		usleep 200000
+		i=$((i + 1))
+	done
+	return 1
 }
 
 # driver of the adapter that is already up (for `txpower`)
@@ -135,10 +184,17 @@ loaded_driver() {
 
 case "$1" in
 	start|stop) "$1" ;;
+	detect) detect "$2" ;;
+	adapter)
+		# hotspot mode: only detect the card and load its driver
+		load_modules ;;
 	txpower)
 		# re-apply TX power from wfb.yaml while the link runs (fpv set)
 		wfb_yaml "$wfb_cfg"
 		loaded_driver || { log "txpower: no adapter driver loaded"; exit 1; }
 		set_txpower ;;
-	*) echo "Usage: $0 {start|stop|txpower}"; exit 1 ;;
+	osd-telemetry)
+		wfb_yaml "$wfb_cfg"
+		start_osd_telemetry ;;
+	*) echo "Usage: $0 {start|stop|detect [seconds]|adapter|txpower|osd-telemetry}"; exit 1 ;;
 esac

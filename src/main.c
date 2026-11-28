@@ -16,13 +16,16 @@
  * If the DVR pipeline cannot be created, the link stream is recorded.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -35,6 +38,12 @@
 #include "config.h"
 #include "dvr.h"
 #include "isp.h"
+#include "osd.h"
+#include "frametap.h"
+#include "osd_ext.h"
+#include "osd_layout.h"
+#include "telem.h"
+#include "preview.h"
 #include "rtp_h265.h"
 
 #define VENC_CHN 0              /* link stream -> RTP */
@@ -246,11 +255,14 @@ static int vi_dev_init(void)
 	return 0;
 }
 
-static int vi_chn_init(int chn, int width, int height)
+/* tap: the frame tap pulls pictures from this channel while it feeds the
+ * encoder. The SDK wants depth < buffer count for a bound channel; a third
+ * buffer (+1.4 MB CMA at 720p) keeps the encoder from waiting on the tap. */
+static int vi_chn_init(int chn, int width, int height, int tap)
 {
 	VI_CHN_ATTR_S a;
 	memset(&a, 0, sizeof(a));
-	a.stIspOpt.u32BufCount = 2;
+	a.stIspOpt.u32BufCount = tap ? 3 : 2;
 	a.stIspOpt.enMemoryType = VI_V4L2_MEMORY_TYPE_DMABUF;
 	a.stIspOpt.stMaxSize.u32Width = width;
 	a.stIspOpt.stMaxSize.u32Height = height;
@@ -258,7 +270,7 @@ static int vi_chn_init(int chn, int width, int height)
 	a.stSize.u32Height = height;
 	a.enPixelFormat = RK_FMT_YUV420SP;
 	a.enCompressMode = COMPRESS_MODE_NONE;
-	a.u32Depth = 0;            /* bound to VENC, we never pull frames */
+	a.u32Depth = tap ? 1 : 0;  /* bound to VENC; 1: the tap may pull the latest */
 	a.stFrameRate.s32SrcFrameRate = -1;
 	a.stFrameRate.s32DstFrameRate = -1;
 
@@ -411,6 +423,70 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 		c->bitrate_kbps, c->gop);
 }
 
+/* ---- OSD (experiment) --------------------------------------------------- */
+
+#define OSD_LINK_HANDLE 0
+#define OSD_DVR_HANDLE 1
+
+#define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
+#define UPLINK_STATUS "/tmp/wfb_uplink.status"
+#define OSD_PERIOD_US 250000            /* 4 redraws per second */
+#define OSD_EXT_MIN_US 40000            /* new external shapes: redraw at most 25/s */
+#define SOC_TEMP "/sys/class/thermal/thermal_zone0/temp"   /* RV1103 tsadc, m°C */
+
+/* SoC temperature in whole degrees C; 0 if there is no sensor. Kept open
+ * and re-read with pread: one syscall, no process, once per second. */
+static int read_soc_temp(int *c)
+{
+	static int fd = -2;
+	if (fd == -2)
+		fd = open(SOC_TEMP, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;
+	char b[16];
+	ssize_t n = pread(fd, b, sizeof b - 1, 0);
+	if (n <= 0)
+		return 0;
+	b[n] = 0;
+	long mc = strtol(b, NULL, 10);
+	*c = (int)((mc + (mc < 0 ? -500 : 500)) / 1000);
+	return mc > -40000 && mc < 150000;
+}
+
+/* air-side wfb_rx (uplink from the ground station), see wfb.sh */
+static int read_uplink(int *rssi, int *lq)
+{
+	struct stat st;
+	if (stat(UPLINK_STATUS, &st) || time(NULL) - st.st_mtime > 3)
+		return 0;
+	FILE *f = fopen(UPLINK_STATUS, "r");
+	if (!f)
+		return 0;
+	char r[16] = "";
+	int uniq = 0, lost = 0;
+	int n = fscanf(f, "rssi=%15s uniq=%d lost=%d", r, &uniq, &lost);
+	fclose(f);
+	if (n != 3 || uniq + lost == 0 || !strcmp(r, "none"))
+		return 0;
+	*rssi = atoi(r);
+	*lq = uniq * 100 / (uniq + lost);
+	return 1;
+}
+
+/* one OSD redraw, timed */
+static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
+			 int temp_ok, int temp_c, const osd_ext_t *ext, int ext_ttl_ms,
+			 uint64_t (*clock_us)(void))
+{
+	if (!o)
+		return 0;
+	uint64_t t0 = clock_us();
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c, ext, ext_ttl_ms };
+	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
+	osd_draw_view(o, &v);
+	return clock_us() - t0;
+}
+
 /* ---- DVR stream capture (dual mode) ------------------------------------ */
 
 static volatile int g_cap_quit;
@@ -452,6 +528,69 @@ static void *dvr_capture(void *arg)
 			RK_MPI_VENC_RequestIDR(DVR_VENC, RK_TRUE);
 	}
 	free(st.pstPack);
+	return NULL;
+}
+
+/* ---- frame tap: small luma copy in shared memory (frametap.h) ---------- */
+
+static volatile int g_tap_quit;
+static volatile unsigned long long g_tap_frames;
+
+struct tap_args {
+	int chn, fps, scale;
+};
+
+/* Pulls the newest link picture frame_tap_fps times a second, copies every
+ * scale-th pixel of its Y plane and gives the buffer straight back. At a
+ * low priority: the link loop always comes first. */
+static void *tap_thread(void *arg)
+{
+	struct tap_args *a = arg;
+	setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);
+	frametap_t *t = NULL;
+	uint64_t period = 1000000u / (unsigned)a->fps, next = now_us();
+	int fails = 0;
+	while (!g_quit && !g_tap_quit) {
+		uint64_t n = now_us();
+		if (n < next) {
+			uint64_t d = next - n;
+			usleep(d > 50000 ? 50000 : (useconds_t)d);
+			continue;
+		}
+		next = next + period > n ? next + period : n + period;  /* no bursts after a stall */
+		VIDEO_FRAME_INFO_S f;
+		memset(&f, 0, sizeof f);
+		if (RK_MPI_VI_GetChnFrame(VI_PIPE, a->chn, &f, 100) != RK_SUCCESS) {
+			if (++fails == 50) {
+				fprintf(stderr, "frame tap: no pictures from VI %d, tap off\n", a->chn);
+				break;
+			}
+			continue;
+		}
+		fails = 0;
+		VIDEO_FRAME_S *v = &f.stVFrame;
+		if (!t) {
+			if (v->enPixelFormat != RK_FMT_YUV420SP || v->enCompressMode != COMPRESS_MODE_NONE)
+				fprintf(stderr, "frame tap: unexpected picture format %d/%d, tap off\n",
+					v->enPixelFormat, v->enCompressMode);
+			else
+				t = frametap_create(FRAMETAP_PATH, (int)v->u32Width, (int)v->u32Height, a->scale);
+			if (!t) {
+				RK_MPI_VI_ReleaseChnFrame(VI_PIPE, a->chn, &f);
+				break;
+			}
+			fprintf(stderr, "frame tap: %ux%u / %d -> %s, %d fps\n", v->u32Width,
+				v->u32Height, a->scale, FRAMETAP_PATH, a->fps);
+		}
+		const uint8_t *y = RK_MPI_MB_Handle2VirAddr(v->pMbBlk);
+		if (y) {
+			RK_MPI_SYS_MmzFlushCache(v->pMbBlk, RK_TRUE);  /* CPU sees this picture */
+			frametap_put(t, y, (int)v->u32VirWidth, v->u64PTS, now_us());
+			g_tap_frames++;
+		}
+		RK_MPI_VI_ReleaseChnFrame(VI_PIPE, a->chn, &f);
+	}
+	frametap_destroy(t);
 	return NULL;
 }
 
@@ -530,14 +669,24 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	rtp.pt = (uint8_t)cfg.pt;
+	/* only on loopback: reached over USB with adb forward, never over the air */
+	preview_t pv;
+	preview_open(&pv, "127.0.0.1", cfg.preview_port);
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
+	osd_t *osd_link = NULL, *osd_dvr = NULL;
+	int telem_fd = -1, ext_fd = -1;
 	int dvr_vi_up = 0, dvr_venc_up = 0, dvr_bound = 0, dual = 0, cap_started = 0;
-	pthread_t cap_thr;
+	pthread_t cap_thr, tap_thr;
 	struct dvr_cap cap;
+	struct tap_args tap;
+	int tap_started = 0;
 	dvr_t *dvr = NULL;
 	const char *dvr_off = "off";
-	int dvr_card = is_mountpoint(cfg.dvr_dir);
+	/* dvr = 0: no DVR at all, nothing allocated (no second encoder, no
+	 * ring buffer, no muxer). Memory on the 64 MB board is too tight to
+	 * keep it around "just in case". */
+	int dvr_card = cfg.dvr ? is_mountpoint(cfg.dvr_dir) : 0;
 	enc_params_t lp = link_params(&cfg), dp = dvr_params(&cfg);
 	MPP_CHN_S src = { .enModId = RK_ID_VI, .s32DevId = VI_DEV, .s32ChnId = cfg.vi_chn };
 	MPP_CHN_S dst = { .enModId = RK_ID_VENC, .s32DevId = 0, .s32ChnId = VENC_CHN };
@@ -565,7 +714,7 @@ int main(int argc, char **argv)
 	/* DVR pipeline first: it takes the ISP main path. Any failure here
 	 * (e.g. not enough CMA) falls back to recording the link stream. */
 	if (dvr_card && cfg.dvr_width > 0) {
-		if (vi_chn_init(DVR_VI_CHN, dp.width, dp.height) == 0) {
+		if (vi_chn_init(DVR_VI_CHN, dp.width, dp.height, 0) == 0) {
 			dvr_vi_up = 1;
 			if (venc_init(DVR_VENC, &dp) == 0) {
 				dvr_venc_up = 1;
@@ -596,7 +745,7 @@ int main(int argc, char **argv)
 	/* link stream: ISP self path when the DVR has the main path */
 	int link_vi = dual ? LINK_VI_CHN_DUAL : cfg.vi_chn;
 	src.s32ChnId = link_vi;
-	if (vi_chn_init(link_vi, lp.width, lp.height))
+	if (vi_chn_init(link_vi, lp.width, lp.height, cfg.frame_tap))
 		goto out;
 	vi_up = 1;
 	if (venc_init(VENC_CHN, &lp))
@@ -614,7 +763,10 @@ int main(int argc, char **argv)
 	if (!st.pstPack)
 		goto out;
 
-	if (!dvr_card) {
+	if (!cfg.dvr) {
+		dvr_off = "disabled";
+		fprintf(stderr, "dvr: disabled (dvr = 0)\n");
+	} else if (!dvr_card) {
 		dvr_off = "no-card";
 		fprintf(stderr, "dvr: %s is not a mounted partition, recording disabled\n", cfg.dvr_dir);
 	} else {
@@ -646,6 +798,48 @@ int main(int argc, char **argv)
 	}
 	write_dvr_status(dvr, dvr_off);
 	uint64_t t_dvr_status = now_us();
+
+	if (cfg.frame_tap) {
+		tap.chn = link_vi;
+		tap.fps = cfg.frame_tap_fps;
+		tap.scale = cfg.frame_tap_scale;
+		if (pthread_create(&tap_thr, NULL, tap_thread, &tap) == 0)
+			tap_started = 1;
+		else
+			fprintf(stderr, "frame tap: cannot start its thread\n");
+	}
+	unsigned long long tap_f0 = 0;
+
+	if (cfg.osd) {
+		osd_link = osd_create(OSD_LINK_HANDLE, VENC_CHN, cfg.width, cfg.height);
+		if (dual && cfg.dvr_osd)
+			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
+		else if (dual)
+			fprintf(stderr, "osd: not in the recording (dvr_osd = 0)\n");
+		else if (!cfg.dvr_osd && dvr)
+			fprintf(stderr, "osd: dvr_osd = 0 needs the recording's own encoder (dvr_size not link); "
+				"the recording is the radio stream, with its OSD\n");
+	}
+	uint64_t t_osd = now_us(), osd_worst = 0, temp_ms = 0;
+	int temp_ok = 0, temp_c = 0;
+	telem_t telem;
+	telem_init(&telem);
+	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
+	if ((osd_link || osd_dvr) && telem_fd < 0)
+		fprintf(stderr, "osd: cannot listen on udp %d for telemetry\n", TELEM_PORT);
+	static osd_ext_t ext;           /* ~4 KB: not on the stack */
+	osd_ext_init(&ext);
+	int ext_dirty = 0;
+	if (cfg.osd_ext_port && (osd_link || osd_dvr)) {
+		ext_fd = osd_ext_open(cfg.osd_ext_port);
+		if (ext_fd < 0)
+			fprintf(stderr, "osd: cannot listen on 127.0.0.1:%d for external shapes\n",
+				cfg.osd_ext_port);
+		else
+			fprintf(stderr, "osd: external shapes on 127.0.0.1:%d (ttl %d ms)\n",
+				cfg.osd_ext_port, cfg.osd_ext_ttl_ms);
+	} else if (cfg.osd_ext_port)
+		fprintf(stderr, "osd: osd_ext_port needs osd = 1\n");
 
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
 	uint64_t pkts0 = 0, t_start = t0, dvr_f0 = 0, dvr_b0 = 0;
@@ -696,6 +890,10 @@ int main(int argc, char **argv)
 				dvr_stop(dvr);
 		}
 
+		preview_poll(&pv);
+		if (preview_take_idr_request(&pv))
+			RK_MPI_VENC_RequestIDR(VENC_CHN, RK_TRUE);
+
 		g_stage = 1;
 		RK_S32 r = RK_MPI_VENC_GetStream(VENC_CHN, &st, 200);
 		if (r != RK_SUCCESS)
@@ -726,6 +924,7 @@ int main(int argc, char **argv)
 			}
 
 			rtp_h265_send(&rtp, data, len, ts, p->bFrameEnd);
+			preview_push(&pv, data, len, p->bFrameEnd);
 			if (!dual)
 				dvr_push(dvr, data, len, p->u64PTS, p->bFrameEnd);
 
@@ -759,6 +958,42 @@ int main(int argc, char **argv)
 				(unsigned long long)bytes);
 		}
 
+		if (telem_fd >= 0)
+			telem_poll(&telem, telem_fd, now_us() / 1000);
+		if (ext_fd >= 0 && osd_ext_poll(&ext, ext_fd, now_us() / 1000))
+			ext_dirty = 1;
+		/* periodic redraw, or soon after new external shapes (tracking boxes
+		 * would lag up to a whole period otherwise) */
+		uint64_t since_osd = now_us() - t_osd;
+		if ((osd_link || osd_dvr) &&
+		    (since_osd >= OSD_PERIOD_US || (ext_dirty && since_osd >= OSD_EXT_MIN_US))) {
+			ext_dirty = 0;
+			char ds[300] = "", rec[16] = "";
+			if (dvr) {
+				dvr_status(dvr, ds, sizeof ds);
+				if (strstr(ds, "state=recording"))
+					snprintf(rec, sizeof rec, "REC");
+				else if (strstr(ds, "state=full"))
+					snprintf(rec, sizeof rec, "CARD FULL");
+			}
+			uint64_t now_ms = now_us() / 1000;
+			if (now_ms - temp_ms >= 1000) {
+				temp_ok = read_soc_temp(&temp_c);
+				temp_ms = now_ms;
+			}
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c,
+					       &ext, cfg.osd_ext_ttl_ms, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c,
+					       &ext, cfg.osd_ext_ttl_ms, now_us);
+			if (d1 + d2 > osd_worst) {
+				osd_worst = d1 + d2;
+				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",
+					(unsigned long long)(d1 + d2), (unsigned long long)d1,
+					(unsigned long long)d2);
+			}
+			t_osd = now_us();
+		}
+
 		uint64_t t = now_us();
 		if (cfg.stats_interval && t - t0 >= (uint64_t)cfg.stats_interval * 1000000u) {
 			double s = (t - t0) / 1e6;
@@ -775,11 +1010,18 @@ int main(int argc, char **argv)
 				dvr_f0 = df;
 				dvr_b0 = db;
 			}
+			char tr[40] = "";
+			if (tap_started) {
+				unsigned long long tf = g_tap_frames;
+				snprintf(tr, sizeof tr, " | tap %.1f fps", (tf - tap_f0) / s);
+				tap_f0 = tf;
+			}
 			fprintf(stderr, "stats: %.1f fps, %.0f kbps, max frame %llu B, "
-				"%.0f pkt/s, send errors %llu | dvr%s %s\n",
+				"%.0f pkt/s, send errors %llu | preview %s%s | dvr%s %s\n",
 				frames / s, bytes * 8 / s / 1000, (unsigned long long)max_frame,
 				(rtp.pkts_sent - pkts0) / s,
-				(unsigned long long)rtp.send_errors, dr, ds);
+				(unsigned long long)rtp.send_errors,
+				pv.cfd >= 0 ? "on" : "off", tr, dr, ds);
 			t0 = t;
 			frames = bytes = max_frame = 0;
 			pkts0 = rtp.pkts_sent;
@@ -791,6 +1033,16 @@ int main(int argc, char **argv)
 
 out:
 	/* each step is logged so a crash during teardown shows where it was */
+	if (telem_fd >= 0)
+		close(telem_fd);
+	if (ext_fd >= 0)
+		close(ext_fd);
+	osd_destroy(osd_link);
+	osd_destroy(osd_dvr);
+	if (tap_started) {              /* gives back its picture, removes the file */
+		g_tap_quit = 1;
+		pthread_join(tap_thr, NULL);
+	}
 	if (cap_started) {
 		g_cap_quit = 1;
 		pthread_join(cap_thr, NULL);
@@ -831,6 +1083,7 @@ out:
 	}
 	fprintf(stderr, "rkfpv: sys exit\n");
 	RK_MPI_SYS_Exit();
+	preview_close(&pv);
 	rtp_h265_close(&rtp);
 	fprintf(stderr, "rkfpv: done\n");
 	return ret;

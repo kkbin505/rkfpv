@@ -21,3 +21,11 @@ telemetry:
   telemetry_enabled: true
   serial: ttyS3
   baud: 115200
+  # MAVLink for programs on the board (127.0.0.1 only): send to this UDP
+  # port to reach the flight controller, get its stream back. 0 = off.
+  mav_local_port: 0
+hotspot:
+  # WiFi access point when the hotspot switch (GPIO to GND) is closed.
+  # ssid / pass are generated on first boot; change them with fpv set.
+  hotspot_channel: 36
+  hotspot_country: US

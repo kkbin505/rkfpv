@@ -143,6 +143,20 @@ static void apply_cproc(const char *name, int v, int prev, unsigned int base,
 	CHK(set(g_ctx, level), "%s %u%s", name, level, v == ISP_IQ ? " (iq)" : "");
 }
 
+/* AE metering: the 15x15 zone weights, row 0 = top of the picture (mirror /
+ * flip happen in the sensor, before the ISP statistics). The bottom presets
+ * weight the ground over the sky so a backlit horizon doesn't turn the
+ * ground black; the sky clips instead. */
+static void metering_grid(int m, uint8_t *w, const uint8_t *iq)
+{
+	static const uint8_t bottom[15] = { 1, 1, 1, 1, 1, 2, 2, 3, 4, 5, 6, 6, 6, 6, 6 };
+	static const uint8_t strong[15] = { 1, 1, 1, 1, 1, 1, 2, 4, 6, 8, 10, 12, 12, 12, 12 };
+	for (int i = 0; i < 15 * 15; i++)
+		w[i] = m == ISP_IQ ? iq[i]
+		     : m == METER_AVERAGE ? 1
+		     : m == METER_BOTTOM ? bottom[i / 15] : strong[i / 15];
+}
+
 static void apply_exposure(const isp_settings_t *s, const isp_settings_t *p)
 {
 	if (changed(s->exp_max_ms, p->exp_max_ms) && g_base.have_time) {
@@ -185,7 +199,8 @@ static void apply_exposure(const isp_settings_t *s, const isp_settings_t *p)
 			    f == EXP_PWR_LINE_FREQ_DIS ? "off" : f == EXP_PWR_LINE_FREQ_50HZ ? "50 Hz" : "60 Hz");
 	}
 
-	if ((changed(s->ae_delay, p->ae_delay) || changed(s->ae_damp, p->ae_damp)) && g_base.have_exp) {
+	if ((changed(s->ae_delay, p->ae_delay) || changed(s->ae_damp, p->ae_damp) ||
+	     changed(s->metering, p->metering)) && g_base.have_exp) {
 		Uapi_ExpSwAttrV2_t e;
 		if (rk_aiq_user_api2_ae_getExpSwAttr(g_ctx, &e) == XCAM_RETURN_NO_ERROR) {
 			Uapi_AeAttrV2_t *a = &e.stAuto, *b = &g_base.exp.stAuto;
@@ -195,8 +210,11 @@ static void apply_exposure(const isp_settings_t *s, const isp_settings_t *p)
 							   : s->ae_damp / 100.0f;
 			a->stAeSpeed.DampUnder = s->ae_damp == ISP_IQ ? b->stAeSpeed.DampUnder
 						     : s->ae_damp / 100.0f;
+			metering_grid(s->metering, e.GridWeights.uCoeff, g_base.exp.GridWeights.uCoeff);
 			CHK(rk_aiq_user_api2_ae_setExpSwAttr(g_ctx, e),
-			    "AE delay %u/%u frames, damp bright->dark %.2f under %.2f",
+			    "AE metering %s, delay %u/%u frames, damp bright->dark %.2f under %.2f",
+			    s->metering == ISP_IQ ? "iq" : s->metering == METER_AVERAGE ? "average"
+			    : s->metering == METER_BOTTOM ? "bottom" : "bottom_strong",
 			    a->BlackDelay, a->WhiteDelay, a->stAeSpeed.DampBright2Dark, a->stAeSpeed.DampUnder);
 		}
 	}

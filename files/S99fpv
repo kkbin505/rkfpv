@@ -1,10 +1,10 @@
 #!/bin/sh
 # Boot: pick the USB role, bring up wfb-ng (+ MAVLink), start rkfpv.
 #
-# USB is a single OTG port:
-#   - plugged into a PC (gadget gets "configured")  -> stay a device so ADB /
-#     RNDIS work; FPV link is not started (debug mode)
-#   - anything else (RTL8812AU on an OTG adapter)   -> switch to host, start FPV
+# USB is a single OTG port. At boot it is switched to host for up to 3 s:
+#   - a supported WiFi card shows up      -> stay host, start FPV
+#   - nothing (e.g. a PC on the cable)    -> back to device so ADB / RNDIS
+#     work; FPV link is not started (debug mode)
 # Override: touch /userdata/fpv.force (always FPV) or /userdata/fpv.off (never).
 
 # Rockchip env: LD_LIBRARY_PATH for /oem/usr/lib, PATH for /oem/usr/bin
@@ -14,6 +14,13 @@
 # does not move dwc3 out of device mode ("illegal mode").
 USB_ROLE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 PIDFILE=/var/run/rkfpv.pid
+
+# Everything this script starts (wfb_tx/rx, rkfpv, mavbridge, fpvd), also
+# on restart-video, inherits this: when RAM runs out the kernel kills
+# sshd/adbd/... first, not the link (the uplink wfb_rx used to be the OOM
+# victim at boot).
+echo -900 > /proc/$$/oom_score_adj 2>/dev/null
+
 # on the TF card, so `fpv log` over ADB still has the last flight's logs
 LOGDIR=/userdata/log
 mkdir -p "$LOGDIR"
@@ -26,66 +33,127 @@ log() {
 # keep the previous boot's logs, cap fpv.log
 rotate_logs() {
 	[ -f "$LOGDIR/rkfpv.log" ] && mv -f "$LOGDIR/rkfpv.log" "$LOGDIR/rkfpv.prev.log"
+	[ -f "$LOGDIR/bblog.log" ] && mv -f "$LOGDIR/bblog.log" "$LOGDIR/bblog.prev.log"
 	if [ -f "$LOGDIR/fpv.log" ] && [ "$(wc -c < "$LOGDIR/fpv.log")" -gt 65536 ]; then
 		tail -n 200 "$LOGDIR/fpv.log" > "$LOGDIR/fpv.log.tmp" && mv -f "$LOGDIR/fpv.log.tmp" "$LOGDIR/fpv.log"
 	fi
 }
 
 start_video() {
+	# hotspot mode (live view for the web configurator): never record,
+	# also after a `fpv restart video`
+	extra=
+	[ "$(cat /tmp/mode.status 2>/dev/null)" = hotspot ] && extra="-s dvr=0"
 	# -b would send rkfpv's output to /dev/null; keep it in a log instead
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf >> $LOGDIR/rkfpv.log 2>&1"
+		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf $extra >> $LOGDIR/rkfpv.log 2>&1"
+	[ -n "$extra" ] || start_blackbox
+	start_plugins
+}
+
+# Add-on programs in /etc/fpv/plugins.d (see fpv-plugins): started after the
+# video, stopped before it. rkfpv may still be starting when they start.
+start_plugins() {
+	[ -x /usr/bin/fpv-plugins ] || return 0
+	/usr/bin/fpv-plugins start
+}
+
+stop_plugins() {
+	[ -x /usr/bin/fpv-plugins ] || return 0
+	/usr/bin/fpv-plugins stop
+}
+
+# Betaflight serial blackbox -> rec_SSSS_NN.bbl next to the recording
+# (bblog reads rkfpv's /tmp/dvr.status for the name). Runs with the video.
+start_blackbox() {
+	[ "$(fpv_val blackbox)" = 1 ] || return 0
+	[ -x /usr/bin/bblog ] || return 0
+	pidof bblog > /dev/null && return 0
+	if ! mountpoint -q "$DVR_DIR"; then
+		log "blackbox: no recording card, not started"
+		return 0
+	fi
+	if [ ! -c /dev/ttyS4 ]; then
+		log "blackbox: no /dev/ttyS4 (UART4 off in the device tree), not started"
+		return 0
+	fi
+	baud=$(fpv_val blackbox_baud)
+	start-stop-daemon -S -b -m -p /var/run/bblog.pid -x /bin/sh -- -c \
+		"exec /usr/bin/bblog -d /dev/ttyS4 -b ${baud:-1500000} -o $DVR_DIR >> $LOGDIR/bblog.log 2>&1"
+	log "blackbox: logging /dev/ttyS4 @ ${baud:-1500000} to $DVR_DIR"
+}
+
+stop_blackbox() {
+	start-stop-daemon -K -q -p /var/run/bblog.pid -s TERM
+	killall -q bblog
 }
 
 stop_video() {
+	stop_plugins
+	stop_blackbox                   # closes the current .bbl cleanly
 	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
 	killall -q rkfpv
 	# let the encoder / ISP tear down before a new instance grabs them
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	# (polled every 0.1 s, up to 10 s: a 1 s poll added up to a second
+	# of black screen to every `fpv restart`)
+	i=0
+	while [ $i -lt 100 ]; do
 		pidof rkfpv > /dev/null || return 0
-		sleep 1
+		usleep 100000
+		i=$((i + 1))
 	done
 	killall -q -9 rkfpv
 }
 
-pc_connected() {
-	# "default"/"addressed"/"configured" all need a USB host that reset
-	# and talked to us; Windows can sit before "configured" for a while
-	# (or for good, without a driver). "powered"/"suspended" do not count:
-	# VBUS is the board's own 5 V rail, present with an OTG adapter too.
-	# Give the host up to 10 s.
-	for i in 1 2 3 4 5 6 7 8 9 10; do
-		for s in /sys/class/udc/*/state; do
-			st=$(cat "$s" 2>/dev/null)
-			case "$st" in
-				default|addressed|configured)
-					log "USB gadget state: $st"; return 0 ;;
-			esac
-		done
-		sleep 1
-	done
-	return 1
+# Console (115200 serial) only gets errors from here on: printk to the
+# console is synchronous, and the WiFi driver's few hundred info lines
+# held up the boot by about a second. Everything still goes to dmesg.
+echo 4 > /proc/sys/kernel/printk 2>/dev/null
+
+adapter_present() {
+	# A supported WiFi card shows up on the bus ~0.3 s after the switch to
+	# host. Testing for the card (deterministic) instead of waiting for a
+	# PC to enumerate us (seconds, and it varies per PC / OS / port) means
+	# FPV boots without any wait; only debug mode pays the 3 s.
+	/usr/bin/wfb.sh detect 3 > /dev/null
 }
 
-# DVR partition (last partition of the TF card, see luckfox/mkoverlay.sh).
+back_to_device() {
+	echo device > "$USB_ROLE"
+	# adbd's FunctionFS endpoints go stale across the host round trip (the
+	# PC sees the board, ADB does not): unbind, restart adbd so it writes
+	# its descriptors again, rebind.
+	G=/sys/kernel/config/usb_gadget/rockchip
+	[ -d "$G" ] || return 0
+	echo none > "$G/UDC" 2>/dev/null
+	killall -q adbd
+	usleep 500000
+	start-stop-daemon -S -b -x /usr/bin/adbd
+	sleep 1
+	ls /sys/class/udc | head -1 > "$G/UDC"
+}
+
+# Recordings: Mini = the boot card's partition named "dvr" (formatted on
+# first boot); Pro = the TF card in the slot (NAND boot), used only when it
+# is ext4 already: `fpv dvr format --yes` makes it so (never automatic, the
+# card may hold someone's files). `fpv dvr device` finds it.
 # Mounted in debug mode too, so recordings can be pulled over ADB.
 DVR_DIR=/mnt/dvr
 
 dvr_mount() {
 	mountpoint -q "$DVR_DIR" && return 0
-	dev=
-	for u in /sys/class/block/mmcblk*p*/uevent; do
-		grep -q '^PARTNAME=dvr$' "$u" 2>/dev/null || continue
-		dev=/dev/$(sed -n 's/^DEVNAME=//p' "$u")
-		break
-	done
+	set -- $(/usr/bin/fpv dvr device 2>/dev/null)
+	dev=${1:-}; kind=${2:-}
 	if [ -z "$dev" ] || [ ! -b "$dev" ]; then
-		log "dvr: no partition named 'dvr' (image without it?), recording disabled"
+		log "dvr: no recording card (Mini: no 'dvr' partition; Pro: no TF card at power-on), recording disabled"
 		return 1
 	fi
-	# first boot: the partition is empty. Only ever format the partition the
-	# kernel calls "dvr", and only when it has no ext2/3/4 superblock.
 	if [ "$(od -An -tx1 -j1080 -N2 "$dev" | tr -d ' ')" != "53ef" ]; then
+		if [ "$kind" != part ]; then
+			log "dvr: $dev is not ext4 (new card?): run 'fpv dvr format --yes' to use it (erases it)"
+			return 1
+		fi
+		# first boot: only ever format the partition the kernel calls "dvr"
 		log "dvr: formatting $dev (first boot)"
 		mkfs.ext4 -F -q -L dvr -m 0 "$dev" || { log "dvr: mkfs failed"; return 1; }
 	fi
@@ -113,32 +181,222 @@ limit_dirty_memory() {
 	echo 4194304 > /proc/sys/vm/dirty_bytes
 }
 
+# ---- hotspot mode --------------------------------------------------------
+# Holding the BOOT button for 2 s after boot turns the WiFi card into a WPA2
+# access point: http://10.0.0.1/ for recordings, fpvd on
+# 10.0.0.1:7000 for settings. Hold again for FPV. fpvd reads the button
+# (SARADC channel 0) and calls hotspot-on / hotspot-off.
+# The web configurator (hosted HTTPS page) talks to dvrhttpd: /api/fpv for
+# settings, /live for the picture (`fpv preview on`). dvrhttpd answers CORS
+# for this one origin only; a fork hosting its own page puts its origin in
+# /etc/fpv/web_origin (one line, e.g. https://someone.github.io).
+HS_ADDR=10.0.0.1
+WEB_ORIGIN=https://kkbin505.github.io
+[ -s /etc/fpv/web_origin ] && WEB_ORIGIN=$(head -n 1 /etc/fpv/web_origin | tr -d ' \r')
+MODE_STATUS=/tmp/mode.status
+WLAN=wlan0
+
+set_mode() { echo "$1" > "$MODE_STATUS"; }
+
+fpv_val() { /usr/bin/fpv get "$1" | sed 's/^[^=]*= *//'; }
+
+# first time: a name from the SoC serial and a random password
+hotspot_defaults() {
+	[ -n "$(fpv_val hotspot_ssid)" ] && [ -n "$(fpv_val hotspot_pass)" ] && return 0
+	id=$(sed -n 's/^Serial[^:]*: *//p' /proc/cpuinfo | tr -d '\n' | tail -c 4)
+	case "$id" in ''|0000) id=$(tr -dc 'a-f0-9' < /dev/urandom | head -c 4) ;; esac
+	pass="rkfpv-$(tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
+	/usr/bin/fpv set hotspot_ssid "rkfpv-$id" hotspot_pass "$pass" > /dev/null
+	log "hotspot: created network rkfpv-$id"
+}
+
+# hostapd_start <channel> <ssid> <pass> <country>: 0 once it runs as an AP
+hostapd_start() {
+	if [ "$1" -le 14 ]; then
+		hw=g; ht="[SHORT-GI-20]"
+	else
+		hw=a
+		case "$1" in 36|44|149|157) ht="[HT40+][SHORT-GI-20][SHORT-GI-40]" ;;
+			*) ht="[HT40-][SHORT-GI-20][SHORT-GI-40]" ;; esac
+	fi
+	umask 077
+	cat > /tmp/hostapd-fpv.conf <<EOF
+interface=$WLAN
+driver=nl80211
+ssid=$2
+country_code=$4
+ieee80211d=1
+hw_mode=$hw
+channel=$1
+ieee80211n=1
+ht_capab=$ht
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$3
+EOF
+	umask 022
+	rm -f /tmp/hostapd-fpv.log /var/run/hostapd-fpv.pid
+	hostapd -B -f /tmp/hostapd-fpv.log -P /var/run/hostapd-fpv.pid /tmp/hostapd-fpv.conf || return 1
+	sleep 1
+	[ -f /var/run/hostapd-fpv.pid ] && kill -0 "$(cat /var/run/hostapd-fpv.pid)" 2>/dev/null &&
+		iw dev "$WLAN" info | grep -q 'type AP' && return 0
+	[ -f /var/run/hostapd-fpv.pid ] && kill "$(cat /var/run/hostapd-fpv.pid)" 2>/dev/null
+	rm -f /var/run/hostapd-fpv.pid
+	return 1
+}
+
+hotspot_on() {
+	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
+		log "hotspot: button ignored, USB is on a PC (debug mode)"
+		return 0
+	fi
+	set_mode switching
+	log "hotspot: on"
+	stop_video                      # closes the DVR file cleanly
+	/usr/bin/wfb.sh stop
+	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ] && [ "$(cat "$USB_ROLE")" != host ]; then
+		echo host > "$USB_ROLE"
+	fi
+	if ! /usr/bin/wfb.sh adapter; then
+		log "hotspot: no WiFi adapter, staying in FPV"
+		set_mode fpv
+		return 1
+	fi
+	hotspot_defaults
+	ssid=$(fpv_val hotspot_ssid); pass=$(fpv_val hotspot_pass)
+	ch=$(fpv_val hotspot_channel); cc=$(fpv_val hotspot_country | tr 'a-z' 'A-Z')
+
+	ip link set "$WLAN" down
+	iw dev "$WLAN" set type managed
+	iw reg set "$cc"
+	ip link set "$WLAN" up
+	iw dev "$WLAN" set txpower auto 2>/dev/null
+	ip addr flush dev "$WLAN"
+	ip addr add "$HS_ADDR/24" dev "$WLAN"
+
+	# hostapd -B returns before the driver has accepted the channel, so check
+	# that it is still running and the interface is an AP. Never fall back to
+	# another channel: the antenna may only suit one band, and transmitting
+	# on the wrong band can damage the card's amplifier.
+	if ! hostapd_start "$ch" "$ssid" "$pass" "$cc"; then
+		log "hotspot: no access point on channel $ch: $(tail -n 2 /tmp/hostapd-fpv.log 2>/dev/null | tr '\n' ' ')"
+		log "hotspot: the driver refused channel $ch, back to FPV (see iw list: 'no IR' channels cannot host an access point)"
+		hotspot_off
+		return 1
+	fi
+	# captive portal: every DNS name resolves to the board, so the phone's
+	# connectivity check reaches dvrhttpd, which redirects it to the
+	# recordings page and the phone pops it up (DHCP option 114 = RFC 8910
+	# portal URL for newer phones). No internet here, nothing is forwarded.
+	dnsmasq --conf-file=/dev/null --interface="$WLAN" --bind-interfaces \
+		--no-resolv --no-hosts --address="/#/$HS_ADDR" \
+		--dhcp-option=114,"http://$HS_ADDR/" \
+		--dhcp-range=10.0.0.10,10.0.0.50,255.255.255.0,12h \
+		--dhcp-leasefile=/tmp/dnsmasq-fpv.leases --pid-file=/var/run/dnsmasq-fpv.pid
+	start-stop-daemon -S -q -b -m -p /var/run/dvrhttpd.pid -x /usr/bin/dvrhttpd -- \
+		-b "$HS_ADDR" -p 80 -d "$DVR_DIR" -o "$WEB_ORIGIN"
+	set_mode hotspot
+	log "hotspot: '$ssid' channel $ch, http://$HS_ADDR/ for recordings"
+}
+
+hotspot_stop_services() {
+	start-stop-daemon -K -q -p /var/run/dvrhttpd.pid
+	for f in /var/run/dnsmasq-fpv.pid /var/run/hostapd-fpv.pid; do
+		[ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null
+		rm -f "$f"
+	done
+	rm -f /tmp/hostapd-fpv.conf /tmp/hostapd-fpv.log
+}
+
+hotspot_off() {
+	if [ "$(cat "$MODE_STATUS" 2>/dev/null)" = debug ]; then
+		return 0
+	fi
+	set_mode switching
+	log "hotspot: off, back to FPV"
+	# live view of the web configurator: stop it, FPV starts its own rkfpv
+	stop_video
+	hotspot_stop_services
+	sleep 1
+	ip addr flush dev "$WLAN" 2>/dev/null
+	ip link set "$WLAN" down 2>/dev/null
+	iw dev "$WLAN" set type monitor 2>/dev/null
+	/usr/bin/wfb.sh start               # monitor mode, channel, TX power
+	start_video
+	set_mode fpv
+}
+
 start() {
 	rotate_logs
 	limit_dirty_memory
 	dvr_mount
 	start_fpvd
+	# name and password exist before the first switch-on, so they can be
+	# read in debug mode (fpv hotspot) before the hotspot is ever used
+	hotspot_defaults
 	if [ -e /userdata/fpv.off ]; then
 		log "/userdata/fpv.off present, FPV not started"
+		set_mode off
+		# debug mode means ADB: make sure the port is a device, whatever
+		# role it booted in
+		if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ] &&
+		   [ "$(cat "$USB_ROLE")" != device ]; then
+			back_to_device
+		fi
 		return 0
 	fi
-	if [ ! -e /userdata/fpv.force ] && pc_connected; then
-		log "PC on USB: staying in device mode (ADB/RNDIS), FPV not started"
-		return 0
-	fi
-
 	if [ -n "$USB_ROLE" ] && [ -w "$USB_ROLE" ]; then
 		echo host > "$USB_ROLE"
+		if [ ! -e /userdata/fpv.force ] && ! adapter_present; then
+			log "no WiFi adapter on USB: debug mode (ADB/RNDIS), FPV not started"
+			set_mode debug
+			back_to_device
+			return 0
+		fi
 		log "USB switched to host"
+		# adbd only serves the USB gadget, which is gone in host mode:
+		# ~1 MB of RAM back for the link. Debug mode never gets here.
+		killall -q adbd
 	else
 		log "no USB role switch found, USB stays as is"
 	fi
 
 	/usr/bin/wfb.sh start
 	start_video
+	set_mode fpv
+}
+
+# ---- wired preview ------------------------------------------------------
+# The board is on a PC (debug mode): run rkfpv anyway so the configurator
+# can show the link stream over `adb forward` (rkfpv preview_port). Not
+# kept across a reboot. The radio is not involved (no adapter on USB).
+preview_allowed() {
+	case "$(cat "$MODE_STATUS" 2>/dev/null)" in debug|off|hotspot) return 0 ;; esac
+	log "preview: only in debug mode (PC on USB) or hotspot mode"
+	return 1
+}
+
+preview_on() {
+	preview_allowed || return 1
+	pidof rkfpv > /dev/null && return 0
+	log "preview: starting rkfpv for the configurator"
+	# in hotspot mode the WiFi card is the access point: no telemetry setup
+	[ "$(cat "$MODE_STATUS" 2>/dev/null)" = hotspot ] || /usr/bin/wfb.sh osd-telemetry
+	start_video
+}
+
+preview_off() {
+	preview_allowed || return 1
+	log "preview: stopped"
+	stop_video
+	killall -q mavbridge
 }
 
 stop() {
+	hotspot_stop_services
 	stop_video                      # rkfpv closes the current recording
 	/usr/bin/wfb.sh stop
 	sync
@@ -151,8 +409,20 @@ stop() {
 case "$1" in
 	start|stop) "$1" ;;
 	restart) stop; sleep 1; start ;;
+	hotspot-on) hotspot_on ;;
+	hotspot-off) hotspot_off ;;
+	preview-on) preview_on ;;
+	preview-off) preview_off ;;
 	restart-video) log "restart: video"; stop_video; start_video ;;
-	restart-link) log "restart: link"; /usr/bin/wfb.sh start ;;
-	restart-all) log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video ;;
-	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all}"; exit 1 ;;
+	blackbox-start) start_blackbox ;;
+	restart-link|restart-all)
+		# preview on a PC or over the hotspot: no link (in hotspot mode the
+		# card is the access point), only the video restarts
+		case "$(cat "$MODE_STATUS" 2>/dev/null)" in
+		debug|off|hotspot) log "restart: video (preview, no link)"; stop_video; start_video ;;
+		*)
+			if [ "$1" = restart-link ]; then log "restart: link"; /usr/bin/wfb.sh start
+			else log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video; fi ;;
+		esac ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off|preview-on|preview-off|blackbox-start}"; exit 1 ;;
 esac

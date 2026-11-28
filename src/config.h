@@ -8,6 +8,8 @@ typedef enum { RC_CBR = 0, RC_VBR = 1 } rc_mode_t;
 /* ISP (rkaiq) runtime controls. ISP_IQ = keep the IQ file's value. */
 #define ISP_IQ (-1)
 enum { WB_AUTO = 0, WB_DAYLIGHT, WB_CLOUDY, WB_SHADE, WB_TWILIGHT, WB_FLUORESCENT, WB_INCANDESCENT };
+/* AE metering grid; ISP_IQ = the IQ file's grid (SC3336: center-weighted) */
+enum { METER_AVERAGE = 1, METER_BOTTOM, METER_BOTTOM_STRONG };
 
 typedef struct {
 	int brightness, contrast, saturation, hue;  /* iq | 0..255 (128 = neutral) */
@@ -17,6 +19,7 @@ typedef struct {
 	int antiflicker;        /* iq | 0 off | 50 | 60 */
 	int ae_delay;           /* iq | 0..4 frames before AE reacts */
 	int ae_damp;            /* iq | 0..100 = AE damping 0.00..1.00 */
+	int metering;           /* iq | METER_*: which part of the picture AE exposes for */
 	int blc, hlc;           /* 0 off | 1..100: backlight / highlight compensation */
 	int nr_spatial;         /* iq | 0 off | 1..100 */
 	int nr_temporal;        /* iq | 0 off | 1..100 */
@@ -48,6 +51,7 @@ typedef struct {
 	int dst_port;
 	int pkt_size;           /* max RTP packet size (mlink - 100 in OpenIPC) */
 	int pt;                 /* RTP payload type: 97 = H.265 as majestic sends it */
+	int preview_port;       /* wired preview on 127.0.0.1 (adb forward), 0 = off */
 
 	/* DVR (TF card) */
 	int dvr;                /* record from start */
@@ -63,8 +67,18 @@ typedef struct {
 	rc_mode_t dvr_rc;
 	int dvr_bitrate_kbps;
 	int dvr_gop;
+	int dvr_osd;            /* 1: OSD in the recording (own encoder only) */
+	int blackbox;           /* bblog: FC blackbox on UART4 (read by S99fpv) */
+	int blackbox_baud;
 
 	isp_settings_t isp;
+
+	int osd;                /* experimental: burn a test OSD into the video */
+	int osd_ext_port;       /* UDP on 127.0.0.1 for shapes from other programs, 0 = off */
+	int osd_ext_ttl_ms;     /* their shapes vanish after this long without news */
+	int frame_tap;          /* 1: luma copy of the link picture in /dev/shm */
+	int frame_tap_fps;
+	int frame_tap_scale;    /* keep every n-th pixel and row */
 
 	int stats_interval;     /* seconds, 0 = off */
 } rkfpv_config_t;

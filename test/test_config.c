@@ -18,6 +18,25 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "isp_antiflicker", "55") == 0;
 	bad |= config_set(&d, "isp_wb", "shade") || d.isp.wb != 3;
 	bad |= config_set(&d, "isp_wb", "purple") == 0;
+	bad |= d.dvr_osd != 1 || d.blackbox != 0 || d.blackbox_baud != 1500000;   /* defaults */
+	bad |= config_set(&d, "dvr_osd", "0") || d.dvr_osd != 0;
+	bad |= config_set(&d, "dvr_osd", "2") == 0;
+	bad |= d.osd_ext_port != 0 || d.osd_ext_ttl_ms != 500;             /* defaults */
+	bad |= config_set(&d, "osd_ext_port", "14580") || d.osd_ext_port != 14580;
+	bad |= config_set(&d, "osd_ext_port", "65536") == 0;
+	bad |= config_set(&d, "osd_ext_ttl_ms", "99") == 0;
+	bad |= config_set(&d, "osd_ext_ttl_ms", "10000") || d.osd_ext_ttl_ms != 10000;
+	bad |= d.frame_tap != 0 || d.frame_tap_fps != 10 || d.frame_tap_scale != 2;   /* defaults */
+	bad |= config_set(&d, "frame_tap_fps", "31") == 0;
+	bad |= config_set(&d, "frame_tap_scale", "4") || d.frame_tap_scale != 4;
+	bad |= config_set(&d, "frame_tap_scale", "0") == 0;
+	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
+	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
+	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;
+	bad |= d.isp.metering != METER_BOTTOM_STRONG || d.isp.hlc != 50;   /* defaults */
+	bad |= config_set(&d, "isp_metering", "bottom_strong") || d.isp.metering != METER_BOTTOM_STRONG;
+	bad |= config_set(&d, "isp_metering", "iq") || d.isp.metering != -1;
+	bad |= config_set(&d, "isp_metering", "top") == 0;
 	printf("edge cases %s\n", bad ? "FAIL" : "ok");
 	return r || bad;
 }

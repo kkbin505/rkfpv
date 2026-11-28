@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f54700">
+<title>rkfpv Configurator</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script>
+  // saved light/dark choice, before the first paint (no flash); none = follow the system
+  try { const t = localStorage.getItem("rkfpv.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<!-- rkfpvconf.py fills in the token; with the placeholder left in, this is the hosted page (USB or hotspot) -->
+<script>window.FPV_TOKEN = "__TOKEN__";</script>
+<!-- Tango ADB (MIT) for WebUSB, vendored in ./vendor: no CDN, no build step. Versions in vendor/VERSIONS. -->
+<script type="importmap">
+{
+  "imports": {
+    "@yume-chan/adb": "./vendor/@yume-chan/adb/esm/index.js",
+    "@yume-chan/adb-daemon-webusb": "./vendor/@yume-chan/adb-daemon-webusb/esm/index.js",
+    "@yume-chan/adb-credential-web": "./vendor/@yume-chan/adb-credential-web/esm/index.js",
+    "@yume-chan/async": "./vendor/@yume-chan/async/esm/index.js",
+    "@yume-chan/event": "./vendor/@yume-chan/event/esm/index.js",
+    "@yume-chan/no-data-view": "./vendor/@yume-chan/no-data-view/esm/index.js",
+    "@yume-chan/stream-extra": "./vendor/@yume-chan/stream-extra/esm/index.js",
+    "@yume-chan/struct": "./vendor/@yume-chan/struct/esm/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">rk<b>fpv</b> <span data-i18n="brand.sub"></span></div>
+  <div class="conn">
+    <select id="transport" data-i18n-title="conn.transport.title">
+      <option value="usb" data-i18n="conn.usb"></option>
+      <option value="adb" data-i18n="conn.adb"></option>
+      <option value="hotspot" data-i18n="conn.hotspot"></option>
+      <option value="fpvd" data-i18n="conn.fpvd"></option>
+      <option value="ssh" data-i18n="conn.ssh"></option>
+    </select>
+    <select id="device" data-i18n-title="conn.device.title"></select>
+    <input id="host" value="172.32.0.93" data-i18n-title="conn.host.title" hidden>
+    <button id="refresh" class="ghost" data-i18n-title="conn.refresh.title">⟳</button>
+    <button id="connect" class="primary" data-i18n="conn.connect"></button>
+  </div>
+  <div class="badges">
+    <select id="langSel" data-i18n-title="lang.title"></select>
+    <button id="themeBtn" class="ghost" type="button">◐</button>
+    <button id="previewBtn" class="ghost" data-i18n-title="preview.btn.title" disabled></button>
+    <span id="modeBadge" class="badge off"></span>
+  </div>
+</header>
+<div id="browserNote" class="banner" hidden></div>
+
+<div class="layout">
+  <nav id="tabs">
+    <a data-tab="status" class="active" data-i18n="tab.status"></a>
+    <a data-tab="live" data-i18n="tab.live"></a>
+    <a data-tab="Video" data-i18n="group.Video"></a>
+    <a data-tab="Camera" data-i18n="group.Camera"></a>
+    <a data-tab="image" data-i18n="tab.image"></a>
+    <a data-tab="Radio" data-i18n="group.Radio"></a>
+    <a data-tab="Telemetry" data-i18n="group.Telemetry"></a>
+    <a data-tab="dvr" data-i18n="tab.dvr"></a>
+    <a data-tab="presets" data-i18n="tab.presets"></a>
+    <a data-tab="logs" data-i18n="tab.logs"></a>
+    <a data-tab="cli" data-i18n="tab.cli"></a>
+  </nav>
+
+  <!-- wide screens: on the right, stays while switching tabs; portrait: at the top -->
+  <aside id="previewDock" hidden>
+    <div class="pvHead">
+      <b data-i18n="preview.title"></b> <span id="pvInfo" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="pvSize" class="ghost" data-i18n-title="preview.size.title">⤢</button>
+      <button id="pvStop" class="ghost" data-i18n-title="preview.stop.title">✕</button>
+    </div>
+    <div id="pvSlot"><canvas id="pvCanvas" width="1280" height="720"></canvas></div>
+    <div id="pvMsg" class="sub"></div>
+    <div class="row"><button id="pvFfplay" class="ghost" data-i18n="preview.ffplay" hidden></button></div>
+    <p class="sub pvNote" data-i18n="preview.note"></p>
+  </aside>
+
+  <main>
+    <div id="notConnected" class="empty">
+      <div id="ncLocal">
+        <h2 data-i18n="nc.local.title"></h2>
+        <ol>
+          <li data-i18n-html="nc.local.step1.html"></li>
+          <li data-i18n-html="nc.local.step2.html"></li>
+        </ol>
+        <p class="muted" data-i18n-html="nc.local.note.html"></p>
+      </div>
+      <div id="ncUsb" hidden>
+        <h2 data-i18n="nc.usb.title"></h2>
+        <ol>
+          <li data-i18n-html="nc.usb.step1.html"></li>
+          <li data-i18n-html="nc.usb.step2.html"></li>
+        </ol>
+        <p class="muted" data-i18n-html="nc.usb.note.html"></p>
+        <details>
+          <summary data-i18n="nc.usb.first"></summary>
+          <p data-i18n-html="nc.usb.linux.html"></p>
+          <pre>echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-rkfpv.rules
+sudo udevadm control --reload-rules</pre>
+          <p data-i18n-html="nc.usb.windows.html"></p>
+        </details>
+      </div>
+      <div id="ncHotspot" hidden>
+        <h2 data-i18n="nc.hs.title"></h2>
+        <ol>
+          <li data-i18n-html="nc.hs.step1.html"></li>
+          <li data-i18n-html="nc.hs.step2.html"></li>
+          <li data-i18n-html="nc.hs.step3.html"></li>
+        </ol>
+        <p class="muted" data-i18n-html="nc.hs.note.html"></p>
+      </div>
+    </div>
+
+    <section id="tab-status" class="tab" hidden>
+      <div class="grid">
+        <div class="box"><h3 data-i18n="status.mode"></h3><div class="big" id="stMode">–</div><div class="sub" id="stModeSub"></div></div>
+        <div class="box"><h3 data-i18n="status.stream"></h3><div class="big" id="stStream">–</div><div class="sub" id="stStreamSub"></div></div>
+        <div class="box"><h3 data-i18n="status.radio"></h3><div class="big" id="stRadio">–</div><div class="sub" id="stRadioSub"></div></div>
+        <div class="box"><h3 data-i18n="status.board"></h3><div class="big" id="stBoard">–</div><div class="sub" id="stBoardSub"></div></div>
+      </div>
+      <div class="box">
+        <h3 data-i18n="boot.title"></h3>
+        <p class="muted" data-i18n-html="boot.note.html"></p>
+        <div class="seg" id="bootMode">
+          <button data-mode="auto" data-i18n="boot.auto"></button>
+          <button data-mode="debug" data-i18n="boot.debug"></button>
+          <button data-mode="fpv" data-i18n="boot.fpv"></button>
+        </div>
+      </div>
+      <div class="box">
+        <h3 data-i18n="hs.title"></h3>
+        <p class="muted" data-i18n-html="hs.note.html"></p>
+        <div class="row" id="hsState"></div>
+        <div id="hsSettings"></div>
+      </div>
+      <div class="box" id="installBox">
+        <h3 data-i18n="install.title"></h3>
+        <p class="muted" data-i18n-html="install.note.html"></p>
+        <button id="install" data-i18n="install.btn"></button>
+      </div>
+    </section>
+
+    <section id="tab-live" class="tab" hidden>
+      <div class="liveStage" id="liveStage"></div>
+      <div class="row liveBar">
+        <span id="liveInfo" class="sub"></span>
+        <span class="spacer"></span>
+        <button id="liveFull" class="ghost" data-i18n="live.full"></button>
+      </div>
+      <div id="liveMsg" class="sub"></div>
+      <div id="liveControls"></div>
+    </section>
+
+    <section id="tab-form" class="tab" hidden>
+      <div id="formBody"></div>
+    </section>
+
+    <section id="tab-image" class="tab" hidden>
+      <div class="box note">
+        <h3 data-i18n="image.title"></h3>
+        <span data-i18n-html="image.note.html"></span>
+      </div>
+      <div id="imgPicture"></div>
+      <div id="imgExposure"></div>
+      <div id="imgNoise"></div>
+      <div class="box">
+        <h3 data-i18n="iq.title"></h3>
+        <div class="row" id="iqState"></div>
+        <p class="sub" data-i18n="iq.note"></p>
+        <div class="row">
+          <button id="iqUseStock" data-i18n="iq.useStock"></button>
+          <button id="iqUseCustom" data-i18n="iq.useCustom"></button>
+          <button id="iqCopy" class="ghost" data-i18n="iq.copy"></button>
+          <span class="spacer"></span>
+          <button id="iqUpload" class="primary" data-i18n="iq.upload"></button>
+          <input type="file" id="iqFile" accept=".json,application/json" hidden>
+        </div>
+        <p id="iqHint" class="sub"></p>
+        <table class="diff files">
+          <thead><tr><th data-i18n="iq.col.where"></th><th data-i18n="iq.col.file"></th><th data-i18n="iq.col.size"></th><th></th></tr></thead>
+          <tbody id="iqFiles"></tbody>
+        </table>
+        <div id="iqHistBox" hidden>
+          <h4 data-i18n="iq.history"></h4>
+          <table class="diff files"><tbody id="iqHistory"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-dvr" class="tab" hidden>
+      <div class="box dvrstate">
+        <h3 data-i18n="dvr.title"></h3>
+        <div class="row">
+          <span id="dvrBadge" class="recbadge">–</span>
+          <div class="dvrinfo">
+            <div id="dvrFile" class="big"></div>
+            <div id="dvrSub" class="sub"></div>
+          </div>
+          <span class="spacer"></span>
+          <button id="dvrToggle" class="primary bigbtn" data-i18n="dvr.start"></button>
+        </div>
+        <div class="space"><div id="dvrBar"></div></div>
+        <div id="dvrSpace" class="sub"></div>
+      </div>
+      <div class="box">
+        <h3 data-i18n="dvr.files"></h3>
+        <div class="row">
+          <button id="dvrRefresh" class="ghost" data-i18n="dvr.refresh"></button>
+          <button id="dvrAll" data-i18n="dvr.all"></button>
+          <button id="dvrOpen" class="ghost" data-i18n="dvr.open"></button>
+          <span class="spacer"></span>
+          <button id="dvrDelAll" class="ghost danger" data-i18n="dvr.delAll"></button>
+          <button id="dvrFormat" class="ghost danger" data-i18n="dvr.format" hidden></button>
+        </div>
+        <p id="dvrHint" class="sub"></p>
+        <table class="diff files">
+          <thead><tr><th data-i18n="dvr.col.file"></th><th data-i18n="dvr.col.size"></th><th></th></tr></thead>
+          <tbody id="dvrFiles"></tbody>
+        </table>
+      </div>
+      <div id="dvrSettings"></div>
+    </section>
+
+    <section id="tab-presets" class="tab" hidden>
+      <div class="box">
+        <h3 data-i18n="backup.title"></h3>
+        <p class="muted" data-i18n="backup.note"></p>
+        <div class="row">
+          <button id="backup" class="primary" data-i18n="backup.save"></button>
+          <button id="restore" data-i18n="backup.restore"></button>
+          <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+        </div>
+      </div>
+      <div class="box" id="diffBox" hidden>
+        <h3 id="diffTitle"></h3>
+        <p id="diffDesc" class="muted"></p>
+        <p id="diffEmpty" class="muted" data-i18n="diff.empty"></p>
+        <table id="diffTable" class="diff">
+          <thead><tr><th></th><th data-i18n="diff.col.setting"></th><th data-i18n="diff.col.now"></th><th></th><th data-i18n="diff.col.new"></th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="diffExtra" class="sub"></p>
+        <div class="row">
+          <button id="diffAll" class="ghost" data-i18n="diff.all"></button>
+          <button id="diffNone" class="ghost" data-i18n="diff.none"></button>
+          <span class="spacer"></span>
+          <button id="diffCancel" class="ghost" data-i18n="diff.cancel"></button>
+          <button id="diffApply" class="primary" data-i18n="diff.apply"></button>
+        </div>
+      </div>
+      <div class="box">
+        <h3 data-i18n="presets.title"></h3>
+        <p class="muted" data-i18n="presets.note"></p>
+        <div id="presetList" class="presets"></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab" hidden>
+      <div class="box">
+        <div class="row">
+          <div class="seg" id="logSel">
+            <button data-log="rkfpv" class="on" data-i18n="logs.rkfpv"></button>
+            <button data-log="rkfpv-prev" data-i18n="logs.rkfpvPrev"></button>
+            <button data-log="fpv" data-i18n="logs.fpv"></button>
+            <button data-log="kernel" data-i18n="logs.kernel"></button>
+          </div>
+          <span class="spacer"></span>
+          <button id="logReload" class="ghost" data-i18n="logs.reload"></button>
+        </div>
+        <pre id="logText" class="log"></pre>
+      </div>
+    </section>
+
+    <section id="tab-cli" class="tab" hidden>
+      <div class="box cli">
+        <pre id="cliOut" class="log"></pre>
+        <form id="cliForm" class="row">
+          <span class="prompt">#</span>
+          <input id="cliIn" autocomplete="off" autocapitalize="off" spellcheck="false" data-i18n-placeholder="cli.placeholder">
+          <button class="primary" data-i18n="cli.send"></button>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer id="saveBar" hidden>
+  <span id="saveInfo"></span>
+  <span class="spacer"></span>
+  <button id="revert" class="ghost" data-i18n="save.revert"></button>
+  <button id="save" class="primary" data-i18n="save.save"></button>
+</footer>
+
+<div id="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

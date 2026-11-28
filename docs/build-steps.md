@@ -31,6 +31,7 @@ cd luckfox-pico
 |---|---|---|
 | Mini DTS, `&usbdrd_dwc3` | `dr_mode = "otg"; usb-role-switch; role-switch-default-mode = "peripheral";` | one USB port: device for ADB, host for the WiFi card |
 | Mini DTS | `&uart3 { status = "okay"; }` | MAVLink to the flight controller |
+| Mini DTS | `&uart4 { status = "okay"; }` (UART4_M1: TX GPIO1_C4 = header pin 10, RX GPIO1_C5 = pin 11) | Betaflight serial blackbox (`bblog`, docs/blackbox.md) |
 | `luckfox_rv1106_linux_defconfig` | `CONFIG_CFG80211`, `WIRELESS`, `WLAN`, `WEXT` on | Realtek monitor-mode drivers need cfg80211 |
 | same | `# CONFIG_USB_MASS_STORAGE is not set` | built-in `g_mass_storage` grabbed the UDC and broke ADB ("dwc3 failed to add gadget") |
 | `drivers/usb/dwc3/drd.c` | `dwc3_role_switch.allow_userspace_control = true;` | otherwise no writable `/sys/class/usb_role/*/role` |
@@ -74,6 +75,8 @@ Drivers are built through kbuild (`make -C $KSRC M=...`), not the driver's own M
 DRONE_KEY=~/github/openipc/keys/drone.key luckfox/mkoverlay.sh
 cd ../luckfox-pico && ./build.sh      # -> output/image/sd_update.img
 ```
+
+`mkoverlay.sh` also writes `output/image/dvr.img` (64 KB of zeros) for the DVR partition: without it the SDK packer stops with `dvr.img not found`. Run it again after an SDK clean.
 
 Overlay contents:
 - `/usr/bin/rkfpv`, `mavbridge`, `wfb_tx`, `wfb_rx`, `wfb_tx_cmd`, `wfb.sh`
@@ -152,7 +155,7 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 
 - Board: `fpv get | set k v … | schema | status | log | restart | mode | reset` (add `--json`). The parameter table in `files/fpv` is the single list of settings.
 - Logs now persist in `/userdata/log` (`rkfpv.log`, `rkfpv.prev.log`, `fpv.log`) so they survive the reboot into ADB mode.
-- PC: `python3 configurator/fpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
+- PC: `python3 configurator/rkfpvconf.py` → Betaflight-style UI in the browser, talks to the board via `adb shell fpv … --json`.
 - Before reflashing: `adb push files/fpv /usr/bin/` (or the UI's *Install / update on board*).
 - Tests: `test/test_fpv.sh` (dash + busybox sh), part of `make test`.
 
@@ -167,3 +170,60 @@ Result: 1280x720 @ 30 fps, 0 lost, a few FEC recoveries/s, SNR 23–26 dB.
 
 - `isp_*` settings call rkaiq at runtime (exposure cap, gain cap, AE delay/damping, NR, BLC/HLC, colour, sharpness, WB, dehaze, anti-flicker). `iq` = the IQ file's value; spatial and temporal NR default to **off**.
 - IQ files: stock `/oem/usr/share/iqfiles` is read-only; edits live in `/userdata/iq` (`fpv iq copy-stock|install|history|rollback`, `iq_dir`). Uploads are validated, md5-checked and swapped atomically; the last 5 versions are kept. A custom IQ that fails, or two starts in a row without a frame, falls back to stock.
+
+## 15. Hotspot mode (wireless-settings branch)
+
+- Button: the board's BOOT button. It pulls SARADC channel 0 to GND (`in_voltage0_raw` 1023 released, ~10 pressed); the stock DTS already enables the ADC, no DTS change. (BOOT held at power-up = maskrom, so it is only read after boot.)
+- SDK edit: buildroot defconfig `BR2_PACKAGE_HOSTAPD=y`, `BR2_PACKAGE_DNSMASQ=y`.
+- fpvd reads the ADC every 200 ms; held 2 s it toggles: `S99fpv hotspot-off` if `/tmp/mode.status` is `hotspot`, else `hotspot-on`. One action per press; ignored while the mode is unset or `switching`.
+- hotspot-on:
+  - stop rkfpv and wfb
+  - `wfb.sh adapter`
+  - wlan0 managed, 10.0.0.1/24
+  - hostapd (WPA2, settings from `wfb.yaml` `hotspot:`)
+  - dnsmasq DHCP 10.0.0.10–.50
+  - `dvrhttpd` on port 80
+- hotspot-off restarts wfb and rkfpv.
+- Tests: `test_switch.py` (fake ADC file), `test_dvrhttpd.py`, fpv str-type cases.
+
+## 16. Luckfox Pico Pro (RV1106G2, 128 MB, SPI NAND boot, TF card for recordings)
+
+Same programs and overlay as the Mini; rkfpv, wfb, fpvd, mavbridge and the WiFi drivers are not board specific (same media libs, kernel config and toolchain). What differs:
+
+| | Mini | Pro |
+|---|---|---|
+| SDK board (`./build.sh lunch`) | `RV1103_Luckfox_Pico_Mini`, SD card | `RV1106_Luckfox_Pico_Pro_Max`, SPI_NAND |
+| Overlay | `luckfox/mkoverlay.sh` | `BOARD=pro luckfox/mkoverlay.sh` |
+| System | TF card | onboard 256 MB SPI NAND (ubifs) |
+| Recordings | TF card partition `dvr`, formatted on first boot | TF card in the slot, ext4, **never formatted automatically**: `fpv dvr format --yes` or the configurator's *Format card* button |
+| CMA | 24M of 64 MB | 48M of 128 MB |
+| Image | `output/image/sd_update.img` | `output/image/update.img` |
+| Update without reflashing | edit the card on a PC | `luckfox/push-update.sh` (adb) |
+
+SDK edits for the Pro (local, like the Mini's):
+
+| File | Change |
+|---|---|
+| `rv1106g-luckfox-pico-pro-max.dts` `&usbdrd_dwc3` | `dr_mode = "otg"; usb-role-switch; role-switch-default-mode = "peripheral";` (same as the Mini) |
+| same, `&uart3` | `status = "okay"` — UART3_M1: TX GPIO1_D0, RX GPIO1_D1 (other header pins than on the Mini: check the Pro pinout) |
+| same, `&uart4` | `status = "okay"` — UART4_M1: TX GPIO1_C4 = header pin 7, RX GPIO1_C5 = pin 6 (blackbox, docs/blackbox.md) |
+| Pro_Max SPI_NAND BoardConfig (by `mkoverlay.sh`) | no separate oem partition (`RK_BUILD_APP_TO_OEM_PARTITION` off; the SDK would empty `rootfs/oem` and drop our drivers), table `…4M(boot),10M(userdata),240M(rootfs)`, CMA 48M, no SDIO WiFi stack, `overlay-rkfpv` |
+
+Build (the SDK builds one board at a time; keep the Mini's `sd_update.img` first):
+
+```sh
+cd ~/github/luckfox-pico
+./build.sh lunch            # RV1106_Luckfox_Pico_Pro_Max, SPI_NAND, Buildroot
+./build.sh clean && ./build.sh kernel
+cd ~/github/rkfpv && make && luckfox/build-deps.sh      # drivers against this kernel
+DRONE_KEY=... BOARD=pro luckfox/mkoverlay.sh
+cd ../luckfox-pico && ./build.sh                        # -> output/image/update.img
+```
+
+Flash (first time): Windows, Luckfox **SocToolKit**: hold BOOT while plugging USB (maskrom), choose RV1106, load `update.img`, download. Linux alternative: `tools/linux/Linux_Upgrade_Tool` (`upgrade_tool uf update.img`, needs root and its udev rules).
+
+Later updates: `make && luckfox/push-update.sh`, then reboot. Settings and the key stay.
+
+TF card: put it in **before power-on** (the SDK's sdmmc node is non-removable, a card inserted later is not seen). A new card is FAT32: `fpv dvr status` says `unformatted` until `fpv dvr format --yes`. The card the system boots from is never picked (on the Mini only its `dvr` partition is).
+
+To check on the first boot: BOOT button on SARADC channel 0 like the Mini (`cat /sys/bus/iio/devices/iio:device0/in_voltage0_raw`: ~1023 released, ~10 pressed); `fpv status` shows `board: Luckfox Pico Pro Max`.

@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 52 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 67 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -134,8 +134,9 @@ D="$T/root/mnt/dvr"
 head -c 3000 /dev/zero > "$D/rec_0001_00.mp4"
 head -c 2000 /dev/zero > "$D/rec_0001_01.mp4"
 head -c 1000 /dev/zero > "$D/rec_0002_00.ts"
+head -c 500 /dev/zero > "$D/rec_0001_01.bbl"
 touch "$D/notes.txt"
-check "dvr list newest first" "rec_0002_00.ts rec_0001_01.mp4 rec_0001_00.mp4" \
+check "dvr list newest first, blackbox logs too" "rec_0002_00.ts rec_0001_01.mp4 rec_0001_01.bbl rec_0001_00.mp4" \
 	"$(fpv dvr list --json | python3 -c 'import json,sys; print(" ".join(f["name"] for f in json.load(sys.stdin)["files"]))')"
 check "dvr list sizes" "1000" "$(fpv dvr list --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"][0]["size"])')"
 fpv dvr delete ../../etc/rkfpv.conf > /dev/null 2>&1 && bad "path delete accepted" || ok "path delete rejected"
@@ -143,6 +144,8 @@ fpv dvr delete notes.txt > /dev/null 2>&1 && bad "non-recording delete accepted"
 [ -f "$T/root/etc/rkfpv.conf" ] && [ -f "$D/notes.txt" ] && ok "other files untouched" || bad "other files touched"
 fpv dvr delete rec_0001_00.mp4 > /dev/null && [ ! -e "$D/rec_0001_00.mp4" ] && ok "dvr delete" || bad "dvr delete"
 fpv dvr delete rec_0009_00.mp4 > /dev/null 2>&1 && bad "missing file delete ok" || ok "missing file delete fails"
+fpv dvr delete rec_0001_01.bbl > /dev/null && [ ! -e "$D/rec_0001_01.bbl" ] && ok "blackbox log delete" || bad "blackbox log delete"
+fpv dvr delete rec_0001_01.bbl.txt > /dev/null 2>&1 && bad "bad .bbl name accepted" || ok "bad .bbl name rejected"
 fpv dvr delete-all > /dev/null
 check "delete-all keeps non-recordings" "notes.txt" "$(ls "$D")"
 fpv dvr start > /dev/null 2>&1 && bad "start without FPV accepted" || ok "start refused when FPV is off"
@@ -152,8 +155,66 @@ check "dvr settings written" "dvr_segment = 300|dvr_overwrite = 0|dvr_format = t
 	"$(grep -E '^dvr_(segment|overwrite|format)' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//' | tr '\n' '|' | sed 's/|$//')"
 fpv set dvr_format mkv > /dev/null 2>&1 && bad "bad dvr_format accepted" || ok "bad dvr_format rejected"
 fpv set dvr_segment 5 > /dev/null 2>&1 && bad "dvr_segment 5 accepted" || ok "dvr_segment below 10 rejected"
+
+# Betaflight blackbox (bblog): settings, status, selftest guards
+fpv set blackbox 1 blackbox_baud 2000000 dvr_osd 0 > /dev/null
+check "blackbox settings written" "dvr_osd = 0|blackbox = 1|blackbox_baud = 2000000" \
+	"$(grep -E '^(dvr_osd|blackbox|blackbox_baud) ' "$T/root/etc/rkfpv.conf" | sed 's/ *#.*//' | tr '\n' '|' | sed 's/|$//')"
+fpv set blackbox_baud 115200 > /dev/null 2>&1 && bad "blackbox_baud 115200 accepted" || ok "blackbox_baud not in the list rejected"
+check "blackbox status: enabled, not running" "True 2000000 stopped" \
+	"$(fpv blackbox status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["enabled"], d["baud"], d["state"])')"
+check "fpv status has blackbox" "stopped" \
+	"$(fpv status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["blackbox"])')"
+fpv blackbox selftest 1234 > /dev/null 2>&1 && bad "selftest odd baud accepted" || ok "selftest odd baud rejected"
+
+# local MAVLink port (mavbridge -j), in wfb.yaml under telemetry:
+check "mav_local_port default off" "0" "$(fpv get mav_local_port | sed 's/^[^=]*= *//')"
+fpv set mav_local_port 14570 > /dev/null
+check "mav_local_port written under telemetry" "telemetry:|  mav_local_port: 14570" \
+	"$(grep -E '^telemetry:|mav_local_port:' "$T/root/etc/wfb.yaml" | grep -v '#' | tr '\n' '|' | sed 's/|$//')"
+fpv set mav_local_port 70000 > /dev/null 2>&1 && bad "mav_local_port 70000 accepted" || ok "mav_local_port out of range rejected"
+fpv set mav_local_port 0 > /dev/null
+fpv blackbox selftest -r x > /dev/null 2>&1 && bad "selftest bad rate accepted" || ok "selftest bad rate rejected"
+check "selftest without UART4" "no /dev/ttyS4" \
+	"$(fpv blackbox selftest 2>&1 | sed -n 's/.*\(no \/dev\/ttyS4\).*/\1/p')"
+fpv blackbox nope > /dev/null 2>&1 && bad "blackbox bad subcommand accepted" || ok "blackbox bad subcommand rejected"
 rm -rf "$T/root/mnt" "$T/root/tmp"
 check "no partition -> no-card" "no-card" "$(fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+
+# DVR card discovery and format (fake sysfs, fake mkfs/mount in PATH)
+setup
+B="$T/root/sys/class/block"
+dstate() { fpv dvr status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])'; }
+# Mini: boot card mmcblk1, partition named dvr
+mkdir -p "$B/mmcblk1/mmcblk1p6" "$B/mmcblk1/mmcblk1p7" "$B/mmcblk1p6" "$B/mmcblk1p7" "$T/root/proc"
+printf 'DEVNAME=mmcblk1p6\nPARTNAME=rootfs\n' > "$B/mmcblk1p6/uevent"
+printf 'DEVNAME=mmcblk1p7\nPARTNAME=dvr\n' > "$B/mmcblk1p7/uevent"
+echo "console=ttyFIQ0 root=/dev/mmcblk1p6 rootwait" > "$T/root/proc/cmdline"
+check "mini: dvr partition" "/dev/mmcblk1p7 part other" "$(fpv dvr device)"
+rm -rf "$B/mmcblk1p7" "$B/mmcblk1/mmcblk1p7"
+check "mini without dvr partition: boot card never picked" "" "$(fpv dvr device)"
+# Pro: NAND boot (ubi), TF card mmcblk0 with one partition
+rm -rf "$B"; mkdir -p "$B/mmcblk0/mmcblk0p1" "$B/mmcblk0p1" "$B/mtdblock3" "$T/root/dev"
+echo "console=ttyFIQ0 ubi.mtd=5 root=ubi0:rootfs rootfstype=ubifs" > "$T/root/proc/cmdline"
+printf 'Luckfox Pico Pro Max\000' > "$T/root/proc/device-tree/model" 2>/dev/null || { mkdir -p "$T/root/proc/device-tree"; printf 'Luckfox Pico Pro Max\000' > "$T/root/proc/device-tree/model"; }
+check "pro: TF card first partition" "/dev/mmcblk0p1 card other" "$(fpv dvr device)"
+head -c 4096 /dev/zero > "$T/root/dev/mmcblk0p1"          # FAT or blank: not ext4
+check "pro: new card is unformatted" "unformatted" "$(dstate)"
+check "status board + unformatted" "Luckfox Pico Pro Max unformatted" \
+	"$(fpv status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["board"], d["dvr_state"])')"
+mkdir -p "$T/bin"
+for c in mkfs.ext4 mount umount; do
+	printf '#!/bin/sh\necho "%s $*" >> "%s/cmds"\n' "$c" "$T" > "$T/bin/$c"; chmod +x "$T/bin/$c"
+done
+fpvp() { PATH=$T/bin:$PATH fpv "$@"; }
+fpvp dvr format > /dev/null 2>&1 && bad "format without --yes accepted" || ok "format needs --yes"
+[ ! -e "$T/cmds" ] && ok "nothing run without --yes" || bad "commands ran without --yes"
+fpvp dvr format --yes > /dev/null && grep -q "^mkfs.ext4 -F -q -L dvr -m 0 $T/root/dev/mmcblk0p1\$" "$T/cmds" \
+	&& grep -q "^mount -t ext4 .* $T/root/dev/mmcblk0p1 $T/root/mnt/dvr\$" "$T/cmds" \
+	&& ok "format: mkfs + mount on the TF card" || bad "format: $(cat "$T/cmds" 2>/dev/null)"
+rm -rf "$B/mmcblk0" "$B/mmcblk0p1"
+fpvp dvr format --yes > /dev/null 2>&1 && bad "format without a card accepted" || ok "format refuses with no card"
+check "pro: no card -> no-card" "no-card" "$(rm -rf "$T/root/mnt"; dstate)"
 
 # ISP settings: words and ranges
 setup
@@ -166,6 +227,11 @@ fpv set isp_exp_max off > /dev/null 2>&1 && bad "off accepted where not allowed"
 fpv set isp_sharpness auto > /dev/null 2>&1 && bad "auto accepted on an iq key" || ok "auto only on auto keys"
 fpv set txpower_8812cu iq > /dev/null 2>&1 && bad "iq accepted on txpower" || ok "iq only on iq keys"
 fpv set isp_antiflicker 55 > /dev/null 2>&1 && bad "antiflicker 55 accepted" || ok "antiflicker 55 rejected"
+check "metering default" "isp_metering = bottom_strong|isp_hlc = 50" "$(fpv get isp_metering isp_hlc | tr '\n' '|' | sed 's/|$//')"
+fpv set isp_metering average > /dev/null
+check "metering stored" "isp_metering = average" "$(fpv get isp_metering)"
+fpv set isp_metering top > /dev/null 2>&1 && bad "metering top accepted" || ok "metering top rejected"
+check "metering on the Image tab" "Exposure" "$(fpv schema --json | python3 -c 'import json,sys; print(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_metering")["group"])')"
 check "schema specials" "iq off" "$(fpv schema --json | python3 -c 'import json,sys; print(" ".join(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_nr_spatial")["specials"]))')"
 check "schema base type" "int" "$(fpv schema --json | python3 -c 'import json,sys; print(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_nr_spatial")["type"])')"
 
@@ -201,6 +267,24 @@ cmp -s "$T/stock.orig" "$S/sc3336_T.json" && ok "stock file never changed" || ba
 check "iq status lists both" "sc3336_T.json sc3336_T.json" \
 	"$(fpv iq status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stock"][0]["name"], d["custom"][0]["name"])')"
 
+# hotspot settings (str type)
+setup
+fpv set hotspot_ssid rkfpv-1a2b hotspot_pass Secret_12.ab hotspot_channel 149 > /dev/null
+check "hotspot settings stored" "hotspot_ssid = rkfpv-1a2b|hotspot_pass = Secret_12.ab|hotspot_channel = 149" \
+	"$(fpv get hotspot_ssid hotspot_pass hotspot_channel | tr '\n' '|' | sed 's/|$//')"
+check "stored under hotspot: in wfb.yaml" "hotspot:|  hotspot_pass: Secret_12.ab|  hotspot_ssid: rkfpv-1a2b" \
+	"$(grep -A2 '^hotspot:' "$T/root/etc/wfb.yaml" | tr '\n' '|' | sed 's/|$//')"
+for bad in "has space" 'x;reboot' 'a$b' "q'q" ''; do
+	fpv set hotspot_ssid "$bad" > /dev/null 2>&1 && bad "ssid '$bad' accepted" || ok "ssid '$bad' rejected"
+done
+fpv set hotspot_pass short1 > /dev/null 2>&1 && bad "7-char password accepted" || ok "password under 8 rejected"
+fpv set hotspot_ssid "$(printf 'a%.0s' $(seq 33))" > /dev/null 2>&1 && bad "33-char ssid accepted" || ok "ssid over 32 rejected"
+fpv set hotspot_channel 13 > /dev/null 2>&1 && bad "channel 13 accepted" || ok "channel 13 rejected"
+check "schema str pattern" "str 1 32" "$(fpv schema --json | python3 -c 'import json,sys; p=next(x for x in json.load(sys.stdin)["params"] if x["key"]=="hotspot_ssid"); print(p["type"], p["min"], p["max"])')"
+mkdir -p "$T/root/tmp"; echo "switch=closed mode_request=hotspot" > "$T/root/tmp/switch.status"; echo hotspot > "$T/root/tmp/mode.status"
+check "hotspot status" "closed hotspot rkfpv-1a2b" \
+	"$(fpv hotspot status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["switch"], d["mode"], d["ssid"])')"
+
 # every preset in configurator/presets must be accepted by fpv as a whole
 for f in "$HERE"/configurator/presets/*.json; do
 	setup
@@ -214,6 +298,28 @@ fpv mode debug > /dev/null; [ -e "$T/root/userdata/fpv.off" ] && ok "mode debug"
 fpv mode auto > /dev/null; [ ! -e "$T/root/userdata/fpv.off" ] && ok "mode auto" || bad "mode auto"
 fpv set bitrate 5000 > /dev/null; fpv reset > /dev/null
 check "reset" "bitrate = 3500" "$(fpv get bitrate)"
+
+# wired preview: only in debug mode, runs S99fpv preview-on/off
+setup
+mkdir -p "$T/root/tmp" "$T/root/etc/init.d"
+printf '#!/bin/sh\necho "$1" >> %s/init.log\n' "$T" > "$T/root/etc/init.d/S99fpv"
+chmod 755 "$T/root/etc/init.d/S99fpv"
+rm -f "$T/init.log"
+echo fpv > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null 2>&1 && bad "preview refused in FPV mode" || ok "preview refused in FPV mode"
+[ ! -e "$T/init.log" ] && ok "refused preview ran nothing" || bad "refused preview ran nothing"
+echo debug > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null && fpv preview off > /dev/null
+check "preview on/off in debug mode" "preview-on|preview-off" "$(tr '\n' '|' < "$T/init.log" | sed 's/|$//')"
+check "preview status json" '{"ok":true,"running":false,"port":5602,"mode":"debug"}' "$(fpv preview status --json)"
+# hotspot mode: live view for the web configurator
+rm -f "$T/init.log"
+echo hotspot > "$T/root/tmp/mode.status"
+fpv preview on > /dev/null && fpv preview off > /dev/null
+check "preview on/off in hotspot mode" "preview-on|preview-off" "$(tr '\n' '|' < "$T/init.log" | sed 's/|$//')"
+check "status mode in hotspot mode" "hotspot" "$(fpv status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')"
+sed -i 's/^preview_port = .*/preview_port = 0/' "$T/root/etc/rkfpv.conf"
+fpv preview on > /dev/null 2>&1 && bad "preview_port 0 refused" || ok "preview_port 0 refused"
 
 echo "$((n - fail))/$n passed"
 [ $fail -eq 0 ]

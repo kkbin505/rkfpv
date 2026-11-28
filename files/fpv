@@ -9,10 +9,20 @@
 #   fpv status                       mode, stream stats, radio, memory, temperature
 #   fpv log [rkfpv|rkfpv-prev|fpv|kernel] [lines]
 #   fpv restart [video|link|all]     apply settings that need a restart
+#                                    (no argument: only what pending changes need)
 #   fpv mode [fpv|debug|auto]        boot override (see S99fpv)
 #   fpv reset                        restore shipped defaults
 #   fpv dvr status|start|stop|list|delete <file>|delete-all
+#   fpv dvr device|format --yes      recording card (format: ext4, erases it)
+#   fpv blackbox status              Betaflight serial blackbox logger (UART4)
+#   fpv blackbox selftest [-r KB/s] [baud...]   UART4 TX wired to RX: send and
+#                                    compare BF-format logs (no flight controller)
+#   fpv plugins [status]            add-on programs in /etc/fpv/plugins.d
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
+#   fpv hotspot status               BOOT button, mode, SSID, password, clients
+#   fpv preview on|off|status        debug mode (board on a PC) or hotspot mode:
+#                                    run the video for the configurator's preview
+#                                    (adb forward, or dvrhttpd /live on the hotspot)
 #   add --json to any command for machine-readable output
 #
 # FPV_ROOT prefixes every path (tests run this on a PC).
@@ -29,6 +39,10 @@ ISP_STATUS=$R/tmp/isp.status
 IQ_HISTORY_KEEP=5
 DVR_DIR=$R/mnt/dvr
 DVR_STATUS=$R/tmp/dvr.status
+BB_STATUS=$R/tmp/bblog.status
+PLUGIN_DIR=$R/etc/fpv/plugins.d
+PLUGIN_STATUS=$R/tmp/plugins.status
+BB_DEV=/dev/ttyS4
 INIT=$R/etc/init.d/S99fpv
 WFB_CMD_PORT=8000
 WLAN=wlan0
@@ -42,6 +56,7 @@ WLAN=wlan0
 # file:   rkfpv -> /etc/rkfpv.conf (key = value)
 #         wfb   -> /etc/wfb.yaml under <section>: (key: value)
 # type:   int (min..max) | bool (0/1) | enum (choices in min, comma separated)
+#         str (length min..max, letters digits _ . -)
 #         a type like int+iq+off also accepts those words besides a number:
 #           auto (wfb keys: written commented out = adapter default)
 #           iq   (keep the IQ file's value)   off
@@ -65,8 +80,8 @@ slice_bytes|rkfpv||int|0|65536|0|video|Video|Slice size, bytes (0 = one slice pe
 intra_refresh|rkfpv||int|0|64|0|video|Video|Rolling intra refresh rows (0 = off, IDR every gop)
 pkt_size|rkfpv||int|200|4000|1400|video|Video|RTP packet size, bytes
 pt|rkfpv||int|96|127|97|video|Video|RTP payload type (97 = H.265 for OpenIPC ground stations)
-mirror|rkfpv||bool|0|1|0|video|Camera|Mirror left-right
-flip|rkfpv||bool|0|1|0|video|Camera|Flip upside down (mirror + flip = rotate 180)
+mirror|rkfpv||bool|0|1|1|video|Camera|Mirror left-right
+flip|rkfpv||bool|0|1|1|video|Camera|Flip upside down (mirror + flip = rotate 180)
 channel|wfb|wireless|int|1|196|161|link|Radio|WiFi channel (ground station must match)
 width|wfb|wireless|enum|20,40||20|link|Radio|Channel width, MHz
 txpower_8812au|wfb|wireless|int+auto|1|63|auto|txpower|Radio|RTL8812AU TX power: power index 1-63, ~0.5 dB/step, 63 = max (auto = 20)
@@ -80,6 +95,7 @@ fec_n|wfb|broadcast|int|2|32|12|fec|Radio|FEC packets per block incl. recovery (
 link_id|wfb|broadcast|int|0|16777215|7669206|link|Radio|Link ID (ground station must match)
 telemetry_enabled|wfb|telemetry|enum|true,false||true|link|Telemetry|MAVLink telemetry over wfb-ng
 baud|wfb|telemetry|enum|57600,115200,230400,460800,921600||115200|link|Telemetry|Flight-controller UART baud rate
+mav_local_port|wfb|telemetry|int|0|65535|0|link|Telemetry|MAVLink port on 127.0.0.1 for programs on the board: what they send goes to the flight controller, and every sender gets its stream back (0 = off, e.g. 14570; see docs/extending.md)
 isp_brightness|rkfpv||int+iq|0|255|iq|venc|Picture|Brightness, 128 = neutral (iq = the IQ file's value)
 isp_contrast|rkfpv||int+iq|0|255|iq|venc|Picture|Contrast, 128 = neutral
 isp_saturation|rkfpv||int+iq|0|255|iq|venc|Picture|Saturation, 128 = neutral (0 = black and white)
@@ -89,23 +105,37 @@ isp_wb|rkfpv||enum|auto,daylight,cloudy,shade,twilight,fluorescent,incandescent|
 isp_exp_max|rkfpv||int+iq|1|33|iq|venc|Exposure|Longest exposure, ms (IQ: 30). Shorter = less motion blur, darker and noisier in low light; FPV often 2-8. Below 10 ms anti-flicker is turned off
 isp_gain_max|rkfpv||int+iq|1|512|iq|venc|Exposure|Highest gain, x (IQ: 512). Lower = less noise at night, darker image
 isp_antiflicker|rkfpv||enum|iq,off,50,60||iq|venc|Exposure|Mains-light flicker, Hz (indoors); needs exposure steps of 10 / 8.3 ms
+isp_metering|rkfpv||enum|iq,average,bottom,bottom_strong||bottom_strong|venc|Exposure|Metering: which part of the picture auto-exposure exposes for. bottom_strong (default) / bottom = ground over sky, so a backlit horizon doesn't turn the ground black; average = whole picture; iq = the IQ file (center-weighted: exposes for the sky, dark ground)
 isp_ae_delay|rkfpv||int+iq|0|4|iq|venc|Exposure|Frames before auto-exposure reacts (IQ: 2). 0 = fastest, may hunt under flickering light
 isp_ae_damp|rkfpv||int+iq|0|100|iq|venc|Exposure|AE damping bright-to-dark, x0.01 (IQ: 0.45). Which way is faster is still to be checked on the board
-isp_blc|rkfpv||int+off|1|100|off|venc|Exposure|Backlight compensation: brighter subject against a bright sky (do not combine with highlight comp)
-isp_hlc|rkfpv||int+off|1|100|off|venc|Exposure|Highlight compensation: hold back bright areas such as sky (do not combine with backlight comp)
+isp_blc|rkfpv||int+off|1|100|off|venc|Exposure|Backlight compensation: much brighter ground, but a quarter of the picture clips and it replaces the metering setting (do not combine with highlight comp)
+isp_hlc|rkfpv||int+off|1|100|50|venc|Exposure|Highlight compensation: hold back bright areas such as sky; 50 (default) together with bottom metering. Alone with iq metering the ground goes dark (do not combine with backlight comp)
 isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise reduction. off = sharpest, noisier in low light
 isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
 isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)
 iq_dir|rkfpv||enum|/oem/usr/share/iqfiles,/userdata/iq||/oem/usr/share/iqfiles|video|IQ|IQ (sensor tuning) files: stock, or your edited copy in /userdata/iq. A custom file that fails falls back to stock
-dvr|rkfpv||bool|0|1|1|boot|DVR|Record automatically when FPV starts (Start/Stop works any time)
+hotspot_ssid|wfb|hotspot|str|1|32||hotspot|Hotspot|Hotspot network name (generated as rkfpv-XXXX on first boot); used next time the hotspot turns on (hold BOOT 2 s)
+hotspot_pass|wfb|hotspot|str|8|63||hotspot|Hotspot|WPA2 password, 8-63 characters (random on first boot)
+hotspot_channel|wfb|hotspot|enum|36,40,44,48,149,153,157,161,1,6,11||36|hotspot|Hotspot|Hotspot channel: 36-161 = 5 GHz, 1/6/11 = 2.4 GHz. Pick the band your antenna is made for: transmitting on the wrong band can damage the card
+hotspot_country|wfb|hotspot|str|2|2|US|hotspot|Hotspot|Country code for the radio rules (two letters, e.g. US, DE, CN): decides which 5 GHz channels may run an access point
+osd|rkfpv||bool|0|1|0|video|Video|Experimental OSD burned into the video (flight mode, battery, link quality). Off by default until tested on hardware
+osd_ext_port|rkfpv||int|0|65535|0|video|Video|UDP port on 127.0.0.1 where programs on the board send boxes, text and crosses for the OSD (needs osd = 1). 0 = off. See docs/extending.md
+osd_ext_ttl_ms|rkfpv||int|100|10000|500|video|Video|Shapes from other programs disappear this long after their last datagram, ms
+frame_tap|rkfpv||bool|0|1|0|video|Video|Grey copy of the camera picture in shared memory (/dev/shm/rkfpv-frame) for programs on the board, e.g. detection. Costs a third camera buffer (about 1.4 MB at 720p). See docs/extending.md
+frame_tap_fps|rkfpv||int|1|30|10|video|Video|Frame tap: pictures per second
+frame_tap_scale|rkfpv||enum|1,2,4||2|video|Video|Frame tap size: 1 full, 2 half (720p gives 640x360), 4 quarter (320x180, for the Mini)
+dvr|rkfpv||bool|0|1|0|boot|DVR|DVR on/off. Off (default) = nothing allocated, saves RAM. On = record from FPV start; Start/Stop works while on
 dvr_segment|rkfpv||int|10|3600|600|venc|DVR|Seconds per file; the next file starts at the next keyframe
 dvr_min_free|rkfpv||int|10|100000|300|venc|DVR|MB to keep free on the card
 dvr_overwrite|rkfpv||bool|0|1|1|venc|DVR|When full: 1 = delete the oldest recordings, 0 = stop recording
-dvr_size|rkfpv||enum|1920x1080,1280x720,2304x1296,link||1920x1080|video|DVR|Recording resolution (own encoder on the ISP main path); link = record the radio stream
+dvr_size|rkfpv||enum|link,1920x1080,1280x720,2304x1296||link|video|DVR|Recording resolution. link = record the radio stream (no extra RAM); a size = second encoder on the ISP main path (needs much more RAM/CMA)
 dvr_bitrate|rkfpv||int|1000|20000|8000|venc|DVR|Recording bitrate, kbit/s (the radio stream is set on the Video tab)
 dvr_rc|rkfpv||enum|vbr,cbr||vbr|venc|DVR|Recording rate control: vbr spends bits where the scene needs them
 dvr_gop|rkfpv||int|1|120|30|venc|DVR|Recording keyframe interval, frames. MP4 holds one GOP in RAM (bitrate x GOP): keep about 1 s
 dvr_format|rkfpv||enum|mp4,ts||mp4|venc|DVR|mp4 = fragmented MP4 (plays after a power cut), ts = MPEG-TS; from the next file
+dvr_osd|rkfpv||bool|0|1|1|video|DVR|OSD in the recording. 0 = clean recording for Gyroflow, the radio stream keeps its OSD. Needs the recording's own encoder (dvr_size not link)
+blackbox|rkfpv||bool|0|1|0|video|DVR|Save the flight controller's Betaflight blackbox (UART4 RX, BF: blackbox_device = SERIAL) as rec_SSSS_NN.bbl next to the recording it belongs to, for Gyroflow
+blackbox_baud|rkfpv||enum|1000000,1500000,2000000||1500000|video|DVR|Blackbox UART baud rate: the same as the flight controller's blackbox port. Check it with 'fpv blackbox selftest'
 EOF
 }
 
@@ -235,6 +265,11 @@ EOF
 			fi ;;
 		enum)
 			case ",$min," in *",$2,"*) ;; *) echo "$1: '$2' not one of $min"; return 1 ;; esac ;;
+		str)
+			case "$2" in *[!A-Za-z0-9_.-]*) echo "$1: only letters, digits and _ . - are allowed"; return 1 ;; esac
+			if [ ${#2} -lt "$min" ] || [ ${#2} -gt "$max" ]; then
+				echo "$1: length must be $min..$max"; return 1
+			fi ;;
 	esac
 	return 0
 }
@@ -307,6 +342,8 @@ cmd_schema() {
 		fi
 		if [ "$type" = enum ]; then
 			printf '"choices":["%s"],' "$(echo "$min" | sed 's/,/","/g')"
+		elif [ "$type" = str ]; then
+			printf '"min":%s,"max":%s,"pattern":"^[A-Za-z0-9_.-]*$",' "$min" "$max"
 		else
 			printf '"min":%s,"max":%s,' "$min" "$max"
 		fi
@@ -372,8 +409,9 @@ EOF
 	case "$applies" in *radio*) [ $lnk = 1 ] && apply_radio && res_radio=live ;; esac
 	case "$applies" in *fec*) [ $lnk = 1 ] && apply_fec && res_fec=live ;; esac
 	case "$applies" in *txpower*) [ $lnk = 1 ] && apply_txpower && res_tx=live ;; esac
-	[ $vid = 1 ] && res_video=restart-needed
-	[ $lnk = 1 ] && res_link=restart-needed
+	# only settings that were actually changed ask for a restart
+	case "$applies" in *video*) [ $vid = 1 ] && res_video=restart-needed && pending_add video ;; esac
+	case "$applies" in *link*) [ $lnk = 1 ] && res_link=restart-needed && pending_add link ;; esac
 	case "$applies" in *link*)
 		warn="channel / width / link_id / telemetry: the ground station must use the same values" ;;
 	esac
@@ -382,6 +420,7 @@ EOF
 		case "$1" in
 			venc) echo $res_venc ;; radio) echo $res_radio ;; fec) echo $res_fec ;;
 			txpower) echo $res_tx ;; video) echo $res_video ;; link) echo $res_link ;;
+			hotspot) echo next-hotspot ;;
 			*) echo $res_boot ;;
 		esac
 	}
@@ -418,7 +457,9 @@ cmd_status() {
 	role=$(cat "$R"/sys/class/usb_role/*/role 2>/dev/null | head -1)
 	pid_rk=$(pidof rkfpv 2>/dev/null)
 	pid_tx=$(pidof wfb_tx 2>/dev/null | tr ' ' ',')
-	if [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
+	if [ "$(cat "$R/tmp/mode.status" 2>/dev/null)" = hotspot ]; then mode=hotspot
+	elif [ -n "$pid_rk" ] && [ -z "$pid_tx" ] && [ "$role" = device ]; then mode=preview
+	elif [ -n "$pid_rk" ] || [ -n "$pid_tx" ]; then mode=fpv
 	elif [ "$role" = device ]; then mode=debug
 	else mode=idle; fi
 	override=auto
@@ -444,9 +485,13 @@ cmd_status() {
 	temp=$(cat "$R/sys/class/thermal/thermal_zone0/temp" 2>/dev/null)
 	[ -n "$temp" ] && temp=$((temp / 1000))
 	up=$(cut -d. -f1 "$R/proc/uptime" 2>/dev/null)
-	if running rkfpv && [ -f "$DVR_STATUS" ]; then dvrst=$(dvr_field state); dvrfile=$(dvr_field file)
-	elif dvr_mounted; then dvrst=stopped; dvrfile=-
-	else dvrst=no-card; dvrfile=-; fi
+	dvrst=$(dvr_state); dvrfile=-
+	running rkfpv && [ -f "$DVR_STATUS" ] && dvrfile=$(dvr_field file)
+	board=$(tr -d '\000' < "$R/proc/device-tree/model" 2>/dev/null)
+	bbst=off
+	[ "$(get_value blackbox)" = 1 ] && bbst=stopped
+	running bblog && bbst=$(bb_field state)
+	plug=$(sed -n 's/^plugins=\([0-9]*\) started=\([0-9]*\).*/\2\/\1/p' "$PLUGIN_STATUS" 2>/dev/null)
 
 	if [ "$JSON" = 1 ]; then
 		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
@@ -455,8 +500,10 @@ cmd_status() {
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
 		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s",' "$mem" "$temp" "$up"
-		printf '"dvr_state":"%s","dvr_file":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")"
+		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s","blackbox":"%s","plugins":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" \
+			"$(jesc "$board")" "$bbst" "$plug"
 	else
+		[ -n "$board" ] && echo "board:     $board"
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
 		echo "rkfpv:     ${pid_rk:-not running}  ${stats:+| $stats}"
 		echo "wfb_tx:    ${pid_tx:-not running}  ${radio:+| $radio}${fec:+| $fec}"
@@ -465,6 +512,8 @@ cmd_status() {
 		echo "temp:      ${temp:-?} C"
 		echo "uptime:    ${up:-?} s"
 		echo "dvr:       $dvrst${dvrfile:+ $dvrfile}"
+		echo "blackbox:  $bbst"
+		[ -n "$plug" ] && echo "plugins:   $plug started"
 	fi
 }
 
@@ -488,8 +537,25 @@ cmd_log() {
 	fi
 }
 
+# what `fpv set` changed that still needs a restart (cleared on reboot)
+PENDING=$R/tmp/fpv.pending
+pending_add() { grep -qx "$1" "$PENDING" 2>/dev/null || echo "$1" >> "$PENDING"; }
+
 cmd_restart() {
-	what=${1:-all}
+	what=$1
+	if [ -z "$what" ]; then
+		# no argument: restart only what pending settings need, so a video
+		# change does not also drop the link (and the other way round)
+		v=0; l=0
+		grep -qx video "$PENDING" 2>/dev/null && v=1
+		grep -qx link "$PENDING" 2>/dev/null && l=1
+		case "$v$l" in 11) what=all ;; 10) what=video ;; 01) what=link ;;
+		*)
+			msg="nothing to restart: no pending restart-needed settings (use 'fpv restart all' to force)"
+			[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":false,"message":"%s"}\n' "$msg" || echo "$msg"
+			return 0 ;;
+		esac
+	fi
 	case "$what" in video|link|all) ;; *) die "restart: video | link | all" ;; esac
 	if ! running rkfpv && ! running wfb_tx; then
 		msg="FPV is not running (debug mode); settings are used at the next FPV boot"
@@ -497,6 +563,10 @@ cmd_restart() {
 		return 0
 	fi
 	"$INIT" "restart-$what" > /dev/null 2>&1
+	case "$what" in
+		all) rm -f "$PENDING" ;;
+		*) [ -f "$PENDING" ] && grep -vx "$what" "$PENDING" > "$PENDING.tmp"; mv -f "$PENDING.tmp" "$PENDING" 2>/dev/null ;;
+	esac
 	[ "$JSON" = 1 ] && printf '{"ok":true,"restarted":true,"what":"%s"}\n' "$what" || echo "restarted: $what"
 }
 
@@ -527,6 +597,7 @@ cmd_reset() {
 	cp "$DEFAULTS/rkfpv.conf" "$RKFPV_CONF.tmp" && mv "$RKFPV_CONF.tmp" "$RKFPV_CONF"
 	cp "$DEFAULTS/wfb.yaml" "$WFB_CONF.tmp" && mv "$WFB_CONF.tmp" "$WFB_CONF"
 	sync
+	pending_add video; pending_add link
 	[ "$JSON" = 1 ] && echo '{"ok":true}' || echo "defaults restored; 'fpv restart' or reboot to use them"
 }
 
@@ -547,8 +618,74 @@ dvr_space() {   # -> "total_mb free_mb"
 	df -k "$DVR_DIR" 2>/dev/null | awk 'END { if (NF >= 5) printf "%d %d", $(NF-4) / 1024, $(NF-2) / 1024 }'
 }
 
+# Where recordings go:
+#   Mini: the TF card's partition named "dvr" (the system boots from that card)
+#   Pro:  the TF card in the slot (the system boots from SPI NAND), its
+#         first partition or the whole card
+# Prints "<dev> part|card"; nothing if there is none. The card the system
+# boots from (root=/dev/mmcblkX...) is never picked as a whole card.
+dvr_device() {
+	for u in "$R"/sys/class/block/mmcblk*p*/uevent; do
+		grep -q '^PARTNAME=dvr$' "$u" 2>/dev/null || continue
+		echo "/dev/$(sed -n 's/^DEVNAME=//p' "$u") part"
+		return 0
+	done
+	rootdisk=$(tr ' ' '\n' < "$R/proc/cmdline" 2>/dev/null | sed -n 's|^root=/dev/\(mmcblk[0-9]*\).*|\1|p')
+	for d in "$R"/sys/class/block/mmcblk[0-9]*; do
+		b=${d##*/}
+		case "$b" in *p*|*boot*|*rpmb*) continue ;; esac
+		[ -e "$d" ] && [ "$b" != "$rootdisk" ] || continue
+		if [ -e "$d/${b}p1" ]; then echo "/dev/${b}p1 card"; else echo "/dev/$b card"; fi
+		return 0
+	done
+}
+
+dvr_is_ext4() {   # <dev>: ext2/3/4 superblock magic 0xef53
+	[ "$(od -An -tx1 -j1080 -N2 "$R$1" 2>/dev/null | tr -d ' \n')" = "53ef" ]
+}
+
+# recording state for status: recording/... from rkfpv, else stopped,
+# unformatted (a card that is not ext4) or no-card
+dvr_state() {
+	if running rkfpv && [ -f "$DVR_STATUS" ]; then dvr_field state
+	elif dvr_mounted; then echo stopped
+	else
+		set -- $(dvr_device)
+		if [ -n "${1:-}" ] && ! dvr_is_ext4 "$1"; then echo unformatted; else echo no-card; fi
+	fi
+}
+
+dvr_format() {
+	[ "${1:-}" = --yes ] || die "fpv dvr format --yes: makes the recording card ext4 and ERASES everything on it"
+	set -- $(dvr_device)
+	dev=${1:-}
+	[ -n "$dev" ] || die "no recording card found (Pro: put the TF card in before power-on)"
+	if running rkfpv && [ "$(dvr_field state)" = recording ]; then
+		die "recording: stop it first (fpv dvr stop)"
+	fi
+	if dvr_mounted; then
+		umount "$DVR_DIR" 2>/dev/null || die "cannot unmount $DVR_DIR (a download in progress?)"
+	fi
+	mkfs.ext4 -F -q -L dvr -m 0 "$R$dev" || die "mkfs.ext4 $dev failed"
+	mkdir -p "$DVR_DIR"
+	mount -t ext4 -o noatime,errors=remount-ro "$R$dev" "$DVR_DIR" || die "formatted, but mount failed"
+	sync
+	[ "$JSON" = 1 ] && printf '{"ok":true,"device":"%s"}\n' "$dev" || echo "dvr: $dev formatted (ext4) and mounted on $DVR_DIR"
+}
+
 valid_rec_name() {
-	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts)$'
+	echo "$1" | grep -Eq '^rec_[0-9]+_[0-9]+\.(mp4|ts|bbl)$'
+}
+
+# key=value from bblog's status line ("state=logging file=... bytes=...")
+bb_field() {
+	[ -f "$BB_STATUS" ] || return 0
+	tr ' ' '\n' < "$BB_STATUS" | sed -n "s/^$1=//p" | head -1
+}
+
+# the blackbox log bblog is writing now, if any (never deleted)
+bb_busy() {
+	running bblog && [ "$(bb_field state)" = logging ] && bb_field file
 }
 
 dvr_cmd() {
@@ -556,13 +693,7 @@ dvr_cmd() {
 	[ $# -gt 0 ] && shift
 	case "$sub" in
 	status)
-		if running rkfpv && [ -f "$DVR_STATUS" ]; then
-			state=$(dvr_field state)
-		elif dvr_mounted; then
-			state=stopped
-		else
-			state=no-card
-		fi
+		state=$(dvr_state)
 		file=$(dvr_field file); bytes=$(dvr_field bytes); drops=$(dvr_field drops); err=$(dvr_field error)
 		running rkfpv || { file=-; bytes=0; drops=0; }
 		set -- $(dvr_space)
@@ -583,6 +714,7 @@ dvr_cmd() {
 			die "FPV is not running (debug mode): recording only happens in FPV mode"
 		fi
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
+		[ "$(get_value dvr)" = 1 ] || die "DVR is off (dvr = 0): fpv set dvr 1, then restart FPV"
 		if [ "$sub" = start ]; then sig=USR1; else sig=USR2; fi
 		killall -$sig rkfpv || die "could not signal rkfpv"
 		[ "$JSON" = 1 ] && printf '{"ok":true,"requested":"%s"}\n' "$sub" || echo "dvr: $sub requested"
@@ -590,18 +722,20 @@ dvr_cmd() {
 	list)
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
 		cur=$(running rkfpv && dvr_field file)
-		# newest first: session, then segment, numerically
-		files=$(ls -ln "$DVR_DIR" 2>/dev/null | awk '$9 ~ /^rec_[0-9]+_[0-9]+\.(mp4|ts)$/ { print $5, $9 }' \
-			| awk '{ split($2, a, /[_.]/); printf "%010d %010d %s %s\n", a[2], a[3], $1, $2 }' | sort -r)
+		bb=$(bb_busy)
+		# newest first: session, then segment, numerically; a segment's
+		# blackbox log (.bbl) right after its video
+		files=$(ls -ln "$DVR_DIR" 2>/dev/null | awk '$9 ~ /^rec_[0-9]+_[0-9]+\.(mp4|ts|bbl)$/ { print $5, $9 }' \
+			| awk '{ split($2, a, /[_.]/); printf "%010d %010d%d %s %s\n", a[2], a[3], (a[4] == "bbl" ? 0 : 1), $1, $2 }' | sort -r)
 		set -- $(dvr_space)
 		total=${1:-0}; free=${2:-0}
 		if [ "$JSON" = 1 ]; then
 			printf '{"ok":true,"total_mb":"%s","free_mb":"%s","recording":"%s","files":[' "$total" "$free" "$cur"
-			echo "$files" | awk -v cur="$cur" 'NF == 4 {
-				printf "%s{\"name\":\"%s\",\"size\":%s,\"recording\":%s}", sep, $4, $3, ($4 == cur ? "true" : "false"); sep = "," }'
+			echo "$files" | awk -v cur="$cur" -v bb="$bb" 'NF == 4 {
+				printf "%s{\"name\":\"%s\",\"size\":%s,\"recording\":%s}", sep, $4, $3, ($4 == cur || $4 == bb ? "true" : "false"); sep = "," }'
 			printf ']}\n'
 		else
-			echo "$files" | awk -v cur="$cur" 'NF == 4 { printf "%-22s %8.1f MB%s\n", $4, $3 / 1048576, ($4 == cur ? "  (recording)" : "") }'
+			echo "$files" | awk -v cur="$cur" -v bb="$bb" 'NF == 4 { printf "%-22s %8.1f MB%s\n", $4, $3 / 1048576, ($4 == cur || $4 == bb ? "  (recording)" : "") }'
 			echo "card: $free MB free of $total MB"
 		fi ;;
 	delete)
@@ -611,6 +745,7 @@ dvr_cmd() {
 		for n in "$@"; do
 			valid_rec_name "$n" || die "not a recording name: $n"
 			[ "$n" = "$cur" ] && die "$n is being recorded; stop recording first"
+			[ "$n" = "$(bb_busy)" ] && die "$n is being written (flight controller blackbox); disarm first"
 			[ -f "$DVR_DIR/$n" ] || die "no such recording: $n"
 		done
 		for n in "$@"; do rm -f "$DVR_DIR/$n"; done
@@ -620,17 +755,121 @@ dvr_cmd() {
 	delete-all)
 		dvr_mounted || die "no DVR partition mounted at /mnt/dvr"
 		cur=$(running rkfpv && dvr_field file)
+		bb=$(bb_busy)
 		n=0
 		for f in "$DVR_DIR"/rec_*; do
 			b=${f##*/}
 			valid_rec_name "$b" || continue
 			[ "$b" = "$cur" ] && continue
+			[ "$b" = "$bb" ] && continue
 			rm -f "$f" && n=$((n + 1))
 		done
 		sync
 		[ "$JSON" = 1 ] && printf '{"ok":true,"deleted":%s}\n' "$n" || echo "deleted $n file(s)${cur:+ (kept $cur, being recorded)}"
 		;;
-	*) die "dvr: status | start | stop | list | delete <file> | delete-all" ;;
+	device)
+		set -- $(dvr_device)
+		fmt=; [ -n "${1:-}" ] && { dvr_is_ext4 "$1" && fmt=ext4 || fmt=other; }
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"device":"%s","kind":"%s","fs":"%s"}\n' "${1:-}" "${2:-}" "$fmt"
+		elif [ -n "${1:-}" ]; then echo "$1 $2 $fmt"     # S99fpv reads this
+		fi ;;
+	format) dvr_format "$@" ;;
+	*) die "dvr: status | start | stop | list | delete <file> | delete-all | device | format --yes" ;;
+	esac
+}
+
+# ----------------------------------------------------------- blackbox log
+# bblog saves the flight controller's Betaflight blackbox (serial, UART4)
+# as rec_SSSS_NN.bbl next to the recording; S99fpv starts it with rkfpv.
+
+blackbox_status() {
+	en=$(get_value blackbox); baud=$(get_value blackbox_baud)
+	st=off
+	[ "$en" = 1 ] && st=stopped
+	running bblog && st=$(bb_field state)
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"enabled":%s,"baud":"%s","state":"%s","file":"%s","log_bytes":"%s","bytes":"%s","logs":"%s","dropped":"%s","errors":"%s","why":"%s"}\n' \
+			"$([ "$en" = 1 ] && echo true || echo false)" "$baud" "$st" "$(bb_field file)" \
+			"$(bb_field log_bytes)" "$(bb_field bytes)" "$(bb_field logs)" "$(bb_field dropped)" \
+			"$(bb_field errors)" "$(bb_field why)"
+	else
+		echo "blackbox: $st (blackbox = ${en:-0}, $BB_DEV @ $baud)"
+		if running bblog; then
+			why=$(bb_field why)
+			echo "file:     $(bb_field file)${why:+ (not saved: $why)}"
+			echo "logs:     $(bb_field logs), $(bb_field bytes) bytes, $(bb_field dropped) dropped outside logs, $(bb_field errors) errors"
+		fi
+	fi
+}
+
+# UART4 loopback (TX GPIO1_C4 wired to RX GPIO1_C5): bbsend plays the flight
+# controller, bblog saves; the files must be identical to what was sent
+blackbox_selftest() {
+	rate=60
+	if [ "${1:-}" = -r ]; then
+		[ -n "${2:-}" ] || die "usage: fpv blackbox selftest [-r KB/s] [baud...]"
+		rate=$2; shift 2
+	fi
+	echo "$rate" | grep -Eq '^[0-9]+$' || die "rate must be a number (KB/s, 0 = full speed)"
+	bauds=${*:-1000000 1500000 2000000}
+	for b in $bauds; do
+		case "$b" in 115200|230400|460800|921600|1000000|1500000|2000000) ;;
+		*) die "unsupported baud rate $b" ;; esac
+	done
+	[ -c "$R$BB_DEV" ] || die "no $BB_DEV: UART4 is not enabled in this image's device tree"
+	command -v bbsend > /dev/null && command -v bblog > /dev/null || die "bblog/bbsend not installed"
+	was=; running bblog && { was=1; killall -q bblog; usleep 300000; }
+	T=$R/tmp/bbtest
+	size=$((rate > 0 ? rate * 1024 * 4 : 400000))     # ~4 s of logging per arm
+	res=; pass=0; fail=0
+	for b in $bauds; do
+		rm -rf "$T"; mkdir -p "$T/out" "$T/ref"
+		bblog -d "$BB_DEV" -b "$b" -o "$T/out" -s - -S "" -t 1000 -n 2 2> "$T/bblog.log" &
+		lp=$!
+		usleep 300000
+		bbsend -d "$BB_DEV" -b "$b" -r "$rate" -n 2 -g 1500 -s "$size" -w "$T/ref" 2> "$T/bbsend.log"
+		i=0
+		while kill -0 "$lp" 2> /dev/null && [ $i -lt 50 ]; do usleep 100000; i=$((i + 1)); done
+		kill "$lp" 2> /dev/null; wait "$lp" 2> /dev/null
+		ok=1; detail=
+		for n in 001 002; do
+			if [ ! -f "$T/out/log_$n.bbl" ]; then
+				ok=0; detail="$detail log $n: nothing received;"
+			elif ! cmp -s "$T/out/log_$n.bbl" "$T/ref/ref_$n.bbl"; then
+				ok=0
+				detail="$detail log $n: $(wc -c < "$T/out/log_$n.bbl") of $(wc -c < "$T/ref/ref_$n.bbl") bytes, $(cmp "$T/out/log_$n.bbl" "$T/ref/ref_$n.bbl" 2>&1 | head -1 | sed 's/.*: //');"
+			fi
+		done
+		kbs=$(sed -n 's/.*(\([0-9.]*\) KB\/s).*/\1/p' "$T/bbsend.log" | head -1)
+		if [ $ok = 1 ]; then pass=$((pass + 1)); r=pass; else fail=$((fail + 1)); r=FAIL; fi
+		res="$res$b $r ${kbs:-?} $detail
+"
+	done
+	rm -rf "$T"
+	[ -n "$was" ] && "$INIT" blackbox-start > /dev/null 2>&1
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":%s,"rate_kbs":%s,"results":[' "$([ $fail = 0 ] && echo true || echo false)" "$rate"
+		echo "$res" | awk 'NF >= 3 { d = ""; for (i = 4; i <= NF; i++) d = d (d ? " " : "") $i
+			gsub(/"/, "", d)
+			printf "%s{\"baud\":%s,\"pass\":%s,\"kbs\":\"%s\",\"detail\":\"%s\"}", sep, $1, ($2 == "pass" ? "true" : "false"), $3, d; sep = "," }'
+		printf ']}\n'
+	else
+		echo "$res" | awk 'NF >= 3 { printf "%-8s %-4s  %s KB/s  %s\n", $1, $2, $3, substr($0, index($0, $4)) }' | sed 's/  ?$//'
+		if [ $fail = 0 ]; then echo "selftest: all $pass baud rates byte for byte OK"
+		elif [ $pass = 0 ]; then echo "selftest: nothing passed: is UART4 TX (GPIO1_C4) wired to RX (GPIO1_C5)?"
+		else echo "selftest: use the highest baud rate that passed for blackbox_baud"; fi
+	fi
+	[ $fail = 0 ]
+}
+
+blackbox_cmd() {
+	sub=${1:-status}
+	[ $# -gt 0 ] && shift
+	case "$sub" in
+	status) blackbox_status ;;
+	selftest) blackbox_selftest "$@" ;;
+	*) die "blackbox: status | selftest [-r KB/s] [baud...]" ;;
 	esac
 }
 
@@ -649,6 +888,30 @@ iq_field() {
 iq_files_json() {   # <dir> -> [{"name","size"},...]
 	ls -ln "$1" 2>/dev/null | awk 'NF >= 9 && $9 ~ /\.json$/ {
 		printf "%s{\"name\":\"%s\",\"size\":%s}", sep, $9, $5; sep = "," }'
+}
+
+# ----------------------------------------------------------------- plugins
+# add-on programs in /etc/fpv/plugins.d, run with the video (fpv-plugins)
+plugins_cmd() {
+	case "${1:-status}" in
+	status) ;;
+	*) die "usage: fpv plugins [status]" ;;
+	esac
+	out=$(FPV_PLUGIN_STATUS=$PLUGIN_STATUS "$(dirname "$0")/fpv-plugins" status "$PLUGIN_DIR" 2>/dev/null)
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"dir":"%s","plugins":[' "$(jesc "$PLUGIN_DIR")"
+		sep=
+		echo "$out" | while IFS= read -r l; do
+			[ -n "$l" ] || continue
+			printf '%s{"name":"%s","status":"%s"}' "$sep" "$(jesc "${l%%: *}")" "$(jesc "${l#*: }")"
+			sep=,
+		done
+		printf ']}\n'
+	elif [ -n "$out" ]; then
+		echo "$out"
+	else
+		echo "no plugins in $PLUGIN_DIR"
+	fi
 }
 
 iq_cmd() {
@@ -748,8 +1011,63 @@ iq_keep() {
 	done
 }
 
+# ---------------------------------------------------------------- hotspot
+
+hotspot_cmd() {
+	case "${1:-status}" in
+	status)
+		sw=$(sed -n 's/.*switch=\([a-z]*\).*/\1/p' "$R/tmp/switch.status" 2>/dev/null)
+		mode=$(cat "$R/tmp/mode.status" 2>/dev/null)
+		clients=0
+		[ "$mode" = hotspot ] && clients=$(iw dev "$WLAN" station dump 2>/dev/null | grep -c '^Station')
+		ssid=$(get_value hotspot_ssid); pass=$(get_value hotspot_pass)
+		if [ "$JSON" = 1 ]; then
+			printf '{"ok":true,"switch":"%s","mode":"%s","ssid":"%s","pass":"%s","channel":"%s","clients":%s,"address":"10.0.0.1"}\n' \
+				"${sw:-none}" "${mode:-fpv}" "$(jesc "$ssid")" "$(jesc "$pass")" "$(get_value hotspot_channel)" "${clients:-0}"
+		else
+			echo "button:   ${sw:-none} (hold BOOT 2 s to turn the hotspot on / off)"
+			echo "mode:     ${mode:-fpv}"
+			echo "ssid:     $ssid"
+			echo "password: $pass"
+			echo "channel:  $(get_value hotspot_channel)"
+			[ "$mode" = hotspot ] && echo "clients:  $clients   (http://10.0.0.1/ for recordings)"
+		fi ;;
+	*) die "hotspot: status" ;;
+	esac
+}
+
+# ---------------------------------------------------------------- preview
+
+preview_port() {
+	p=$(sed -n 's/^preview_port *= *\([0-9]*\).*/\1/p' "$R/etc/rkfpv.conf" 2>/dev/null | tail -1)
+	echo "${p:-5602}"
+}
+
+preview_cmd() {
+	sub=${1:-status}
+	mode=$(cat "$R/tmp/mode.status" 2>/dev/null)
+	case "$sub" in
+	on|off)
+		case "$mode" in debug|off|hotspot) ;;
+		*) die "preview: only in debug mode (PC on USB) or hotspot mode (mode: ${mode:-unknown})" ;;
+		esac
+		[ "$(preview_port)" != 0 ] || die "preview: preview_port = 0 in rkfpv.conf"
+		"$INIT" "preview-$sub" > /dev/null 2>&1 || die "preview $sub failed (fpv log fpv)" ;;
+	status) ;;
+	*) die "preview: on | off | status" ;;
+	esac
+	running rkfpv && run=true || run=false
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"running":%s,"port":%s,"mode":"%s"}\n' "$run" "$(preview_port)" "${mode:-unknown}"
+	else
+		echo "video:  $([ $run = true ] && echo running || echo stopped)"
+		echo "port:   $(preview_port) on the board (adb forward tcp:$(preview_port) tcp:$(preview_port))"
+		echo "mode:   ${mode:-unknown}"
+	fi
+}
+
 usage() {
-	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --json may appear anywhere
@@ -776,7 +1094,11 @@ case "$cmd" in
 	mode) cmd_mode "$@" ;;
 	reset) cmd_reset ;;
 	dvr) dvr_cmd "$@" ;;
+	blackbox) blackbox_cmd "$@" ;;
+	plugins) plugins_cmd "$@" ;;
 	iq) iq_cmd "$@" ;;
+	hotspot) hotspot_cmd "$@" ;;
+	preview) preview_cmd "$@" ;;
 	help|-h|--help) usage ;;
 	*) die "unknown command '$cmd' (fpv help)" ;;
 esac
