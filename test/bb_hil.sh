@@ -5,7 +5,7 @@
 # recording rkfpv is writing; the PC then checks the saved .bbl byte for
 # byte against what was sent and decodes every value (test/bbdecode.py).
 #
-#   make build/bblog build/bbsim && test/bb_hil.sh [adb serial]
+#   make build/bblog build/bbsim build-host/bbsim && test/bb_hil.sh [adb serial]
 #   BB_UART=/dev/ttyS4 [BB_BAUD=1500000] test/bb_hil.sh    over the real UART:
 #       jumper its TX to its RX (Mini/Pro UART4: GPIO1_C5 -> GPIO1_C4);
 #       nothing else may hold the port (the board's own bblog stopped)
@@ -18,14 +18,18 @@
 #   r3  1 flight x 5 s, no log end                     (cable pulled)
 # The board's own bblog is not stopped or touched; the test copies run
 # from /tmp and are removed afterwards. The .bbl stays on the card.
-# The reference copies (several MB) go to /userdata (flash): /tmp is RAM on
-# the board, and filling it next to the video hangs a Pico Mini.
+# Nothing but the .bbl is written on the board: the reference copies of what
+# was sent (ref_NNN.bbl / .csv, several MB) are made on the PC by the host
+# bbsim with the same options while the board runs (its output depends only
+# on the options). On the board's RAM-only /tmp they hang a Pico Mini, and
+# on its TF card, next to the DVR and bblog, they made the card time out.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 ADB="adb${1:+ -s $1}"
 for b in bblog bbsim; do
 	[ -f "$HERE/build/$b" ] || { echo "missing build/$b: make build/bblog build/bbsim" >&2; exit 1; }
 done
+[ -x "$HERE/build-host/bbsim" ] || { echo "missing build-host/bbsim: make build-host/bbsim" >&2; exit 1; }
 $ADB get-state > /dev/null
 st=$($ADB shell cat /tmp/dvr.status 2>/dev/null | tr -d '\r')
 case "$st" in
@@ -38,7 +42,7 @@ $ADB push "$HERE/build/bblog" /tmp/hil-bblog > /dev/null
 $ADB push "$HERE/build/bbsim" /tmp/hil-bbsim > /dev/null
 cat > "$L/run.sh" <<'BOARD'
 #!/bin/sh
-R=/userdata/hil-ref; O=/mnt/dvr/bbhil
+R=/tmp/hil-log; O=/mnt/dvr/bbhil
 rm -rf $R; mkdir -p $R $O
 chmod 755 /tmp/hil-bblog /tmp/hil-bbsim
 run() {
@@ -49,10 +53,10 @@ run() {
 		/tmp/hil-bblog -d $UART -b $BAUD -o $O -s /tmp/dvr.status -S /tmp/hil-bblog.status -t 2000 > $R/$name/bblog.log 2>&1 &
 		bl=$!
 		usleep 500000
-		/tmp/hil-bbsim -d $UART -b $BAUD -W 1000 -w $R/$name "$@" > $R/$name/sim.log 2>&1 &
+		/tmp/hil-bbsim -d $UART -b $BAUD -W 1000 "$@" > $R/$name/sim.log 2>&1 &
 		sim=$!
 	else
-		/tmp/hil-bbsim -p /tmp/hil-uart -W 1500 -w $R/$name "$@" > $R/$name/sim.log 2>&1 &
+		/tmp/hil-bbsim -p /tmp/hil-uart -W 1500 "$@" > $R/$name/sim.log 2>&1 &
 		sim=$!
 		n=0; while [ ! -e /tmp/hil-uart ] && [ $n -lt 50 ]; do usleep 100000; n=$((n + 1)); done
 		/tmp/hil-bblog -d /tmp/hil-uart -o $O -s /tmp/dvr.status -S /tmp/hil-bblog.status -t 2000 > $R/$name/bblog.log 2>&1 &
@@ -72,18 +76,33 @@ echo "card: $(ls -l $O | awk '/\.bbl/ {print $NF, $5 " bytes"}' | tail -1)"
 echo "video: $(sed 's/ bytes=[0-9]*//' /tmp/dvr.status)"
 BOARD
 $ADB push "$L/run.sh" /tmp/hil-run.sh > /dev/null
+# the same runs on the PC, only to write the reference copies
+hostrefs() {
+	for spec in "r1 -n 2 -s 20 -r 2000 -g 3000" "r2 -n 1 -s 15 -r 8000 -g 3000" "r3 -n 1 -s 5 -r 2000 -g 4000 -c"; do
+		set -- $spec; name=$1; shift
+		mkdir -p "$L/hil-ref/$name"
+		"$HERE/build-host/bbsim" -p "$L/pty-$name" -W 300 -w "$L/hil-ref/$name" "$@" &
+		s=$!
+		n=0; while [ ! -e "$L/pty-$name" ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+		cat "$L/pty-$name" > /dev/null &
+		c=$!
+		wait $s; kill $c 2>/dev/null || true
+	done
+}
 if [ -n "${BB_UART:-}" ]; then
 	$ADB shell "[ -c $BB_UART ]" || { echo "no $BB_UART on the board" >&2; exit 1; }
 	echo "link: $BB_UART @ ${BB_BAUD:-1500000} (TX jumpered to RX)"
 else
 	echo "link: pseudo-terminal"
 fi
+hostrefs > "$L/hostref.log" 2>&1 &
+hostref=$!
 $ADB shell "UART=${BB_UART:-} BAUD=${BB_BAUD:-1500000} sh /tmp/hil-run.sh" | tr -d '\r' | tee "$L/board.log"
 f=$(sed -n 's/^card: \(rec_[0-9_]*\.bbl\).*/\1/p' "$L/board.log")
 [ -n "$f" ] || { echo "FAIL: no .bbl on the card"; exit 1; }
 $ADB pull "/mnt/dvr/bbhil/$f" "$L/" > /dev/null
-$ADB pull /userdata/hil-ref "$L/" > /dev/null
-$ADB shell 'rm -rf /userdata/hil-ref /tmp/hil-bblog /tmp/hil-bbsim /tmp/hil-run.sh /tmp/hil-bblog.status /tmp/hil-uart'
+wait $hostref
+$ADB shell 'rm -rf /tmp/hil-log /tmp/hil-bblog /tmp/hil-bbsim /tmp/hil-run.sh /tmp/hil-bblog.status /tmp/hil-uart'
 R=$L/hil-ref
 fail=0
 # a .bbl named after this recording may already hold an earlier HIL run: check its tail
