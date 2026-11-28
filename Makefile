@@ -34,7 +34,7 @@ LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
 # uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lrkmuxer -lpthread -lm -lstdc++
 
-SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_layout.c src/telem.c src/preview.c
+SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_ext.c src/osd_layout.c src/telem.c src/preview.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
 all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd build/bblog build/bbsend
@@ -94,8 +94,11 @@ build-host/dvrhttpd: src/dvrhttpd.c src/fpvcmd.c src/fpvcmd.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/dvrhttpd.c src/fpvcmd.c
 
 # OSD drawing with the RGN calls stubbed (SDK headers only, no SDK libs)
-build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_layout.c src/telem.c | build-host
-	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c src/osd_layout.c src/telem.c
+build-host/test_osd: test/test_osd.c src/osd.c src/osd.h src/osd_font.h src/osd_ext.c src/osd_ext.h src/osd_layout.c src/telem.c | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -I$(ROCKIT)/mpi/sdk/include -o $@ test/test_osd.c src/osd.c src/osd_ext.c src/osd_layout.c src/telem.c
+
+build-host/test_osd_ext: test/test_osd_ext.c src/osd_ext.c src/osd_ext.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_osd_ext.c src/osd_ext.c
 
 build-host/test_telem: test/test_telem.c src/telem.c src/telem.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_telem.c src/telem.c
@@ -106,12 +109,13 @@ build-host/test_preview: test/test_preview.c src/preview.c src/preview.h | build
 build-host/fpvd: src/fpvd.c src/fpvcmd.c src/fpvcmd.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/fpvd.c src/fpvcmd.c
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_telem build-host/test_preview build-host/bblog build-host/bbsend
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_osd_ext build-host/test_telem build-host/test_preview build-host/bblog build-host/bbsend
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
 	./build-host/test_preview 2>/dev/null | tail -1
 	./build-host/test_config files/rkfpv.conf
 	./build-host/test_osd build-host/osd.pgm > /dev/null && echo "osd drawing ok"
+	./build-host/test_osd_ext > build-host/osd_ext.log || { cat build-host/osd_ext.log; exit 1; }; tail -1 build-host/osd_ext.log
 	python3 -I test/test_telem.py build-host/test_telem | tail -1
 	python3 -I test/test_mavbridge.py build-host/mavbridge
 	test/test_fpv.sh

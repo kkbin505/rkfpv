@@ -21,6 +21,11 @@ int main(int argc, char **argv) {
 	bad |= d.dvr_osd != 1 || d.blackbox != 0 || d.blackbox_baud != 1500000;   /* defaults */
 	bad |= config_set(&d, "dvr_osd", "0") || d.dvr_osd != 0;
 	bad |= config_set(&d, "dvr_osd", "2") == 0;
+	bad |= d.osd_ext_port != 0 || d.osd_ext_ttl_ms != 500;             /* defaults */
+	bad |= config_set(&d, "osd_ext_port", "14580") || d.osd_ext_port != 14580;
+	bad |= config_set(&d, "osd_ext_port", "65536") == 0;
+	bad |= config_set(&d, "osd_ext_ttl_ms", "99") == 0;
+	bad |= config_set(&d, "osd_ext_ttl_ms", "10000") || d.osd_ext_ttl_ms != 10000;
 	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
 	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
 	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;

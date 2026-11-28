@@ -37,6 +37,7 @@
 #include "dvr.h"
 #include "isp.h"
 #include "osd.h"
+#include "osd_ext.h"
 #include "osd_layout.h"
 #include "telem.h"
 #include "preview.h"
@@ -424,6 +425,7 @@ static void venc_apply_rc(int chn, const enc_params_t *c)
 #define TELEM_PORT 14560                /* mavbridge -c copies the FC stream here */
 #define UPLINK_STATUS "/tmp/wfb_uplink.status"
 #define OSD_PERIOD_US 250000            /* 4 redraws per second */
+#define OSD_EXT_MIN_US 40000            /* new external shapes: redraw at most 25/s */
 #define SOC_TEMP "/sys/class/thermal/thermal_zone0/temp"   /* RV1103 tsadc, m°C */
 
 /* SoC temperature in whole degrees C; 0 if there is no sensor. Kept open
@@ -467,12 +469,13 @@ static int read_uplink(int *rssi, int *lq)
 
 /* one OSD redraw, timed */
 static uint64_t draw_osd(osd_t *o, const telem_t *t, const char *rec, uint64_t now_ms,
-			 int temp_ok, int temp_c, uint64_t (*clock_us)(void))
+			 int temp_ok, int temp_c, const osd_ext_t *ext, int ext_ttl_ms,
+			 uint64_t (*clock_us)(void))
 {
 	if (!o)
 		return 0;
 	uint64_t t0 = clock_us();
-	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c };
+	osd_view_t v = { t, rec, 0, 0, 0, now_ms, temp_ok, temp_c, ext, ext_ttl_ms };
 	v.ul_ok = read_uplink(&v.ul_rssi, &v.ul_lq);
 	osd_draw_view(o, &v);
 	return clock_us() - t0;
@@ -603,7 +606,7 @@ int main(int argc, char **argv)
 
 	int ret = 1, isp_up = 0, vi_up = 0, venc_up = 0, bound = 0;
 	osd_t *osd_link = NULL, *osd_dvr = NULL;
-	int telem_fd = -1;
+	int telem_fd = -1, ext_fd = -1;
 	int dvr_vi_up = 0, dvr_venc_up = 0, dvr_bound = 0, dual = 0, cap_started = 0;
 	pthread_t cap_thr;
 	struct dvr_cap cap;
@@ -742,6 +745,19 @@ int main(int argc, char **argv)
 	telem_fd = (osd_link || osd_dvr) ? telem_open(TELEM_PORT) : -1;
 	if ((osd_link || osd_dvr) && telem_fd < 0)
 		fprintf(stderr, "osd: cannot listen on udp %d for telemetry\n", TELEM_PORT);
+	static osd_ext_t ext;           /* ~4 KB: not on the stack */
+	osd_ext_init(&ext);
+	int ext_dirty = 0;
+	if (cfg.osd_ext_port && (osd_link || osd_dvr)) {
+		ext_fd = osd_ext_open(cfg.osd_ext_port);
+		if (ext_fd < 0)
+			fprintf(stderr, "osd: cannot listen on 127.0.0.1:%d for external shapes\n",
+				cfg.osd_ext_port);
+		else
+			fprintf(stderr, "osd: external shapes on 127.0.0.1:%d (ttl %d ms)\n",
+				cfg.osd_ext_port, cfg.osd_ext_ttl_ms);
+	} else if (cfg.osd_ext_port)
+		fprintf(stderr, "osd: osd_ext_port needs osd = 1\n");
 
 	uint64_t t0 = now_us(), frames = 0, bytes = 0, max_frame = 0, cur_frame = 0;
 	uint64_t pkts0 = 0, t_start = t0, dvr_f0 = 0, dvr_b0 = 0;
@@ -862,7 +878,14 @@ int main(int argc, char **argv)
 
 		if (telem_fd >= 0)
 			telem_poll(&telem, telem_fd, now_us() / 1000);
-		if ((osd_link || osd_dvr) && now_us() - t_osd >= OSD_PERIOD_US) {
+		if (ext_fd >= 0 && osd_ext_poll(&ext, ext_fd, now_us() / 1000))
+			ext_dirty = 1;
+		/* periodic redraw, or soon after new external shapes (tracking boxes
+		 * would lag up to a whole period otherwise) */
+		uint64_t since_osd = now_us() - t_osd;
+		if ((osd_link || osd_dvr) &&
+		    (since_osd >= OSD_PERIOD_US || (ext_dirty && since_osd >= OSD_EXT_MIN_US))) {
+			ext_dirty = 0;
 			char ds[300] = "", rec[16] = "";
 			if (dvr) {
 				dvr_status(dvr, ds, sizeof ds);
@@ -876,8 +899,10 @@ int main(int argc, char **argv)
 				temp_ok = read_soc_temp(&temp_c);
 				temp_ms = now_ms;
 			}
-			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c, now_us);
-			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c, now_us);
+			uint64_t d1 = draw_osd(osd_link, &telem, rec, now_ms, temp_ok, temp_c,
+					       &ext, cfg.osd_ext_ttl_ms, now_us);
+			uint64_t d2 = draw_osd(osd_dvr, &telem, rec, now_ms, temp_ok, temp_c,
+					       &ext, cfg.osd_ext_ttl_ms, now_us);
 			if (d1 + d2 > osd_worst) {
 				osd_worst = d1 + d2;
 				fprintf(stderr, "osd: redraw took %llu us (link %llu, dvr %llu) - slowest so far\n",
@@ -922,6 +947,8 @@ out:
 	/* each step is logged so a crash during teardown shows where it was */
 	if (telem_fd >= 0)
 		close(telem_fd);
+	if (ext_fd >= 0)
+		close(ext_fd);
 	osd_destroy(osd_link);
 	osd_destroy(osd_dvr);
 	if (cap_started) {

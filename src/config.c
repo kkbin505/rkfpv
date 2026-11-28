@@ -62,6 +62,8 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.wb = WB_AUTO;
 
 	c->osd = 0;             /* experimental, off until tested on hardware */
+	c->osd_ext_port = 0;    /* other programs draw into the OSD (osd_ext.h) */
+	c->osd_ext_ttl_ms = 500;
 
 	c->stats_interval = 5;
 }
@@ -183,6 +185,8 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	INT_KEY("stats", stats_interval, 0, 3600);
 	INT_KEY("dvr", dvr, 0, 1);
 	INT_KEY("osd", osd, 0, 1);
+	INT_KEY("osd_ext_port", osd_ext_port, 0, 65535);
+	INT_KEY("osd_ext_ttl_ms", osd_ext_ttl_ms, 100, 10000);
 	INT_KEY("dvr_segment", dvr_segment, 10, 3600);
 	INT_KEY("dvr_min_free", dvr_min_free, 10, 1000000);
 	INT_KEY("dvr_overwrite", dvr_overwrite, 0, 1);
