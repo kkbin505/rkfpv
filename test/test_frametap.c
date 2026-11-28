@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -185,6 +186,44 @@ int main(int argc, char **argv)
 		unlink(pgm);
 		snprintf(cmd, sizeof cmd, "%s -p %s -t 1 2> /dev/null", argv[1], path);
 		check("ftdump fails cleanly without a tap", system(cmd) != 0);
+
+		/* rkfpv restarts: the tap is gone for 3 s, then a new file. ftdump
+		 * must follow it and read frames from both writers (docs/extending.md) */
+		char log[80];
+		snprintf(log, sizeof log, "%s.log", path);
+		t = frametap_create(path, SW, SH, 2);
+		struct writer w1 = { t, 0, 10000, 0 };
+		pthread_create(&th, NULL, writer, &w1);
+		snprintf(cmd, sizeof cmd, "%s -p %s -n 150 -t 20 > %s 2>&1", argv[1], path, log);
+		pid_t child = fork();
+		if (child == 0) {
+			execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+			_exit(127);
+		}
+		usleep(800000);                 /* ~80 frames from the first writer */
+		w1.stop = 1;
+		pthread_join(th, NULL);
+		frametap_destroy(t);
+		sleep(3);
+		t = frametap_create(path, SW, SH, 4);   /* new file, other size */
+		struct writer w2 = { t, 0, 10000, 0 };
+		pthread_create(&th, NULL, writer, &w2);
+		int status = 0;
+		waitpid(child, &status, 0);
+		w2.stop = 1;
+		pthread_join(th, NULL);
+		frametap_destroy(t);
+		char out[2048] = "";
+		FILE *f = fopen(log, "r");
+		if (f) {
+			size_t n = fread(out, 1, sizeof out - 1, f);
+			out[n] = 0;
+			fclose(f);
+		}
+		unlink(log);
+		check("ftdump follows a restarted writer",
+		      WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+		      strstr(out, "tap reopened: 320x180") && strstr(out, "150 frames read"));
 	}
 	printf(fails ? "%d frametap test(s) FAILED\n" : "all frametap tests passed\n", fails);
 	return fails != 0;
