@@ -10,10 +10,17 @@
  * ground station's MAVLink parser does that.
  *
  *   mavbridge [-d /dev/ttyS3] [-b 115200] [-o 127.0.0.1:14551] [-i 14550]
- *             [-a 15] [-m 1000] [-t 30] [-r] [-s 0] [-c 127.0.0.1:14560]
+ *             [-a 15] [-m 1000] [-t 30] [-r] [-s 0] [-c 127.0.0.1:14560]...
+ *             [-j 14570]
  *
  * -c: also send a copy of every downlink datagram there (rkfpv decodes it
  *     for the OSD); fire and forget, nothing listens -> nothing happens.
+ *     Up to MAX_COPY times.
+ * -j: local MAVLink port for programs on the board (127.0.0.1 only), like
+ *     a mavlink-router UDP server: what a program sends there goes to the
+ *     UART like the ground station's uplink, and every sender gets the
+ *     downlink back at its address until it has been quiet for PEER_MS
+ *     (MAVLink programs send a HEARTBEAT every second anyway).
  */
 #include <arpa/inet.h>
 #include <errno.h>
@@ -34,6 +41,9 @@
 #define MAV2_STX 0xFD
 #define MAX_FRAME 280            /* v2: 10 hdr + 255 payload + 2 crc + 13 sig */
 #define RXBUF (MAX_FRAME * 8)
+#define MAX_COPY 4
+#define MAX_PEERS 8
+#define PEER_MS 10000
 
 static volatile sig_atomic_t g_quit;
 static void on_signal(int s) { (void)s; g_quit = 1; }
@@ -128,8 +138,10 @@ static int frame_len(const uint8_t *b, size_t n)
 typedef struct {
 	int udp;
 	struct sockaddr_in dst;
-	struct sockaddr_in copy;        /* -c: second receiver of the downlink */
-	int have_copy;
+	struct sockaddr_in copy[MAX_COPY];  /* -c: more receivers of the downlink */
+	int ncopy;
+	int loc;                        /* -j socket, -1 = off */
+	struct { struct sockaddr_in a; uint64_t seen; } peer[MAX_PEERS];
 	int max_msgs;           /* flush after this many frames */
 	int max_bytes;          /* datagram size cap */
 	int flush_ms;           /* flush this long after the first queued frame */
@@ -139,7 +151,7 @@ typedef struct {
 	int out_msgs;
 	uint64_t out_since;
 
-	uint64_t frames, datagrams, bytes_down, bytes_up, junk;
+	uint64_t frames, datagrams, bytes_down, bytes_up, bytes_local, junk;
 } bridge_t;
 
 static void flush_out(bridge_t *b)
@@ -151,9 +163,22 @@ static void flush_out(bridge_t *b)
 		b->datagrams++;
 		b->bytes_down += b->out_len;
 	}
-	if (b->have_copy)
+	for (int i = 0; i < b->ncopy; i++)
 		sendto(b->udp, b->out, b->out_len, MSG_DONTWAIT,
-		       (struct sockaddr *)&b->copy, sizeof(b->copy));
+		       (struct sockaddr *)&b->copy[i], sizeof(b->copy[i]));
+	if (b->loc >= 0) {
+		uint64_t now = now_ms();
+		for (int i = 0; i < MAX_PEERS; i++) {
+			if (!b->peer[i].seen)
+				continue;
+			if (now - b->peer[i].seen > PEER_MS) {
+				b->peer[i].seen = 0;    /* gone quiet */
+				continue;
+			}
+			sendto(b->loc, b->out, b->out_len, MSG_DONTWAIT,
+			       (struct sockaddr *)&b->peer[i].a, sizeof(b->peer[i].a));
+		}
+	}
 	b->out_len = 0;
 	b->out_msgs = 0;
 }
@@ -197,6 +222,42 @@ static size_t parse_rx(bridge_t *b, uint8_t *rx, size_t n)
 	return n - i;
 }
 
+/* -j: remember who sent, so the downlink goes back there */
+static void peer_seen(bridge_t *b, const struct sockaddr_in *a)
+{
+	uint64_t now = now_ms();
+	int slot = -1, oldest = 0;
+	for (int i = 0; i < MAX_PEERS; i++) {
+		if (b->peer[i].seen && b->peer[i].a.sin_port == a->sin_port &&
+		    b->peer[i].a.sin_addr.s_addr == a->sin_addr.s_addr) {
+			b->peer[i].seen = now;
+			return;
+		}
+		if (slot < 0 && (!b->peer[i].seen || now - b->peer[i].seen > PEER_MS))
+			slot = i;
+		if (b->peer[i].seen < b->peer[oldest].seen)
+			oldest = i;
+	}
+	if (slot < 0)
+		slot = oldest;                  /* all busy: replace the quietest */
+	b->peer[slot].a = *a;
+	b->peer[slot].seen = now;
+}
+
+/* whole datagram to the UART, waiting briefly when its buffer is full */
+static ssize_t write_uart(int ser, const uint8_t *d, ssize_t n)
+{
+	ssize_t w = 0;
+	while (w < n) {
+		ssize_t k = write(ser, d + w, n - w);
+		if (k > 0) { w += k; continue; }
+		if (k < 0 && errno != EAGAIN && errno != EINTR) break;
+		struct pollfd wp = { .fd = ser, .events = POLLOUT };
+		poll(&wp, 1, 20);
+	}
+	return w;
+}
+
 static void usage(const char *p)
 {
 	fprintf(stderr,
@@ -208,7 +269,9 @@ static void usage(const char *p)
 		"  -a n         frames per datagram       (15; 1 = no packing)\n"
 		"  -m bytes     max datagram size         (1000)\n"
 		"  -t ms        flush timeout             (30)\n"
-		"  -c ip:port   also copy the downlink there (rkfpv OSD)\n"
+		"  -c ip:port   also copy the downlink there (rkfpv OSD), up to 4 times\n"
+		"  -j port      local MAVLink port (127.0.0.1): senders reach the UART\n"
+		"               and get the downlink back (0 = off)\n"
 		"  -r           raw: forward UART bytes without MAVLink framing\n"
 		"  -s sec       print stats every sec     (0 = off)\n", p);
 }
@@ -222,9 +285,10 @@ int main(int argc, char **argv)
 	b.max_msgs = 15;
 	b.max_bytes = 1000;
 	b.flush_ms = 30;
+	b.loc = -1;
 
-	const char *copy = NULL;
-	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:c:h")) != -1) {
+	int loc_port = 0;
+	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:c:j:h")) != -1) {
 		switch (opt) {
 		case 'd': dev = optarg; break;
 		case 'b': baud = atoi(optarg); break;
@@ -235,7 +299,18 @@ int main(int argc, char **argv)
 		case 't': b.flush_ms = atoi(optarg); break;
 		case 'r': raw = 1; break;
 		case 's': stats = atoi(optarg); break;
-		case 'c': copy = optarg; break;
+		case 'c':
+			if (b.ncopy == MAX_COPY) {
+				fprintf(stderr, "at most %d -c\n", MAX_COPY);
+				return 1;
+			}
+			if (parse_hostport(optarg, &b.copy[b.ncopy])) {
+				fprintf(stderr, "bad -c %s\n", optarg);
+				return 1;
+			}
+			b.ncopy++;
+			break;
+		case 'j': loc_port = atoi(optarg); break;
 		default: usage(argv[0]); return opt == 'h' ? 0 : 1;
 		}
 	}
@@ -246,13 +321,6 @@ int main(int argc, char **argv)
 	if (parse_hostport(out, &b.dst)) {
 		fprintf(stderr, "bad -o %s\n", out);
 		return 1;
-	}
-	if (copy) {
-		if (parse_hostport(copy, &b.copy)) {
-			fprintf(stderr, "bad -c %s\n", copy);
-			return 1;
-		}
-		b.have_copy = 1;
 	}
 	int ser = open_serial(dev, baud);
 	if (ser < 0)
@@ -271,31 +339,41 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (loc_port > 0) {
+		in.sin_port = htons(loc_port);  /* still 127.0.0.1: board only */
+		b.loc = socket(AF_INET, SOCK_DGRAM, 0);
+		if (b.loc < 0 || bind(b.loc, (struct sockaddr *)&in, sizeof(in))) {
+			perror("udp bind -j");
+			return 1;
+		}
+	}
+
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_signal;
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
-	fprintf(stderr, "mavbridge: %s@%d -> %s, udp:%d -> uart, %s, %d frames/%d B/%d ms\n",
+	fprintf(stderr, "mavbridge: %s@%d -> %s, udp:%d -> uart, %s, %d frames/%d B/%d ms, %d copies, local %d\n",
 		dev, baud, out, in_port, raw ? "raw" : "mavlink",
-		b.max_msgs, b.max_bytes, b.flush_ms);
+		b.max_msgs, b.max_bytes, b.flush_ms, b.ncopy, loc_port);
 
 	uint8_t rx[RXBUF];
 	size_t rx_len = 0;
 	uint64_t t_stats = now_ms();
 
 	while (!g_quit) {
-		struct pollfd p[2] = {
+		struct pollfd p[3] = {
 			{ .fd = ser, .events = POLLIN },
 			{ .fd = b.udp, .events = POLLIN },
+			{ .fd = b.loc, .events = POLLIN },  /* -1: ignored by poll */
 		};
 		int timeout = 100;
 		if (b.out_len) {
 			int64_t left = (int64_t)(b.out_since + b.flush_ms) - (int64_t)now_ms();
 			timeout = left > 0 ? (int)left : 0;
 		}
-		if (poll(p, 2, timeout) < 0 && errno != EINTR)
+		if (poll(p, 3, timeout) < 0 && errno != EINTR)
 			break;
 
 		if (p[0].revents & POLLIN) {
@@ -322,32 +400,37 @@ int main(int argc, char **argv)
 		if (p[1].revents & POLLIN) {
 			uint8_t up[2048];
 			ssize_t n = recv(b.udp, up, sizeof(up), 0);
-			if (n > 0) {
-				ssize_t w = 0;
-				while (w < n) {
-					ssize_t k = write(ser, up + w, n - w);
-					if (k > 0) { w += k; continue; }
-					if (k < 0 && errno != EAGAIN && errno != EINTR) break;
-					struct pollfd wp = { .fd = ser, .events = POLLOUT };
-					poll(&wp, 1, 20);
-				}
-				b.bytes_up += w;
-			}
+			if (n > 0)
+				b.bytes_up += write_uart(ser, up, n);
+		}
+		/* one thread writes the UART: datagrams from the ground and from
+		 * local programs never interleave inside a datagram */
+		if (p[2].revents & POLLIN) {
+			uint8_t up[2048];
+			struct sockaddr_in from;
+			socklen_t fl = sizeof(from);
+			ssize_t n = recvfrom(b.loc, up, sizeof(up), 0, (struct sockaddr *)&from, &fl);
+			if (n >= 0)
+				peer_seen(&b, &from);   /* an empty datagram only subscribes */
+			if (n > 0)
+				b.bytes_local += write_uart(ser, up, n);
 		}
 
 		if (b.out_len && now_ms() >= b.out_since + b.flush_ms)
 			flush_out(&b);
 
 		if (stats && now_ms() - t_stats >= (uint64_t)stats * 1000u) {
-			fprintf(stderr, "stats: frames %llu, datagrams %llu, down %llu B, up %llu B, junk %llu B\n",
+			fprintf(stderr, "stats: frames %llu, datagrams %llu, down %llu B, up %llu B, local up %llu B, junk %llu B\n",
 				(unsigned long long)b.frames, (unsigned long long)b.datagrams,
 				(unsigned long long)b.bytes_down, (unsigned long long)b.bytes_up,
-				(unsigned long long)b.junk);
+				(unsigned long long)b.bytes_local, (unsigned long long)b.junk);
 			t_stats = now_ms();
 		}
 	}
 	flush_out(&b);
 	close(ser);
 	close(b.udp);
+	if (b.loc >= 0)
+		close(b.loc);
 	return 0;
 }

@@ -118,7 +118,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 60 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 61 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -166,6 +166,14 @@ check "blackbox status: enabled, not running" "True 2000000 stopped" \
 check "fpv status has blackbox" "stopped" \
 	"$(fpv status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["blackbox"])')"
 fpv blackbox selftest 1234 > /dev/null 2>&1 && bad "selftest odd baud accepted" || ok "selftest odd baud rejected"
+
+# local MAVLink port (mavbridge -j), in wfb.yaml under telemetry:
+check "mav_local_port default off" "0" "$(fpv get mav_local_port | sed 's/^[^=]*= *//')"
+fpv set mav_local_port 14570 > /dev/null
+check "mav_local_port written under telemetry" "telemetry:|  mav_local_port: 14570" \
+	"$(grep -E '^telemetry:|mav_local_port:' "$T/root/etc/wfb.yaml" | grep -v '#' | tr '\n' '|' | sed 's/|$//')"
+fpv set mav_local_port 70000 > /dev/null 2>&1 && bad "mav_local_port 70000 accepted" || ok "mav_local_port out of range rejected"
+fpv set mav_local_port 0 > /dev/null
 fpv blackbox selftest -r x > /dev/null 2>&1 && bad "selftest bad rate accepted" || ok "selftest bad rate rejected"
 check "selftest without UART4" "no /dev/ttyS4" \
 	"$(fpv blackbox selftest 2>&1 | sed -n 's/.*\(no \/dev\/ttyS4\).*/\1/p')"

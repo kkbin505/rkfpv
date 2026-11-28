@@ -14,6 +14,8 @@ import tty
 
 DOWN_PORT = 24551   # mavbridge -> us (wfb_tx side)
 UP_PORT = 24550     # us -> mavbridge (wfb_rx side)
+COPY_PORTS = (24560, 24561)   # -c twice (rkfpv OSD, another listener)
+LOCAL_PORT = 24570  # -j: programs on the board
 
 
 def v1(msgid, payload):
@@ -52,10 +54,18 @@ def main():
     rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     rx.bind(("127.0.0.1", DOWN_PORT))
     rx.settimeout(2)
+    copies = []
+    for cp in COPY_PORTS:
+        c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        c.bind(("127.0.0.1", cp))
+        c.settimeout(0.5)
+        copies.append(c)
 
     proc = subprocess.Popen(
         [exe, "-d", slave_name, "-o", f"127.0.0.1:{DOWN_PORT}",
-         "-i", str(UP_PORT), "-a", "5", "-m", "600", "-t", "30"],
+         "-i", str(UP_PORT), "-a", "5", "-m", "600", "-t", "30",
+         "-c", f"127.0.0.1:{COPY_PORTS[0]}", "-c", f"127.0.0.1:{COPY_PORTS[1]}",
+         "-j", str(LOCAL_PORT)],
         stderr=subprocess.PIPE)
     time.sleep(0.3)
 
@@ -105,6 +115,24 @@ def main():
         assert d == frames[0]
         print(f"ok: single frame flushed after {dt:.0f} ms")
 
+        # Every -c gets the same datagrams as the radio.
+        for cp, c in zip(COPY_PORTS, copies):
+            cgot = []
+            while True:
+                try:
+                    cgot.extend(split_frames(c.recvfrom(4096)[0]))
+                except socket.timeout:
+                    break
+            assert cgot == frames + [frames[0]], f"copy {cp}: {len(cgot)} frames"
+        print(f"ok: {len(COPY_PORTS)} downlink copies (-c twice)")
+
+        # -j: only on loopback
+        port_hex = f"{LOCAL_PORT:04X}"
+        with open("/proc/net/udp") as f:
+            local = [l.split()[1] for l in f.readlines()[1:] if l.split()[1].endswith(":" + port_hex)]
+        assert local == ["0100007F:" + port_hex], f"-j bound to {local}"
+        print("ok: local port listens on 127.0.0.1 only")
+
         # Uplink: UDP -> UART unchanged.
         up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         msg = v2(76, bytes(range(33)))
@@ -117,6 +145,35 @@ def main():
                 time.sleep(0.01)
         assert buf == msg, f"uplink mismatch: {buf!r}"
         print("ok: uplink UDP -> UART")
+
+        # -j: a local program's datagram reaches the UART unchanged ...
+        loc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        loc.bind(("127.0.0.1", 0))
+        loc.settimeout(2)
+        cmd = v2(76, bytes(range(40, 73)))
+        loc.sendto(cmd, ("127.0.0.1", LOCAL_PORT))
+        buf, deadline = b"", time.time() + 2
+        while len(buf) < len(cmd) and time.time() < deadline:
+            try:
+                buf += os.read(master, 4096)
+            except BlockingIOError:
+                time.sleep(0.01)
+        assert buf == cmd, f"local uplink mismatch: {buf!r}"
+        print("ok: local port -> UART")
+
+        # ... and it gets the FC's answer, as does a listener that only
+        # subscribed with an empty datagram; the radio still gets it too
+        sub = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sub.bind(("127.0.0.1", 0))
+        sub.settimeout(2)
+        sub.sendto(b"", ("127.0.0.1", LOCAL_PORT))
+        time.sleep(0.1)
+        ack = v2(77, bytes(3))
+        os.write(master, ack)
+        assert loc.recvfrom(4096)[0] == ack, "sender got no downlink"
+        assert sub.recvfrom(4096)[0] == ack, "subscriber got no downlink"
+        assert rx.recvfrom(4096)[0] == ack, "radio lost the downlink"
+        print("ok: local senders get the downlink back")
         print("all mavbridge tests passed")
     finally:
         proc.terminate()

@@ -95,6 +95,7 @@ fec_n|wfb|broadcast|int|2|32|12|fec|Radio|FEC packets per block incl. recovery (
 link_id|wfb|broadcast|int|0|16777215|7669206|link|Radio|Link ID (ground station must match)
 telemetry_enabled|wfb|telemetry|enum|true,false||true|link|Telemetry|MAVLink telemetry over wfb-ng
 baud|wfb|telemetry|enum|57600,115200,230400,460800,921600||115200|link|Telemetry|Flight-controller UART baud rate
+mav_local_port|wfb|telemetry|int|0|65535|0|link|Telemetry|MAVLink port on 127.0.0.1 for programs on the board: what they send goes to the flight controller, and every sender gets its stream back (0 = off, e.g. 14570; see docs/extending.md)
 isp_brightness|rkfpv||int+iq|0|255|iq|venc|Picture|Brightness, 128 = neutral (iq = the IQ file's value)
 isp_contrast|rkfpv||int+iq|0|255|iq|venc|Picture|Contrast, 128 = neutral
 isp_saturation|rkfpv||int+iq|0|255|iq|venc|Picture|Saturation, 128 = neutral (0 = black and white)
