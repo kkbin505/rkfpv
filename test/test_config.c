@@ -18,6 +18,12 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "isp_antiflicker", "55") == 0;
 	bad |= config_set(&d, "isp_wb", "shade") || d.isp.wb != 3;
 	bad |= config_set(&d, "isp_wb", "purple") == 0;
+	bad |= d.dvr_osd != 1 || d.blackbox != 0 || d.blackbox_baud != 1500000;   /* defaults */
+	bad |= config_set(&d, "dvr_osd", "0") || d.dvr_osd != 0;
+	bad |= config_set(&d, "dvr_osd", "2") == 0;
+	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
+	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
+	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;
 	printf("edge cases %s\n", bad ? "FAIL" : "ok");
 	return r || bad;
 }

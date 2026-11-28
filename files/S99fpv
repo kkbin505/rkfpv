@@ -33,6 +33,7 @@ log() {
 # keep the previous boot's logs, cap fpv.log
 rotate_logs() {
 	[ -f "$LOGDIR/rkfpv.log" ] && mv -f "$LOGDIR/rkfpv.log" "$LOGDIR/rkfpv.prev.log"
+	[ -f "$LOGDIR/bblog.log" ] && mv -f "$LOGDIR/bblog.log" "$LOGDIR/bblog.prev.log"
 	if [ -f "$LOGDIR/fpv.log" ] && [ "$(wc -c < "$LOGDIR/fpv.log")" -gt 65536 ]; then
 		tail -n 200 "$LOGDIR/fpv.log" > "$LOGDIR/fpv.log.tmp" && mv -f "$LOGDIR/fpv.log.tmp" "$LOGDIR/fpv.log"
 	fi
@@ -46,9 +47,36 @@ start_video() {
 	# -b would send rkfpv's output to /dev/null; keep it in a log instead
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
 		"exec /usr/bin/rkfpv -c /etc/rkfpv.conf $extra >> $LOGDIR/rkfpv.log 2>&1"
+	[ -n "$extra" ] || start_blackbox
+}
+
+# Betaflight serial blackbox -> rec_SSSS_NN.bbl next to the recording
+# (bblog reads rkfpv's /tmp/dvr.status for the name). Runs with the video.
+start_blackbox() {
+	[ "$(fpv_val blackbox)" = 1 ] || return 0
+	[ -x /usr/bin/bblog ] || return 0
+	pidof bblog > /dev/null && return 0
+	if ! mountpoint -q "$DVR_DIR"; then
+		log "blackbox: no recording card, not started"
+		return 0
+	fi
+	if [ ! -c /dev/ttyS4 ]; then
+		log "blackbox: no /dev/ttyS4 (UART4 off in the device tree), not started"
+		return 0
+	fi
+	baud=$(fpv_val blackbox_baud)
+	start-stop-daemon -S -b -m -p /var/run/bblog.pid -x /bin/sh -- -c \
+		"exec /usr/bin/bblog -d /dev/ttyS4 -b ${baud:-1500000} -o $DVR_DIR >> $LOGDIR/bblog.log 2>&1"
+	log "blackbox: logging /dev/ttyS4 @ ${baud:-1500000} to $DVR_DIR"
+}
+
+stop_blackbox() {
+	start-stop-daemon -K -q -p /var/run/bblog.pid -s TERM
+	killall -q bblog
 }
 
 stop_video() {
+	stop_blackbox                   # closes the current .bbl cleanly
 	start-stop-daemon -K -q -p "$PIDFILE" -s TERM
 	killall -q rkfpv
 	# let the encoder / ISP tear down before a new instance grabs them
@@ -372,6 +400,7 @@ case "$1" in
 	preview-on) preview_on ;;
 	preview-off) preview_off ;;
 	restart-video) log "restart: video"; stop_video; start_video ;;
+	blackbox-start) start_blackbox ;;
 	restart-link|restart-all)
 		# preview on a PC or over the hotspot: no link (in hotspot mode the
 		# card is the access point), only the video restarts
@@ -381,5 +410,5 @@ case "$1" in
 			if [ "$1" = restart-link ]; then log "restart: link"; /usr/bin/wfb.sh start
 			else log "restart: video + link"; stop_video; /usr/bin/wfb.sh start; start_video; fi ;;
 		esac ;;
-	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off|preview-on|preview-off}"; exit 1 ;;
+	*) echo "Usage: $0 {start|stop|restart|restart-video|restart-link|restart-all|hotspot-on|hotspot-off|preview-on|preview-off|blackbox-start}"; exit 1 ;;
 esac

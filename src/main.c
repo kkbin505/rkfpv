@@ -727,8 +727,13 @@ int main(int argc, char **argv)
 
 	if (cfg.osd) {
 		osd_link = osd_create(OSD_LINK_HANDLE, VENC_CHN, cfg.width, cfg.height);
-		if (dual)
+		if (dual && cfg.dvr_osd)
 			osd_dvr = osd_create(OSD_DVR_HANDLE, DVR_VENC, dp.width, dp.height);
+		else if (dual)
+			fprintf(stderr, "osd: not in the recording (dvr_osd = 0)\n");
+		else if (!cfg.dvr_osd && dvr)
+			fprintf(stderr, "osd: dvr_osd = 0 needs the recording's own encoder (dvr_size not link); "
+				"the recording is the radio stream, with its OSD\n");
 	}
 	uint64_t t_osd = now_us(), osd_worst = 0, temp_ms = 0;
 	int temp_ok = 0, temp_c = 0;

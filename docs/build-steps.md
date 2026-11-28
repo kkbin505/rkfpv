@@ -31,6 +31,7 @@ cd luckfox-pico
 |---|---|---|
 | Mini DTS, `&usbdrd_dwc3` | `dr_mode = "otg"; usb-role-switch; role-switch-default-mode = "peripheral";` | one USB port: device for ADB, host for the WiFi card |
 | Mini DTS | `&uart3 { status = "okay"; }` | MAVLink to the flight controller |
+| Mini DTS | `&uart4 { status = "okay"; }` (UART4_M1: TX GPIO1_C4 = header pin 10, RX GPIO1_C5 = pin 11) | Betaflight serial blackbox (`bblog`, docs/blackbox.md) |
 | `luckfox_rv1106_linux_defconfig` | `CONFIG_CFG80211`, `WIRELESS`, `WLAN`, `WEXT` on | Realtek monitor-mode drivers need cfg80211 |
 | same | `# CONFIG_USB_MASS_STORAGE is not set` | built-in `g_mass_storage` grabbed the UDC and broke ADB ("dwc3 failed to add gadget") |
 | `drivers/usb/dwc3/drd.c` | `dwc3_role_switch.allow_userspace_control = true;` | otherwise no writable `/sys/class/usb_role/*/role` |
@@ -205,6 +206,7 @@ SDK edits for the Pro (local, like the Mini's):
 |---|---|
 | `rv1106g-luckfox-pico-pro-max.dts` `&usbdrd_dwc3` | `dr_mode = "otg"; usb-role-switch; role-switch-default-mode = "peripheral";` (same as the Mini) |
 | same, `&uart3` | `status = "okay"` — UART3_M1: TX GPIO1_D0, RX GPIO1_D1 (other header pins than on the Mini: check the Pro pinout) |
+| same, `&uart4` | `status = "okay"` — UART4_M1: TX GPIO1_C4 = header pin 7, RX GPIO1_C5 = pin 6 (blackbox, docs/blackbox.md) |
 | Pro_Max SPI_NAND BoardConfig (by `mkoverlay.sh`) | no separate oem partition (`RK_BUILD_APP_TO_OEM_PARTITION` off; the SDK would empty `rootfs/oem` and drop our drivers), table `…4M(boot),10M(userdata),240M(rootfs)`, CMA 48M, no SDIO WiFi stack, `overlay-rkfpv` |
 
 Build (the SDK builds one board at a time; keep the Mini's `sd_update.img` first):
