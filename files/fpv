@@ -105,11 +105,11 @@ isp_wb|rkfpv||enum|auto,daylight,cloudy,shade,twilight,fluorescent,incandescent|
 isp_exp_max|rkfpv||int+iq|1|33|iq|venc|Exposure|Longest exposure, ms (IQ: 30). Shorter = less motion blur, darker and noisier in low light; FPV often 2-8. Below 10 ms anti-flicker is turned off
 isp_gain_max|rkfpv||int+iq|1|512|iq|venc|Exposure|Highest gain, x (IQ: 512). Lower = less noise at night, darker image
 isp_antiflicker|rkfpv||enum|iq,off,50,60||iq|venc|Exposure|Mains-light flicker, Hz (indoors); needs exposure steps of 10 / 8.3 ms
-isp_metering|rkfpv||enum|iq,average,bottom,bottom_strong||iq|venc|Exposure|Metering: which part of the picture auto-exposure exposes for. iq = the IQ file (center-weighted); bottom / bottom_strong = ground over sky, so a backlit horizon doesn't turn the ground black (the sky clips)
+isp_metering|rkfpv||enum|iq,average,bottom,bottom_strong||bottom_strong|venc|Exposure|Metering: which part of the picture auto-exposure exposes for. bottom_strong (default) / bottom = ground over sky, so a backlit horizon doesn't turn the ground black; average = whole picture; iq = the IQ file (center-weighted: exposes for the sky, dark ground)
 isp_ae_delay|rkfpv||int+iq|0|4|iq|venc|Exposure|Frames before auto-exposure reacts (IQ: 2). 0 = fastest, may hunt under flickering light
 isp_ae_damp|rkfpv||int+iq|0|100|iq|venc|Exposure|AE damping bright-to-dark, x0.01 (IQ: 0.45). Which way is faster is still to be checked on the board
-isp_blc|rkfpv||int+off|1|100|off|venc|Exposure|Backlight compensation: brighter subject against a bright sky (do not combine with highlight comp)
-isp_hlc|rkfpv||int+off|1|100|off|venc|Exposure|Highlight compensation: hold back bright areas such as sky (do not combine with backlight comp)
+isp_blc|rkfpv||int+off|1|100|off|venc|Exposure|Backlight compensation: much brighter ground, but a quarter of the picture clips and it replaces the metering setting (do not combine with highlight comp)
+isp_hlc|rkfpv||int+off|1|100|50|venc|Exposure|Highlight compensation: hold back bright areas such as sky; 50 (default) together with bottom metering. Alone with iq metering the ground goes dark (do not combine with backlight comp)
 isp_nr_spatial|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Spatial noise reduction. off = sharpest, noisier in low light
 isp_nr_temporal|rkfpv||int+iq+off|1|100|off|venc|Noise & detail|Temporal noise reduction (3DNR). Smears / ghosts on fast motion; off by default
 isp_dehaze|rkfpv||int+iq+off|1|100|iq|venc|Noise & detail|Dehaze strength (going back to iq needs a video restart)

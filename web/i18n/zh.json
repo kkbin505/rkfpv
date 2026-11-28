@@ -333,8 +333,8 @@
  "param.isp_antiflicker": "市电灯光闪烁，Hz（室内）；曝光要按 10 / 8.3 毫秒的步长",
  "param.isp_ae_delay": "自动曝光开始反应前的帧数（IQ：2）。0 = 最快，在闪烁灯光下可能来回调整",
  "param.isp_ae_damp": "亮到暗的 AE 阻尼，×0.01（IQ：0.45）。哪个方向更快还要在板子上确认",
- "param.isp_blc": "背光补偿：亮天空前的主体更亮（不要和强光抑制一起用）",
- "param.isp_hlc": "强光抑制：压住天空这类亮区（不要和背光补偿一起用）",
+ "param.isp_blc": "逆光补偿：地面亮很多，但约四分之一画面过曝，而且会盖过测光设置（不要和强光抑制一起用）",
+ "param.isp_hlc": "强光抑制：压住天空这类亮区；默认 50，和地面优先测光一起用。只配 iq 测光时地面会变黑（不要和逆光补偿一起用）",
  "param.isp_nr_spatial": "空域降噪。off = 最锐利，弱光下噪点更多",
  "param.isp_nr_temporal": "时域降噪（3DNR）。快速运动时会拖影 / 残影；默认关闭",
  "param.isp_dehaze": "去雾强度（改回 iq 需要重启视频）",
@@ -361,5 +361,6 @@
  "param.dvr_osd": "录像里带 OSD。0 = 给 Gyroflow 用的干净录像，无线码流仍带 OSD。需要录像自己的编码器（dvr_size 不是 link）",
  "param.blackbox": "保存飞控的 Betaflight 黑匣子（UART4 RX，BF：blackbox_device = SERIAL），存成 rec_SSSS_NN.bbl，和对应的录像放在一起，给 Gyroflow 用",
  "param.blackbox_baud": "黑匣子串口波特率：和飞控黑匣子端口一样。用 'fpv blackbox selftest' 检查",
- "page.title": "rkfpv 设置器"
+ "page.title": "rkfpv 设置器",
+ "param.isp_metering": "测光：自动曝光照顾画面的哪一部分。bottom_strong（默认）/ bottom = 地面优先，逆光时地面不黑；average = 整幅画面；iq = IQ 文件（中央重点：照顾天空，地面偏黑）"
 }

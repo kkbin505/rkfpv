@@ -54,9 +54,11 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.antiflicker = ISP_IQ;
 	c->isp.ae_delay = ISP_IQ;
 	c->isp.ae_damp = ISP_IQ;
-	c->isp.metering = ISP_IQ;
+	/* bottom-weighted metering + highlight comp: widest usable range with the
+	 * ground visible against a bright sky (AE metering DOE, 3 video modes) */
+	c->isp.metering = METER_BOTTOM_STRONG;
 	c->isp.blc = 0;
-	c->isp.hlc = 0;
+	c->isp.hlc = 50;
 	c->isp.nr_spatial = 0;  /* off: no smearing on fast motion (user's choice) */
 	c->isp.nr_temporal = 0;
 	c->isp.dehaze = ISP_IQ;

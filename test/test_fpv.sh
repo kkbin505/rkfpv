@@ -227,8 +227,9 @@ fpv set isp_exp_max off > /dev/null 2>&1 && bad "off accepted where not allowed"
 fpv set isp_sharpness auto > /dev/null 2>&1 && bad "auto accepted on an iq key" || ok "auto only on auto keys"
 fpv set txpower_8812cu iq > /dev/null 2>&1 && bad "iq accepted on txpower" || ok "iq only on iq keys"
 fpv set isp_antiflicker 55 > /dev/null 2>&1 && bad "antiflicker 55 accepted" || ok "antiflicker 55 rejected"
-fpv set isp_metering bottom_strong > /dev/null
-check "metering stored" "isp_metering = bottom_strong" "$(fpv get isp_metering)"
+check "metering default" "isp_metering = bottom_strong|isp_hlc = 50" "$(fpv get isp_metering isp_hlc | tr '\n' '|' | sed 's/|$//')"
+fpv set isp_metering average > /dev/null
+check "metering stored" "isp_metering = average" "$(fpv get isp_metering)"
 fpv set isp_metering top > /dev/null 2>&1 && bad "metering top accepted" || ok "metering top rejected"
 check "metering on the Image tab" "Exposure" "$(fpv schema --json | python3 -c 'import json,sys; print(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_metering")["group"])')"
 check "schema specials" "iq off" "$(fpv schema --json | python3 -c 'import json,sys; print(" ".join(next(p for p in json.load(sys.stdin)["params"] if p["key"]=="isp_nr_spatial")["specials"]))')"

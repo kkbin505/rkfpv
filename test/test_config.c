@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
 	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
 	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;
-	bad |= d.isp.metering != -1;                             /* default iq */
+	bad |= d.isp.metering != METER_BOTTOM_STRONG || d.isp.hlc != 50;   /* defaults */
 	bad |= config_set(&d, "isp_metering", "bottom_strong") || d.isp.metering != METER_BOTTOM_STRONG;
 	bad |= config_set(&d, "isp_metering", "iq") || d.isp.metering != -1;
 	bad |= config_set(&d, "isp_metering", "top") == 0;
