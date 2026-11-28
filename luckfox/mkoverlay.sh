@@ -146,7 +146,10 @@ for x in ${EXTRA_OVERLAY:-}; do
 	(cd "$x" && find . ! -type d) | sed 's|^\./||' | while read -r f; do
 		if [ -e "$OV/$f" ]; then echo "EXTRA_OVERLAY: $x replaces /$f" >&2; fi
 	done
-	cp -a "$x/." "$OV/"
+	# files and symlinks only (modes kept): copying the add-on's directories
+	# would put their modes on the image's own /, /etc, /usr/bin ...
+	# directories tar has to create: 755 like the rest, whatever the umask
+	(cd "$x" && find . ! -type d -print0 | tar --null -T - -cf -) | (umask 022; tar -C "$OV" -xpf -)
 	echo "extra overlay: $x ($(cd "$x" && find . ! -type d | wc -l) files)"
 	IFS=:
 done

@@ -2,14 +2,16 @@
 // no internet, so the app files come from this cache. Requests to the board
 // (http://10.0.0.1/...) are never cached or touched.
 //
-// The deploy workflow replaces __VERSION__ with the commit, so every deploy
+// The deploy build (configurator/build_site.py) puts the commit in the cache name, so every deploy
 // gets a new cache and old ones are dropped.
 const CACHE = "rkfpv-__VERSION__";
-const FILES = [
-  "./", "index.html", "style.css", "app.js", "board.js", "preview.js",
+// The deploy workflow replaces the list with every file of the site (the
+// vendored ADB modules too); this one is what a plain copy of web/ needs.
+const FILES = [/*FILES*/
+  "./", "index.html", "style.css", "app.js", "board.js", "preview.js", "usb.js", "md5.js", "i18n.js", "i18n/en.json", "i18n/zh.json",
   "manifest.webmanifest", "presets.json",
   "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",
-];
+/*END*/];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

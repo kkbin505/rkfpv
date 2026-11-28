@@ -54,8 +54,11 @@ void config_defaults(rkfpv_config_t *c)
 	c->isp.antiflicker = ISP_IQ;
 	c->isp.ae_delay = ISP_IQ;
 	c->isp.ae_damp = ISP_IQ;
+	/* bottom-weighted metering + highlight comp: widest usable range with the
+	 * ground visible against a bright sky (AE metering DOE, 3 video modes) */
+	c->isp.metering = METER_BOTTOM_STRONG;
 	c->isp.blc = 0;
-	c->isp.hlc = 0;
+	c->isp.hlc = 50;
 	c->isp.nr_spatial = 0;  /* off: no smearing on fast motion (user's choice) */
 	c->isp.nr_temporal = 0;
 	c->isp.dehaze = ISP_IQ;
@@ -106,6 +109,9 @@ static const char *const WB_NAMES[] = {
 	"auto", "daylight", "cloudy", "shade", "twilight", "fluorescent", "incandescent", NULL
 };
 
+/* index = METER_* value; [0] is "iq" (ISP_IQ) */
+static const char *const METER_NAMES[] = { "iq", "average", "bottom", "bottom_strong", NULL };
+
 #define ISP_KEY(name, field, lo, hi, off) \
 	if (!strcmp(key, name)) return parse_isp(val, lo, hi, off, &c->isp.field)
 
@@ -128,6 +134,11 @@ int config_set(rkfpv_config_t *c, const char *key, const char *val)
 	if (!strcmp(key, "isp_wb")) {
 		for (int i = 0; WB_NAMES[i]; i++)
 			if (!strcmp(val, WB_NAMES[i])) { c->isp.wb = i; return 0; }
+		return -1;
+	}
+	if (!strcmp(key, "isp_metering")) {
+		for (int i = 0; METER_NAMES[i]; i++)
+			if (!strcmp(val, METER_NAMES[i])) { c->isp.metering = i ? i : ISP_IQ; return 0; }
 		return -1;
 	}
 	if (!strcmp(key, "isp_antiflicker")) {

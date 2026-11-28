@@ -189,8 +189,9 @@ rkfpv 直接调用 rkaiq 的运行时接口改画质。majestic 在 Rockchip 上
 | `isp_nr_temporal` / `isp_nr_spatial` | 时域 / 空域降噪，**默认关闭**：快速运动时不拖影，代价是低照度下噪点更多 |
 | `isp_gain_max` | 最大增益（IQ 文件里是 512×） |
 | `isp_ae_delay` / `isp_ae_damp` | 自动曝光的反应延迟和阻尼（从亮到暗） |
-| `isp_blc` / `isp_hlc` | 逆光补偿 / 强光抑制 |
+| `isp_blc` / `isp_hlc` | 逆光补偿 / 强光抑制（默认 `isp_hlc = 50`；逆光补偿会盖过测光设置，四分之一画面过曝） |
 | `isp_brightness` `contrast` `saturation` `hue` `sharpness` `wb` `dehaze` `antiflicker` | 颜色、锐度、白平衡等 |
+| `isp_metering` | 测光：`bottom_strong`（默认）/ `bottom`（地面优先，逆光时地面不黑）、`average`（整幅画面）、`iq`（IQ 文件，中央重点：照顾天空，地面偏黑） |
 
 设成 `iq` 的项用 IQ 文件里的值。rkfpv 启动时会读出 IQ 文件的原值，所以把某项改回 `iq` 能立即恢复。
 

@@ -1,57 +1,43 @@
-# Publishes web/ (the configurator UI) to GitHub Pages:
-#   https://<owner>.github.io/<repo>/
+# Publishes web/ (the configurator UI) to GitHub Pages, into the app/ folder
+# of the gh-pages branch (the landing page at the root stays):
+#   https://<owner>.github.io/<repo>/app/
 # The board's dvrhttpd answers CORS for https://<owner>.github.io only
 # (WEB_ORIGIN in files/S99fpv; a fork sets its own in /etc/fpv/web_origin).
-# Repo settings → Pages → Source: "GitHub Actions".
+# Repo settings → Pages → Source: "Deploy from a branch", gh-pages, / (root).
 name: Web configurator
 
 on:
   push:
     branches: [main]
-    paths: ["web/**", "configurator/presets/**", ".github/workflows/pages.yml"]
+    paths: ["web/**", "configurator/presets/**", "configurator/build_site.py", "files/fpv", "files/S99fpv",
+            "files/wfb.sh", "files/rkfpv.conf", "files/wfb.yaml", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build site
-        run: |
-          mkdir -p _site
-          cp -r web/. _site/
-          # presets: the same list the PC configurator serves at /api/presets
-          python3 - <<'EOF'
-          import json, os
-          d = "configurator/presets"
-          out = []
-          for f in sorted(os.listdir(d)):
-              if f.endswith(".json"):
-                  p = json.load(open(os.path.join(d, f), encoding="utf-8"))
-                  out.append({"file": f, "name": str(p["name"]),
-                              "description": str(p.get("description", "")),
-                              "values": {str(k): str(v) for k, v in p["values"].items()}})
-          json.dump({"ok": True, "presets": out}, open("_site/presets.json", "w"), indent=1)
-          EOF
-          # new offline cache for every deploy
-          sed -i "s/__VERSION__/${GITHUB_SHA::12}/" _site/sw.js
+        run: python3 configurator/build_site.py _site --version "${GITHUB_SHA::12}"
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish to gh-pages/app
+        run: |
+          git fetch --depth 1 origin gh-pages
+          git worktree add pages FETCH_HEAD
+          rm -rf pages/app
+          cp -r _site pages/app
+          cd pages
+          git add -A app
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "app: configurator from ${GITHUB_SHA::12}"
+          git push origin HEAD:gh-pages

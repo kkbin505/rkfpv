@@ -6,6 +6,11 @@
  *
  * Prints size, rate and delay (camera timestamp -> copy done -> read) once
  * a second; -o saves the last picture read as PGM (any image viewer).
+ *
+ * rkfpv creates a new tap file each time the video starts. After 2 s
+ * without a new frame ftdump maps the file again (once a second) and goes
+ * on with the new one; it gives up after 10 s without frames. A reader
+ * that runs for the whole flight should do the same.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -26,8 +31,9 @@ static uint64_t now_us(void)
 	return (uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u;
 }
 
-/* maps the tap; NULL while rkfpv has not created it (yet) */
-static const frametap_hdr_t *map_tap(const char *path, size_t *size)
+/* maps the tap; NULL while rkfpv has not created it (yet). *ino tells one
+ * tap file from the next: rkfpv creates a new file at every video start. */
+static const frametap_hdr_t *map_tap(const char *path, size_t *size, ino_t *ino)
 {
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
@@ -46,6 +52,7 @@ static const frametap_hdr_t *map_tap(const char *path, size_t *size)
 		return NULL;
 	}
 	*size = (size_t)st.st_size;
+	*ino = st.st_ino;
 	return h;
 }
 
@@ -68,8 +75,9 @@ int main(int argc, char **argv)
 	}
 	uint64_t start = now_us(), deadline = secs ? start + (uint64_t)secs * 1000000u : 0;
 	size_t size = 0;
+	ino_t ino = 0;
 	const frametap_hdr_t *h = NULL;
-	while (!(h = map_tap(path, &size))) {
+	while (!(h = map_tap(path, &size, &ino))) {
 		if (deadline ? now_us() > deadline : now_us() - start > 3000000u) {
 			fprintf(stderr, "ftdump: no frame tap at %s (frame_tap = 1? rkfpv running?)\n", path);
 			return 1;
@@ -78,17 +86,22 @@ int main(int argc, char **argv)
 	}
 	printf("ftdump: %ux%u (camera %ux%u / %u), writer pid %u\n", h->width, h->height,
 	       h->src_width, h->src_height, h->scale, h->writer_pid);
-	uint8_t *pic = malloc((size_t)h->stride * h->height);
+	size_t pic_bytes = (size_t)h->stride * h->height;
+	uint8_t *pic = malloc(pic_bytes);
 	if (!pic)
 		return 1;
+	/* the picture -o saves: its own size, a reopened tap may differ */
+	uint32_t pic_w = h->width, pic_h = h->height, pic_stride = h->stride;
 
 	uint64_t last = 0, got = 0, torn = 0, t_rep = now_us(), n_rep = 0, t_new = now_us();
+	uint64_t t_try = 0, reopened = 0;
 	uint64_t lat_cap = 0, lat_read = 0, first_frame = 0;
 	frametap_slot_t info;
 	for (;;) {
 		int r = frametap_read(h, pic, &last, &info);
 		uint64_t now = now_us();
 		if (r > 0) {
+			pic_w = h->width; pic_h = h->height; pic_stride = h->stride;
 			if (!first_frame)
 				first_frame = info.frame;
 			got++;
@@ -109,9 +122,40 @@ int main(int argc, char **argv)
 		}
 		if ((want && (long)got >= want) || (deadline && now > deadline))
 			break;
-		if (now - t_new > 2000000u) {
-			fprintf(stderr, "ftdump: no new frame for 2 s (rkfpv stopped?)\n");
+		if (now - t_new > 10000000u) {
+			fprintf(stderr, "ftdump: no new frame for 10 s (rkfpv stopped?)\n");
 			break;
+		}
+		/* rkfpv restarted (new file) or stopped: map the tap again */
+		if (now - t_new > 2000000u && now - t_try > 1000000u) {
+			t_try = now;
+			size_t nsize = 0;
+			ino_t nino = 0;
+			const frametap_hdr_t *n = map_tap(path, &nsize, &nino);
+			if (n && nino == ino) {
+				munmap((void *)n, nsize);          /* still the same file */
+			} else if (n) {
+				/* the buffer only grows: it still holds the last picture
+				 * (pic_w x pic_h, pic_stride) for -o until a new frame comes */
+				size_t need = (size_t)n->stride * n->height;
+				uint8_t *np = need > pic_bytes ? realloc(pic, need) : pic;
+				if (!np) {
+					munmap((void *)n, nsize);
+				} else {
+					pic = np;
+					if (need > pic_bytes)
+						pic_bytes = need;
+					munmap((void *)h, size);
+					h = n;
+					size = nsize;
+					ino = nino;
+					last = 0;          /* frame numbers start again */
+					reopened++;
+					printf("ftdump: tap reopened: %ux%u, writer pid %u\n", h->width, h->height,
+					       h->writer_pid);
+					fflush(stdout);
+				}
+			}
 		}
 		if (r <= 0)
 			usleep(2000);
@@ -122,14 +166,15 @@ int main(int argc, char **argv)
 			perror(out);
 			return 1;
 		}
-		fprintf(f, "P5\n%u %u\n255\n", h->width, h->height);
-		for (uint32_t y = 0; y < h->height; y++)
-			fwrite(pic + (size_t)y * h->stride, 1, h->width, f);
+		fprintf(f, "P5\n%u %u\n255\n", pic_w, pic_h);
+		for (uint32_t y = 0; y < pic_h; y++)
+			fwrite(pic + (size_t)y * pic_stride, 1, pic_w, f);
 		fclose(f);
 		printf("ftdump: frame %llu saved to %s\n", (unsigned long long)last, out);
 	}
-	printf("ftdump: %llu frames read (%llu..%llu)\n", (unsigned long long)got,
-	       (unsigned long long)first_frame, (unsigned long long)last);
+	printf("ftdump: %llu frames read (%llu..%llu)%s\n", (unsigned long long)got,
+	       (unsigned long long)first_frame, (unsigned long long)last,
+	       reopened ? ", tap reopened" : "");
 	munmap((void *)h, size);
 	free(pic);
 	return got ? 0 : 1;
