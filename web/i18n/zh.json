@@ -321,6 +321,7 @@
  "param.link_id": "Link ID（地面站要一致）",
  "param.telemetry_enabled": "通过 wfb-ng 传 MAVLink 遥测",
  "param.baud": "飞控串口波特率",
+ "param.mav_request_hz": "飞控不主动发电池（电压、电流、mAh）和遥控链路消息时，按这个频率（Hz）向飞控要：ArduPilot 和 PX4 只有地面站请求才发。只存在飞控内存里，不保存（0 = 关）",
  "param.mav_local_port": "板子上 127.0.0.1 的 MAVLink 端口，给板上程序用：发来的数据转给飞控，每个发送方都能收到回传数据流（0 = 关，例如 14570；见 docs/extending.md）",
  "param.isp_brightness": "亮度，128 = 不变（iq = IQ 文件里的值）",
  "param.isp_contrast": "对比度，128 = 不变",

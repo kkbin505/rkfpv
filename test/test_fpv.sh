@@ -92,6 +92,23 @@ EOS
 	wfb_yaml "$1"; echo "$channel $stbc $mcs_index"' x "$T/root/etc/wfb.yaml")
 check "wfb.sh parser reads edited yaml" "149 1 3" "$got"
 
+# mavbridge options from wfb.yaml: -j mav_local_port, -q mav_request_hz
+mavargs() { # mavargs <yaml> -> the extra options wfb.sh gives mavbridge
+	$SH -c '
+		. /dev/stdin <<"EOS"
+'"$(sed -n -e '/^wfb_yaml()/,/^}/p' -e '/^mav_local()/,/^}/p' "$HERE/files/wfb.sh")"'
+EOS
+		wfb_yaml "$1"; echo $(mav_local)' x "$1"
+}
+check "mavbridge options, default yaml" "-q 2" "$(mavargs "$T/root/etc/wfb.yaml")"
+grep -v mav_request_hz "$T/root/etc/wfb.yaml" > "$T/old.yaml"
+check "mavbridge options, yaml from before the key" "-q 2" "$(mavargs "$T/old.yaml")"
+fpv set mav_request_hz 0 mav_local_port 14570 > /dev/null
+check "mavbridge options, requests off + local port" "-j 14570" "$(mavargs "$T/root/etc/wfb.yaml")"
+fpv set mav_request_hz 5 > /dev/null
+check "mavbridge options, both" "-j 14570 -q 5" "$(mavargs "$T/root/etc/wfb.yaml")"
+fpv set mav_request_hz 2 mav_local_port 0 > /dev/null
+
 # missing key -> appended under its section
 setup
 sed -i '/ldpc/d' "$T/root/etc/wfb.yaml"
@@ -118,7 +135,7 @@ for c in "get" "get bitrate" "schema" "status" "set bitrate 3000" "log rkfpv" "m
 	echo "$out" | python3 -m json.tool > /dev/null 2>&1 && ok "json: $c" || bad "json: $c -> $out"
 done
 check "json error flag" "False" "$(fpv set bitrate 99999 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])')"
-check "schema has every key" 67 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
+check "schema has every key" 68 "$(fpv schema --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["params"]))')"
 
 # logs with quotes / tabs / backslashes
 printf 'stats: 30.0 fps, 3512 kbps, "x"\tq\\z\n' > "$T/root/userdata/log/rkfpv.log"
@@ -174,6 +191,8 @@ check "mav_local_port written under telemetry" "telemetry:|  mav_local_port: 145
 	"$(grep -E '^telemetry:|mav_local_port:' "$T/root/etc/wfb.yaml" | grep -v '#' | tr '\n' '|' | sed 's/|$//')"
 fpv set mav_local_port 70000 > /dev/null 2>&1 && bad "mav_local_port 70000 accepted" || ok "mav_local_port out of range rejected"
 fpv set mav_local_port 0 > /dev/null
+check "mav_request_hz default 2" "2" "$(fpv get mav_request_hz | sed 's/^[^=]*= *//')"
+fpv set mav_request_hz 21 > /dev/null 2>&1 && bad "mav_request_hz 21 accepted" || ok "mav_request_hz out of range rejected"
 fpv blackbox selftest -r x > /dev/null 2>&1 && bad "selftest bad rate accepted" || ok "selftest bad rate rejected"
 check "selftest without UART4" "no /dev/ttyS4" \
 	"$(fpv blackbox selftest 2>&1 | sed -n 's/.*\(no \/dev\/ttyS4\).*/\1/p')"

@@ -21,6 +21,16 @@
  *     UART like the ground station's uplink, and every sender gets the
  *     downlink back at its address until it has been quiet for PEER_MS
  *     (MAVLink programs send a HEARTBEAT every second anyway).
+ * -q: ask the flight controller for what rkfpv's OSD shows (SYS_STATUS:
+ *     voltage/current/remaining, BATTERY_STATUS: mAh, RC_CHANNELS: link
+ *     quality) at this rate, but only while one of them has not arrived for
+ *     REQ_STALE_MS. ArduPilot and PX4 send them only after a ground station
+ *     asks; with no ground station connected the OSD would show nothing. The
+ *     request is MAV_CMD_SET_MESSAGE_INTERVAL, which the FC keeps in RAM
+ *     only: nothing is saved, a reboot of the FC forgets it (and mavbridge
+ *     asks again). A ground station's own rates win: once a message arrives,
+ *     mavbridge stops asking for it. Betaflight / INAV send their fixed set
+ *     unasked and ignore the command.
  */
 #include <arpa/inet.h>
 #include <errno.h>
@@ -44,6 +54,21 @@
 #define MAX_COPY 4
 #define MAX_PEERS 8
 #define PEER_MS 10000
+
+/* -q */
+#define REQ_STALE_MS 3000        /* a message this old counts as missing */
+#define REQ_RETRY_MS 5000        /* ask again this often while it is missing */
+#define REQ_TRIES 5              /* then give up until the FC reappears */
+#define FC_LOST_MS 3000          /* no FC heartbeat this long: FC gone */
+#define MSG_HEARTBEAT 0
+#define MSG_COMMAND_ACK 77
+#define MSG_COMMAND_LONG 76
+#define CMD_SET_MESSAGE_INTERVAL 511
+#define MY_COMPID 191            /* MAV_COMP_ID_ONBOARD_COMPUTER */
+static const struct { uint32_t id; const char *name; } REQ_MSGS[] = {
+	{ 1, "SYS_STATUS" }, { 147, "BATTERY_STATUS" }, { 65, "RC_CHANNELS" },
+};
+#define NREQ (sizeof(REQ_MSGS) / sizeof(REQ_MSGS[0]))
 
 static volatile sig_atomic_t g_quit;
 static void on_signal(int s) { (void)s; g_quit = 1; }
@@ -152,6 +177,14 @@ typedef struct {
 	uint64_t out_since;
 
 	uint64_t frames, datagrams, bytes_down, bytes_up, bytes_local, junk;
+
+	/* -q */
+	int req_hz;                     /* 0 = off */
+	int ser;
+	uint8_t fc_sys, seq;
+	uint64_t fc_seen;               /* last FC heartbeat, 0 = none yet */
+	struct { uint64_t seen, next; int tries; } req[NREQ];
+	uint64_t requests;
 } bridge_t;
 
 static void flush_out(bridge_t *b)
@@ -197,6 +230,101 @@ static void queue_frame(bridge_t *b, const uint8_t *f, int len)
 		flush_out(b);
 }
 
+static ssize_t write_uart(int ser, const uint8_t *d, ssize_t n);
+
+static uint16_t crc_acc(uint8_t c, uint16_t crc)
+{
+	uint8_t t = c ^ (uint8_t)(crc & 0xff);
+	t ^= (uint8_t)(t << 4);
+	return (uint16_t)((crc >> 8) ^ ((uint16_t)t << 8) ^ ((uint16_t)t << 3) ^ (t >> 4));
+}
+
+static void put_f32(uint8_t *p, float v) { memcpy(p, &v, 4); }   /* ARM and x86: little endian */
+
+/* COMMAND_LONG SET_MESSAGE_INTERVAL(msg, 1e6/hz us) to the FC, MAVLink v2 */
+static void send_interval(bridge_t *b, uint32_t msg)
+{
+	uint8_t f[12 + 33] = { MAV2_STX, 33, 0, 0, b->seq++, b->fc_sys, MY_COMPID,
+			       MSG_COMMAND_LONG, 0, 0 };
+	uint8_t *pl = f + 10;
+	memset(pl, 0, 33);
+	put_f32(pl + 0, (float)msg);                    /* param1: message id */
+	put_f32(pl + 4, 1e6f / (float)b->req_hz);       /* param2: interval, us */
+	pl[28] = CMD_SET_MESSAGE_INTERVAL & 0xff;
+	pl[29] = CMD_SET_MESSAGE_INTERVAL >> 8;
+	pl[30] = b->fc_sys;                             /* target system */
+	pl[31] = 1;                                     /* target component: autopilot */
+	uint16_t crc = 0xffff;
+	for (int i = 1; i < 10 + 33; i++)
+		crc = crc_acc(f[i], crc);
+	crc = crc_acc(152, crc);                        /* COMMAND_LONG CRC_EXTRA */
+	f[43] = crc & 0xff;
+	f[44] = crc >> 8;
+	write_uart(b->ser, f, sizeof f);
+	b->requests++;
+}
+
+/* -q: note the FC's heartbeat and the OSD messages, log its answers */
+static void watch_frame(bridge_t *b, const uint8_t *f, int len)
+{
+	int v2 = f[0] == MAV2_STX, hdr = v2 ? 10 : 6, plen = f[1];
+	uint8_t sys = f[v2 ? 5 : 3], comp = f[v2 ? 6 : 4];
+	uint32_t id = v2 ? (f[7] | f[8] << 8 | (uint32_t)f[9] << 16) : f[5];
+	uint8_t pl[64] = { 0 };                         /* v2 drops trailing zeros */
+	memcpy(pl, f + hdr, plen < (int)sizeof pl ? plen : (int)sizeof pl);
+	(void)len;
+	uint64_t now = now_ms();
+	if (comp != 1)
+		return;                                 /* the autopilot only */
+	if (id == MSG_HEARTBEAT) {
+		if (pl[5] == 8)                         /* MAV_AUTOPILOT_INVALID: not an FC */
+			return;
+		if (!b->fc_seen || now - b->fc_seen > FC_LOST_MS || sys != b->fc_sys) {
+			/* new or rebooted FC: it forgot any earlier request */
+			for (size_t k = 0; k < NREQ; k++) {
+				b->req[k].tries = 0;
+				b->req[k].next = now + 1000;    /* give it a second to start its own streams */
+			}
+			fprintf(stderr, "mavbridge: flight controller %d (autopilot %d)\n", sys, pl[5]);
+		}
+		b->fc_sys = sys;
+		b->fc_seen = now;
+		return;
+	}
+	if (sys != b->fc_sys)
+		return;
+	for (size_t k = 0; k < NREQ; k++)
+		if (id == REQ_MSGS[k].id) {
+			if (b->req[k].tries)
+				fprintf(stderr, "mavbridge: %s arriving\n", REQ_MSGS[k].name);
+			b->req[k].seen = now;
+			b->req[k].tries = 0;
+		}
+	if (id == MSG_COMMAND_ACK && (pl[0] | pl[1] << 8) == CMD_SET_MESSAGE_INTERVAL && pl[2] != 0)
+		fprintf(stderr, "mavbridge: FC refused SET_MESSAGE_INTERVAL (result %d)\n", pl[2]);
+}
+
+/* -q: once a loop; asks only while the FC is there and a message is missing */
+static void request_tick(bridge_t *b)
+{
+	uint64_t now = now_ms();
+	if (!b->fc_seen || now - b->fc_seen > FC_LOST_MS)
+		return;
+	for (size_t k = 0; k < NREQ; k++) {
+		if (b->req[k].seen && now - b->req[k].seen < REQ_STALE_MS)
+			continue;
+		if (now < b->req[k].next || b->req[k].tries >= REQ_TRIES)
+			continue;
+		send_interval(b, REQ_MSGS[k].id);
+		if (++b->req[k].tries == 1)
+			fprintf(stderr, "mavbridge: asking the FC for %s at %d Hz\n", REQ_MSGS[k].name, b->req_hz);
+		else if (b->req[k].tries == REQ_TRIES)
+			fprintf(stderr, "mavbridge: no %s after %d requests, giving up until the FC restarts\n",
+				REQ_MSGS[k].name, REQ_TRIES);
+		b->req[k].next = now + REQ_RETRY_MS;
+	}
+}
+
 /* Consumes complete frames from rx; returns bytes left (a partial frame). */
 static size_t parse_rx(bridge_t *b, uint8_t *rx, size_t n)
 {
@@ -216,6 +344,8 @@ static size_t parse_rx(bridge_t *b, uint8_t *rx, size_t n)
 		if (fl == 0 || (size_t)fl > n - i)
 			break;                       /* need more bytes */
 		queue_frame(b, rx + i, fl);
+		if (b->req_hz)
+			watch_frame(b, rx + i, fl);
 		i += fl;
 	}
 	memmove(rx, rx + i, n - i);
@@ -272,6 +402,8 @@ static void usage(const char *p)
 		"  -c ip:port   also copy the downlink there (rkfpv OSD), up to 4 times\n"
 		"  -j port      local MAVLink port (127.0.0.1): senders reach the UART\n"
 		"               and get the downlink back (0 = off)\n"
+		"  -q hz        ask the FC for the OSD messages (SYS_STATUS, BATTERY_STATUS,\n"
+		"               RC_CHANNELS) at hz while they do not arrive (0 = off)\n"
 		"  -r           raw: forward UART bytes without MAVLink framing\n"
 		"  -s sec       print stats every sec     (0 = off)\n", p);
 }
@@ -288,7 +420,7 @@ int main(int argc, char **argv)
 	b.loc = -1;
 
 	int loc_port = 0;
-	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:c:j:h")) != -1) {
+	while ((opt = getopt(argc, argv, "d:b:o:i:a:m:t:rs:c:j:q:h")) != -1) {
 		switch (opt) {
 		case 'd': dev = optarg; break;
 		case 'b': baud = atoi(optarg); break;
@@ -311,12 +443,15 @@ int main(int argc, char **argv)
 			b.ncopy++;
 			break;
 		case 'j': loc_port = atoi(optarg); break;
+		case 'q': b.req_hz = atoi(optarg); break;
 		default: usage(argv[0]); return opt == 'h' ? 0 : 1;
 		}
 	}
 	if (b.max_msgs < 1) b.max_msgs = 1;
 	if (b.max_bytes < MAX_FRAME) b.max_bytes = MAX_FRAME;
 	if (b.max_bytes > (int)sizeof(b.out)) b.max_bytes = sizeof(b.out);
+	if (b.req_hz < 0) b.req_hz = 0;
+	if (b.req_hz > 50) b.req_hz = 50;
 
 	if (parse_hostport(out, &b.dst)) {
 		fprintf(stderr, "bad -o %s\n", out);
@@ -325,6 +460,9 @@ int main(int argc, char **argv)
 	int ser = open_serial(dev, baud);
 	if (ser < 0)
 		return 1;
+	b.ser = ser;
+	if (raw)
+		b.req_hz = 0;                   /* no framing, no FC to watch */
 
 	b.udp = socket(AF_INET, SOCK_DGRAM, 0);
 	struct sockaddr_in in;
@@ -354,9 +492,9 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
-	fprintf(stderr, "mavbridge: %s@%d -> %s, udp:%d -> uart, %s, %d frames/%d B/%d ms, %d copies, local %d\n",
+	fprintf(stderr, "mavbridge: %s@%d -> %s, udp:%d -> uart, %s, %d frames/%d B/%d ms, %d copies, local %d, osd requests %d Hz\n",
 		dev, baud, out, in_port, raw ? "raw" : "mavlink",
-		b.max_msgs, b.max_bytes, b.flush_ms, b.ncopy, loc_port);
+		b.max_msgs, b.max_bytes, b.flush_ms, b.ncopy, loc_port, b.req_hz);
 
 	uint8_t rx[RXBUF];
 	size_t rx_len = 0;
@@ -418,12 +556,15 @@ int main(int argc, char **argv)
 
 		if (b.out_len && now_ms() >= b.out_since + b.flush_ms)
 			flush_out(&b);
+		if (b.req_hz)
+			request_tick(&b);
 
 		if (stats && now_ms() - t_stats >= (uint64_t)stats * 1000u) {
-			fprintf(stderr, "stats: frames %llu, datagrams %llu, down %llu B, up %llu B, local up %llu B, junk %llu B\n",
+			fprintf(stderr, "stats: frames %llu, datagrams %llu, down %llu B, up %llu B, local up %llu B, junk %llu B, requests %llu\n",
 				(unsigned long long)b.frames, (unsigned long long)b.datagrams,
 				(unsigned long long)b.bytes_down, (unsigned long long)b.bytes_up,
-				(unsigned long long)b.bytes_local, (unsigned long long)b.junk);
+				(unsigned long long)b.bytes_local, (unsigned long long)b.junk,
+				(unsigned long long)b.requests);
 			t_stats = now_ms();
 		}
 	}
