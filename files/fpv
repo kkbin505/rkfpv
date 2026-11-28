@@ -17,6 +17,7 @@
 #   fpv blackbox status              Betaflight serial blackbox logger (UART4)
 #   fpv blackbox selftest [-r KB/s] [baud...]   UART4 TX wired to RX: send and
 #                                    compare BF-format logs (no flight controller)
+#   fpv plugins [status]            add-on programs in /etc/fpv/plugins.d
 #   fpv iq status|list|copy-stock|install <file> <md5>|history|rollback <file> [N]
 #   fpv hotspot status               BOOT button, mode, SSID, password, clients
 #   fpv preview on|off|status        debug mode (board on a PC) or hotspot mode:
@@ -39,6 +40,8 @@ IQ_HISTORY_KEEP=5
 DVR_DIR=$R/mnt/dvr
 DVR_STATUS=$R/tmp/dvr.status
 BB_STATUS=$R/tmp/bblog.status
+PLUGIN_DIR=$R/etc/fpv/plugins.d
+PLUGIN_STATUS=$R/tmp/plugins.status
 BB_DEV=/dev/ttyS4
 INIT=$R/etc/init.d/S99fpv
 WFB_CMD_PORT=8000
@@ -481,6 +484,7 @@ cmd_status() {
 	bbst=off
 	[ "$(get_value blackbox)" = 1 ] && bbst=stopped
 	running bblog && bbst=$(bb_field state)
+	plug=$(sed -n 's/^plugins=\([0-9]*\) started=\([0-9]*\).*/\2\/\1/p' "$PLUGIN_STATUS" 2>/dev/null)
 
 	if [ "$JSON" = 1 ]; then
 		printf '{"ok":true,"mode":"%s","override":"%s","usb_role":"%s",' "$mode" "$override" "$role"
@@ -489,8 +493,8 @@ cmd_status() {
 		printf '"radio":"%s","fec":"%s","driver":"%s",' "$(jesc "$radio")" "$(jesc "$fec")" "$drv"
 		printf '"txpower_key":"%s","txpower":"%s","txpower_iw_dbm":"%s",' "$txk" "$txl" "$txiw"
 		printf '"mem_avail_kb":"%s","temp_c":"%s","uptime_s":"%s",' "$mem" "$temp" "$up"
-		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s","blackbox":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" \
-			"$(jesc "$board")" "$bbst"
+		printf '"dvr_state":"%s","dvr_file":"%s","board":"%s","blackbox":"%s","plugins":"%s"}\n' "$dvrst" "$(jesc "$dvrfile")" \
+			"$(jesc "$board")" "$bbst" "$plug"
 	else
 		[ -n "$board" ] && echo "board:     $board"
 		echo "mode:      $mode (boot override: $override, usb role: ${role:-?})"
@@ -502,6 +506,7 @@ cmd_status() {
 		echo "uptime:    ${up:-?} s"
 		echo "dvr:       $dvrst${dvrfile:+ $dvrfile}"
 		echo "blackbox:  $bbst"
+		[ -n "$plug" ] && echo "plugins:   $plug started"
 	fi
 }
 
@@ -878,6 +883,30 @@ iq_files_json() {   # <dir> -> [{"name","size"},...]
 		printf "%s{\"name\":\"%s\",\"size\":%s}", sep, $9, $5; sep = "," }'
 }
 
+# ----------------------------------------------------------------- plugins
+# add-on programs in /etc/fpv/plugins.d, run with the video (fpv-plugins)
+plugins_cmd() {
+	case "${1:-status}" in
+	status) ;;
+	*) die "usage: fpv plugins [status]" ;;
+	esac
+	out=$(FPV_PLUGIN_STATUS=$PLUGIN_STATUS "$(dirname "$0")/fpv-plugins" status "$PLUGIN_DIR" 2>/dev/null)
+	if [ "$JSON" = 1 ]; then
+		printf '{"ok":true,"dir":"%s","plugins":[' "$(jesc "$PLUGIN_DIR")"
+		sep=
+		echo "$out" | while IFS= read -r l; do
+			[ -n "$l" ] || continue
+			printf '%s{"name":"%s","status":"%s"}' "$sep" "$(jesc "${l%%: *}")" "$(jesc "${l#*: }")"
+			sep=,
+		done
+		printf ']}\n'
+	elif [ -n "$out" ]; then
+		echo "$out"
+	else
+		echo "no plugins in $PLUGIN_DIR"
+	fi
+}
+
 iq_cmd() {
 	sub=${1:-status}
 	[ $# -gt 0 ] && shift
@@ -1031,7 +1060,7 @@ preview_cmd() {
 }
 
 usage() {
-	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --json may appear anywhere
@@ -1059,6 +1088,7 @@ case "$cmd" in
 	reset) cmd_reset ;;
 	dvr) dvr_cmd "$@" ;;
 	blackbox) blackbox_cmd "$@" ;;
+	plugins) plugins_cmd "$@" ;;
 	iq) iq_cmd "$@" ;;
 	hotspot) hotspot_cmd "$@" ;;
 	preview) preview_cmd "$@" ;;

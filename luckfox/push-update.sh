@@ -28,13 +28,13 @@ $ADB shell 'mount -o remount,rw / 2>/dev/null; mkdir -p /tmp/rkfpv-update'
 for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend; do
 	$ADB push "$TMP/$b" /tmp/rkfpv-update/ > /dev/null
 done
-for f in fpv wfb.sh S99fpv rkfpv.conf; do
+for f in fpv fpv-plugins wfb.sh S99fpv rkfpv.conf; do
 	$ADB push "$HERE/files/$f" /tmp/rkfpv-update/ > /dev/null
 done
 # replace in place only after every file arrived (a half update would not boot FPV)
 $ADB shell 'set -e; cd /tmp/rkfpv-update
-	for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend fpv wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
+	for b in rkfpv fpvd mavbridge dvrhttpd bblog bbsend fpv fpv-plugins wfb.sh; do cp "$b" /usr/bin/"$b".new && chmod 755 /usr/bin/"$b".new && mv /usr/bin/"$b".new /usr/bin/"$b"; done
 	cp S99fpv /etc/init.d/S99fpv.new && chmod 755 /etc/init.d/S99fpv.new && mv /etc/init.d/S99fpv.new /etc/init.d/S99fpv
-	mkdir -p /etc/fpv/defaults && cp rkfpv.conf /etc/fpv/defaults/rkfpv.conf
+	mkdir -p /etc/fpv/plugins.d /etc/fpv/defaults && cp rkfpv.conf /etc/fpv/defaults/rkfpv.conf
 	cd /; rm -rf /tmp/rkfpv-update; sync; echo "updated: $(cat /proc/device-tree/model 2>/dev/null | tr -d "\000")"'
 echo "done: reboot the board to use the new programs (adb shell reboot)"

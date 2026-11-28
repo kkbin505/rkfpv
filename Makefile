@@ -119,6 +119,7 @@ test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/f
 	python3 -I test/test_switch.py build-host/fpvd | tail -1
 	python3 -I test/test_dvrhttpd.py build-host/dvrhttpd | tail -1
 	python3 -I test/test_bblog.py build-host/bblog build-host/bbsend | tail -1
+	test/test_plugins.sh > build-host/plugins.log || { cat build-host/plugins.log; exit 1; }; grep "all passed" build-host/plugins.log
 	python3 -I test/test_preview_relay.py | tail -1
 
 clean:

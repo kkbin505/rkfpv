@@ -18,7 +18,7 @@
  * hotspot / iq: status and switching the IQ file (no file upload here) */
 static const char *const ALLOWED[] = {
 	"get", "set", "schema", "status", "log", "restart", "mode", "reset", "dvr",
-	"preview", "hotspot", "iq", "blackbox", NULL
+	"preview", "hotspot", "iq", "blackbox", "plugins", NULL
 };
 
 static uint64_t now_ms(void)
