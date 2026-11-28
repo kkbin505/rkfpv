@@ -65,7 +65,7 @@ DRONE_KEY=... BOARD=mini EXTRA_OVERLAY=/path/my-addon luckfox/mkoverlay.sh
 
 - 在 rkfpv 自己的文件装好之后再合并，所以也能替换 rkfpv 的文件（比如自带一份 `etc/rkfpv.conf`），替换的每个文件都会打印出来。
 - 目录不存在时直接报错退出，不改 SDK 里的任何东西。
-- 文件权限照原样保留，程序和脚本记得 `chmod 755`。
+- 只复制文件和符号链接，文件权限照原样保留，程序和脚本记得 `chmod 755`。目录不复制：已有目录（`/etc`、`/usr/bin` 等）的权限不会被改；缺的目录自动建成 755，空目录不会带过去。
 - 不出镜像、直接更新正在运行的板子：`EXTRA_OVERLAY=... luckfox/push-update.sh`，用 ADB 推过去，和 rkfpv 的程序一起替换。
 
 ## NPU：`KEEP_NPU=1`
