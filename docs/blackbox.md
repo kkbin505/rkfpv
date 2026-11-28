@@ -43,6 +43,28 @@ fpv blackbox selftest -r 0         # 不限速，按串口最高速度灌数据
 
 测完记得拔掉跳线。
 
+## 不接飞控、不接线：HIL 测试
+
+`test/bb_hil.sh` 在板子上模拟飞控，检查从“飞控发出”到“卡上的 .bbl 能正确解析”这一整条链路：
+
+```
+bbsim（模拟 BF 飞控）──► 伪终端（代替 UART4）──► bblog ──► /mnt/dvr/bbhil/rec_XXXX_YY.bbl
+                                                         （名字跟正在录的那段录像配对）
+电脑：取回 .bbl ──► 和发出的字节逐字节比较 ──► test/bbdecode.py 解码，每一帧的每个值和模拟器发的比较
+```
+
+- `bbsim` 发的是真正能解码的 Betaflight 日志：BF 的日志头、按 BF 编码方式（预测器 + 变长编码）编码的 I 帧和 P 帧、日志结束事件。飞行数据是已知的函数（陀螺仪、电机的正弦波，加一点循环时间抖动），所以解码结果可以逐值核对。
+- 三种情况：两次解锁各 20 秒（2 kHz，日志前带杂字节）；一次 15 秒 8 kHz（约为正常飞控数据量的 4 倍）；一次 5 秒没有结束标记（模拟拔线 / 断电）。
+- 板子要在录像：`fpv set dvr 1`，再开视频（电脑预览或 FPV 模式）。不需要 UART4，也不需要重新出镜像：测试用的 bblog 从 `/tmp` 运行，不动板子自己的 bblog。
+- 测试文件放在卡上单独的 `/mnt/dvr/bbhil/` 目录，不会追加到真实飞行的 `.bbl` 里。
+
+```sh
+make build/bblog build/bbsim
+test/bb_hil.sh
+```
+
+不带板子的同一条链路在 `make test` 里（`test/test_bbsim.sh`）。
+
 ## 第二步：接真实飞控
 1. **Betaflight 设置：**
    - Ports 页：把一个空闲 UART 设成 **Blackbox logging**，波特率和 `blackbox_baud` 相同；
