@@ -34,10 +34,10 @@ LDFLAGS  += -L$(ROCKIT)/lib/lib32 -L$(AIQ)/lib -L$(MPP)/lib -L$(RGA)/lib \
 # uClibc loader does not search (only RkEnv.sh's LD_LIBRARY_PATH adds it)
 LDLIBS   := -lrockit -lrkaiq -lrockchip_mpp -lrga -lrkmuxer -lpthread -lm -lstdc++
 
-SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_ext.c src/osd_layout.c src/telem.c src/preview.c
+SRCS     := src/main.c src/config.c src/isp.c src/rtp_h265.c src/dvr.c src/dvr_rkmuxer.c src/osd.c src/osd_ext.c src/osd_layout.c src/telem.c src/preview.c src/frametap.c
 OBJS     := $(SRCS:src/%.c=build/%.o)
 
-all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd build/bblog build/bbsend
+all: build/rkfpv build/mavbridge build/fpvd build/dvrhttpd build/bblog build/bbsend build/ftdump
 
 build/%.o: src/%.c | build
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -54,6 +54,10 @@ build/bblog: src/bblog.c src/serial.h | build
 	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
 
 build/bbsend: src/bbsend.c src/serial.h | build
+	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
+
+# frame tap reader / test tool (no SDK libs)
+build/ftdump: src/ftdump.c src/frametap.h | build
 	$(CC) -O2 -std=gnu99 -Wall -Wextra -march=armv7-a -mfpu=neon -mfloat-abi=hard -o $@ $<
 
 build/dvrhttpd: src/dvrhttpd.c src/fpvcmd.c src/fpvcmd.h | build
@@ -90,6 +94,12 @@ build-host/bblog: src/bblog.c src/serial.h | build-host
 build-host/bbsend: src/bbsend.c src/serial.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
 
+build-host/ftdump: src/ftdump.c src/frametap.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ $<
+
+build-host/test_frametap: test/test_frametap.c src/frametap.c src/frametap.h | build-host
+	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ test/test_frametap.c src/frametap.c -lpthread
+
 build-host/dvrhttpd: src/dvrhttpd.c src/fpvcmd.c src/fpvcmd.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/dvrhttpd.c src/fpvcmd.c
 
@@ -109,7 +119,7 @@ build-host/test_preview: test/test_preview.c src/preview.c src/preview.h | build
 build-host/fpvd: src/fpvd.c src/fpvcmd.c src/fpvcmd.h | build-host
 	gcc -std=gnu99 -Wall -Wextra -O1 -g -fsanitize=address,undefined -o $@ src/fpvd.c src/fpvcmd.c
 
-test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_osd_ext build-host/test_telem build-host/test_preview build-host/bblog build-host/bbsend
+test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/fpvd build-host/test_dvr build-host/test_config build-host/dvrhttpd build-host/test_osd build-host/test_osd_ext build-host/test_telem build-host/test_preview build-host/bblog build-host/bbsend build-host/ftdump build-host/test_frametap
 	./build-host/test_rtp
 	./build-host/test_dvr 2>/dev/null
 	./build-host/test_preview 2>/dev/null | tail -1
@@ -123,6 +133,7 @@ test: build-host/test_rtp build-host/send_file build-host/mavbridge build-host/f
 	python3 -I test/test_switch.py build-host/fpvd | tail -1
 	python3 -I test/test_dvrhttpd.py build-host/dvrhttpd | tail -1
 	python3 -I test/test_bblog.py build-host/bblog build-host/bbsend | tail -1
+	./build-host/test_frametap build-host/ftdump > build-host/frametap.log || { cat build-host/frametap.log; exit 1; }; tail -1 build-host/frametap.log
 	test/test_plugins.sh > build-host/plugins.log || { cat build-host/plugins.log; exit 1; }; grep "all passed" build-host/plugins.log
 	python3 -I test/test_preview_relay.py | tail -1
 

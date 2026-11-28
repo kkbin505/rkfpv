@@ -26,6 +26,10 @@ int main(int argc, char **argv) {
 	bad |= config_set(&d, "osd_ext_port", "65536") == 0;
 	bad |= config_set(&d, "osd_ext_ttl_ms", "99") == 0;
 	bad |= config_set(&d, "osd_ext_ttl_ms", "10000") || d.osd_ext_ttl_ms != 10000;
+	bad |= d.frame_tap != 0 || d.frame_tap_fps != 10 || d.frame_tap_scale != 2;   /* defaults */
+	bad |= config_set(&d, "frame_tap_fps", "31") == 0;
+	bad |= config_set(&d, "frame_tap_scale", "4") || d.frame_tap_scale != 4;
+	bad |= config_set(&d, "frame_tap_scale", "0") == 0;
 	bad |= config_set(&d, "blackbox", "1") || d.blackbox != 1;
 	bad |= config_set(&d, "blackbox_baud", "2000000") || d.blackbox_baud != 2000000;
 	bad |= config_set(&d, "blackbox_baud", "3000000") == 0;

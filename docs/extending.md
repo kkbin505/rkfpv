@@ -140,3 +140,29 @@ import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.sendto(b"box 400 300 200 300\ntext 400 260 TAG 7", ("127.0.0.1", 14580))
 ```
+
+## 画面：帧接口（共享内存）
+
+`frame_tap = 1` 时，rkfpv 把图传画面的灰度图（YUV 的 Y 平面）按设定的帧率复制到共享内存 `/dev/shm/rkfpv-frame`，给识别、AprilTag、光流之类的程序读：
+
+```sh
+fpv set frame_tap 1 frame_tap_fps 10 frame_tap_scale 2     # 生效：fpv restart video
+ftdump -n 30 -o /tmp/f.pgm                                 # 看帧率和延迟，存一张图
+```
+
+| 设置 | 默认 | 说明 |
+|---|---|---|
+| `frame_tap` | 0 | 1 打开 |
+| `frame_tap_fps` | 10 | 每秒复制几帧（1–30） |
+| `frame_tap_scale` | 2 | 缩小倍数：1 原尺寸，2 一半（720p → 640×360），4 四分之一（320×180） |
+
+- **读取**：只需要 [`src/frametap.h`](../src/frametap.h) 这一个头文件。`open` + `mmap` 只读映射，循环调用 `frametap_read()`，它只在有新的一帧时复制出来，返回帧号、相机时间戳和写入时间。完整的小例子见 [`src/ftdump.c`](../src/ftdump.c)。
+- **不会读到写了一半的帧**：2 个缓冲槽轮流写，每个槽带序号（seqlock），`frametap_read()` 复制完核对序号，变了就重读。读的程序再慢也不会拖住 rkfpv。
+- **缩小**：每隔 scale 个像素取一个（不做平均），CPU 开销小。需要更平滑的图可以自己再做模糊。
+- **来源**：图传那一路画面，也就是地面看到的那一路（双路录像时是 ISP 的 self path）。分辨率和视场跟图传一样。
+- **开销**：
+  - 相机这一路多用一个缓冲区，720p 大约多占 1.4 MB 的 CMA（视频专用内存），这样编码器不用等帧接口；
+  - 共享内存 2 帧，scale 2 约 460 KB，scale 4 约 115 KB；
+  - 复制线程优先级低于图传。Mini 内存紧，建议 `frame_tap_scale = 4`，打开后用 `fpv status` 看 `memory`，并确认图传帧率不变。
+- **状态**：`fpv log` 的 stats 行会多一项 `tap N fps`。rkfpv 重启时会重新创建这个文件，读的程序发现 2 秒没有新帧就重新 `open` + `mmap`（`ftdump` 的做法）。
+- **时间戳**：`pts_us` 是相机驱动给的采集时间，`write_us` 是复制完成的时间（`CLOCK_MONOTONIC`，微秒），可以用来算延迟、和遥测对齐。
